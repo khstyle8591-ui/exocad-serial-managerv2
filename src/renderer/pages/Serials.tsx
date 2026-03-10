@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import SerialForm from '../components/SerialForm';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { api } from '../api';
 
 interface Serial {
   id: number;
@@ -38,7 +39,7 @@ export default function Serials() {
 
   const loadSerials = async () => {
     try {
-      const data = await window.electronAPI.getSerials();
+      const data = await api.getSerials() as Serial[];
       setSerials(data);
     } catch (err) {
       console.error(err);
@@ -50,7 +51,7 @@ export default function Serials() {
   const handleSearch = async () => {
     if (!search.trim()) { loadSerials(); return; }
     try {
-      const data = await window.electronAPI.searchSerials(search);
+      const data = await api.searchSerials(search) as Serial[];
       setSerials(data);
     } catch (err) {
       console.error(err);
@@ -59,19 +60,19 @@ export default function Serials() {
 
   const handleDelete = async (id: number) => {
     if (!confirm(t(lang, 'confirm_delete'))) return;
-    await window.electronAPI.deleteSerial(id);
+    await api.deleteSerial(id);
     loadSerials();
   };
 
   const handleRenew = async (id: number) => {
     if (!confirm(t(lang, 'confirm_renew'))) return;
-    await window.electronAPI.processRenewal(id);
+    await api.renewSerial(id);
     loadSerials();
   };
 
   const handleCancel = async (serialNumber: string) => {
     if (!confirm(`${serialNumber}${t(lang, 'confirm_cancel')}`)) return;
-    const result = await window.electronAPI.cancelSubscription(serialNumber);
+    const result = await api.cancelSubscription(serialNumber) as any;
     if (result.success) {
       alert(t(lang, 'cancel_success'));
     } else {
@@ -81,21 +82,29 @@ export default function Serials() {
   };
 
   const handleBulkImport = async () => {
-    const result = await window.electronAPI.bulkImport();
-    if (result.imported > 0) alert(`${result.imported}건 임포트 완료`);
-    if (result.errors.length > 0) alert(`오류:\n${result.errors.join('\n')}`);
-    loadSerials();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls,.csv';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const result = await api.bulkImport(file) as any;
+      if (result.imported > 0) alert(`${result.imported}건 임포트 완료`);
+      if (result.errors.length > 0) alert(`오류:\n${result.errors.join('\n')}`);
+      loadSerials();
+    };
+    input.click();
   };
 
   const handleDownloadTemplate = async () => {
-    await window.electronAPI.downloadExcelTemplate();
+    api.downloadTemplate();
   };
 
   const handleFormSave = async (input: any) => {
     if (editingSerial) {
-      await window.electronAPI.updateSerial(editingSerial.id, input);
+      await api.updateSerial(editingSerial.id, input);
     } else {
-      await window.electronAPI.createSerial(input);
+      await api.createSerial(input);
     }
     setShowForm(false);
     setEditingSerial(null);
@@ -107,10 +116,10 @@ export default function Serials() {
     if (!detailSerial || !newAddonInput.trim()) return;
     setAddonSaving(true);
     try {
-      const updated = await window.electronAPI.addAddon(detailSerial.id, {
+      const updated = await api.addAddon(detailSerial.id, {
         name: newAddonInput.trim(),
         added_date: new Date().toISOString().slice(0, 10),
-      });
+      }) as any;
       setDetailSerial(updated);
       setNewAddonInput('');
       loadSerials();
@@ -120,9 +129,9 @@ export default function Serials() {
   };
 
   const statusLabel = (s: string) => {
-    if (s === 'active')    return t(lang, 'status_active');
+    if (s === 'active') return t(lang, 'status_active');
     if (s === 'cancelled') return t(lang, 'status_cancelled');
-    if (s === 'expired')   return t(lang, 'status_expired');
+    if (s === 'expired') return t(lang, 'status_expired');
     return s;
   };
 
@@ -168,13 +177,13 @@ export default function Serials() {
               <tr>
                 <th style={{ minWidth: 140 }}>{t(lang, 'col_serial')}</th>
                 <th style={{ minWidth: 110 }}>{t(lang, 'col_customer')}</th>
-                <th style={{ minWidth: 90  }}>{t(lang, 'col_manager')}</th>
+                <th style={{ minWidth: 90 }}>{t(lang, 'col_manager')}</th>
                 <th style={{ minWidth: 110 }}>{t(lang, 'col_phone')}</th>
                 <th style={{ minWidth: 100 }}>{t(lang, 'col_purchase_date')}</th>
                 <th style={{ minWidth: 100 }}>{t(lang, 'col_expiry_date')}</th>
-                <th style={{ minWidth: 70  }}>{t(lang, 'col_status')}</th>
-                <th style={{ minWidth: 80  }}>{t(lang, 'col_engine_build')}</th>
-                <th style={{ minWidth: 70  }}>{t(lang, 'col_version')}</th>
+                <th style={{ minWidth: 70 }}>{t(lang, 'col_status')}</th>
+                <th style={{ minWidth: 80 }}>{t(lang, 'col_engine_build')}</th>
+                <th style={{ minWidth: 70 }}>{t(lang, 'col_version')}</th>
                 <th style={{ minWidth: 120 }}>{t(lang, 'col_addons')}</th>
                 <th style={{ minWidth: 190 }}>{t(lang, 'col_actions')}</th>
               </tr>
@@ -306,18 +315,18 @@ export default function Serials() {
             {/* Info 탭 */}
             {detailTab === 'info' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px', padding: '0 0 16px' }}>
-                <DetailField label={t(lang, 'col_serial')}       value={detailSerial.serial_number} />
-                <DetailField label={t(lang, 'col_status')}       value={statusLabel(detailSerial.status)} />
+                <DetailField label={t(lang, 'col_serial')} value={detailSerial.serial_number} />
+                <DetailField label={t(lang, 'col_status')} value={statusLabel(detailSerial.status)} />
                 <DetailField label={t(lang, 'label_customer_name')} value={detailSerial.customer_name} />
-                <DetailField label={t(lang, 'label_manager')}    value={detailSerial.customer_manager} />
-                <DetailField label={t(lang, 'label_email')}      value={detailSerial.customer_email} />
-                <DetailField label={t(lang, 'label_phone')}      value={detailSerial.customer_phone} />
-                <DetailField label={t(lang, 'label_address')}    value={detailSerial.customer_address} colSpan />
+                <DetailField label={t(lang, 'label_manager')} value={detailSerial.customer_manager} />
+                <DetailField label={t(lang, 'label_email')} value={detailSerial.customer_email} />
+                <DetailField label={t(lang, 'label_phone')} value={detailSerial.customer_phone} />
+                <DetailField label={t(lang, 'label_address')} value={detailSerial.customer_address} colSpan />
                 <DetailField label={t(lang, 'label_purchase_date')} value={detailSerial.purchase_date} />
-                <DetailField label={t(lang, 'label_expiry_date')}   value={detailSerial.expiry_date} />
-                <DetailField label={t(lang, 'label_engine_build')}  value={detailSerial.engine_build} />
-                <DetailField label={t(lang, 'label_version')}    value={detailSerial.version} />
-                <DetailField label={t(lang, 'label_notes')}      value={detailSerial.notes} colSpan />
+                <DetailField label={t(lang, 'label_expiry_date')} value={detailSerial.expiry_date} />
+                <DetailField label={t(lang, 'label_engine_build')} value={detailSerial.engine_build} />
+                <DetailField label={t(lang, 'label_version')} value={detailSerial.version} />
+                <DetailField label={t(lang, 'label_notes')} value={detailSerial.notes} colSpan />
               </div>
             )}
 

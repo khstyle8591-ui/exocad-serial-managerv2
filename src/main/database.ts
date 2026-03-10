@@ -1,12 +1,17 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { app } from 'electron';
+import fs from 'fs';
 
 let db: Database.Database;
 
 export function getDbPath(): string {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'exocad.db');
+  // 환경변수 우선, 그 다음 process.cwd()/data (서버), 마지막 userData 경로
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  return path.join(dataDir, 'exocad.db');
 }
 
 export function initDatabase(): Database.Database {

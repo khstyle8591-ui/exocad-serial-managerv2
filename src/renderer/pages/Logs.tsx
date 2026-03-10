@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { api } from '../api';
 
 export default function Logs() {
   const { lang } = useLang();
@@ -11,7 +12,8 @@ export default function Logs() {
 
   const loadLogs = async () => {
     try {
-      const data = await window.electronAPI.getLogs(200, 0);
+      const data = await api.getLogs(200, 0) as any[];
+
       setLogs(data);
     } catch (err) {
       console.error(err);

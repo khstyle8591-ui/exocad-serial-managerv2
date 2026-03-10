@@ -1,12 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-
-declare global {
-  interface Window {
-    electronAPI: any;
-  }
-}
+import { api } from '../api';
 
 interface Stats {
   total: number;
@@ -35,13 +30,13 @@ export default function Dashboard() {
   const loadData = async () => {
     try {
       const [statsData, logs, whStatus] = await Promise.all([
-        window.electronAPI.getStats(),
-        window.electronAPI.getTodayLogs(),
-        window.electronAPI.getWebhookStatus(),
+        api.getStats(),
+        api.getTodayLogs(),
+        api.getWebhookStatus(),
       ]);
-      setStats(statsData);
-      setTodayLogs(logs);
-      setWebhookStatus(whStatus);
+      setStats(statsData as Stats);
+      setTodayLogs(logs as any[]);
+      setWebhookStatus(whStatus as WebhookStatus);
     } catch (err) {
       console.error('Dashboard load error:', err);
     } finally {
@@ -51,7 +46,7 @@ export default function Dashboard() {
 
   const handleCheckEmails = async () => {
     try {
-      const result = await window.electronAPI.checkRenewalEmails();
+      const result = await api.checkRenewalEmails() as any;
       alert(t(lang, 'dash_renewal_result').replace('{processed}', result.processed).replace('{errors}', result.errors.length));
       loadData();
     } catch (err: any) {
@@ -62,10 +57,10 @@ export default function Dashboard() {
   const handleProcessExpiring = async () => {
     if (!confirm(t(lang, 'dash_confirm_expiry_cancel'))) return;
     try {
-      const results = await window.electronAPI.checkExpiring();
+      const results = await api.checkExpiring() as any[];
       const success = results.filter((r: any) => r.success).length;
       const failed = results.filter((r: any) => !r.success).length;
-      alert(t(lang, 'dash_cancel_result').replace('{success}', success).replace('{failed}', failed));
+      alert(t(lang, 'dash_cancel_result').replace('{success}', String(success)).replace('{failed}', String(failed)));
       loadData();
     } catch (err: any) {
       alert(t(lang, 'dash_error').replace('{error}', err.message));
@@ -74,7 +69,7 @@ export default function Dashboard() {
 
   const handleSendDailyReport = async () => {
     try {
-      await window.electronAPI.sendReport('daily');
+      await api.sendReport('daily');
       alert(t(lang, 'dash_report_sent'));
     } catch (err: any) {
       alert(t(lang, 'dash_error').replace('{error}', err.message));
@@ -84,11 +79,11 @@ export default function Dashboard() {
   const handleToggleWebhook = async () => {
     try {
       if (webhookStatus.running) {
-        await window.electronAPI.stopWebhookServer();
+        await api.stopWebhook();
       } else {
-        await window.electronAPI.startWebhookServer();
+        await api.startWebhook();
       }
-      const whStatus = await window.electronAPI.getWebhookStatus();
+      const whStatus = await api.getWebhookStatus() as WebhookStatus;
       setWebhookStatus(whStatus);
     } catch (err: any) {
       alert(t(lang, 'dash_webhook_error').replace('{error}', err.message));

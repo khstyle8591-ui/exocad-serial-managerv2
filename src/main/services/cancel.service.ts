@@ -1,7 +1,6 @@
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
 import path from 'path';
 import fs from 'fs';
-import { app } from 'electron';
 import { serialService } from './serial.service';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
@@ -9,7 +8,7 @@ import type { CancelResult, CancelDryRunResult } from '../../shared/types';
 
 // 스크린샷 저장 디렉토리
 function getScreenshotDir(): string {
-  const dir = path.join(app.getPath('userData'), 'screenshots');
+  const dir = path.join(process.cwd(), 'data', 'screenshots');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
 
 class Logger {
   private logDir: string = '';
   private logFile: string = '';
 
   init(): void {
-    this.logDir = path.join(app.getPath('userData'), 'logs');
+    // 환경변수 LOG_DIR → process.cwd()/logs 순으로 폴백
+    this.logDir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
     if (!fs.existsSync(this.logDir)) {
       fs.mkdirSync(this.logDir, { recursive: true });
     }
@@ -23,9 +23,11 @@ class Logger {
     this.updateLogFile();
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] [${level}] ${message}\n`;
-    try {
-      fs.appendFileSync(this.logFile, line);
-    } catch { /* ignore */ }
+    if (this.logFile) {
+      try {
+        fs.appendFileSync(this.logFile, line);
+      } catch { /* ignore */ }
+    }
     if (level === 'ERROR') {
       console.error(line.trim());
     } else {

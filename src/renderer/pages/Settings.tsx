@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
+import { api } from '../api';
 
 // ── UUID 단순 생성 ──────────────────────────────────────────────────────────
 function genId(): string {
@@ -124,7 +125,7 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const data = await window.electronAPI.getSettings();
+      const data = await api.getSettings() as any;
       // Store all values in ref
       formVals.current = { ...data };
       pollSourcesRef.current = data.poll_sources || [];
@@ -170,9 +171,9 @@ export default function Settings() {
       };
       // Clean up temp key
       delete finalSettings.renewal_keywords_raw;
-      await window.electronAPI.saveSettings(finalSettings);
-      // Restart auto-cancel scheduler with new time
-      await (window as any).electronAPI.cancelRestartScheduler();
+      await api.saveSettings(finalSettings);
+      // Restart auto-cancel scheduler
+      await api.restartCancelScheduler();
       if (appLanguage) setLang(appLanguage);
       alert(t(lang, 'settings_saved'));
     } catch (err: any) {
@@ -418,7 +419,7 @@ export default function Settings() {
                   setCancelDryRunning(true);
                   setCancelDryResults(null);
                   try {
-                    const results = await (window as any).electronAPI.cancelDryRun();
+                    const results = await api.cancelDryRun() as any[];
                     setCancelDryResults(results);
                   } catch (e: any) {
                     setCancelDryResults([{ error: e.message }]);
@@ -653,7 +654,7 @@ export default function Settings() {
                     imap_user: f.imap_user, imap_password: f.imap_password,
                     imap_tls: imapTls,
                   };
-                  const res = await (window as any).electronAPI.renewalTestConnection(settingsOverride);
+                  const res = await api.testMailConnection(settingsOverride);
                   setConnTestResult(res);
                 } catch (e: any) {
                   setConnTestResult({ success: false, message: e.message });
@@ -689,7 +690,7 @@ export default function Settings() {
                 setRenewalDryRunning(true);
                 setRenewalDryRunResult(null);
                 try {
-                  const res = await (window as any).electronAPI.renewalDryRun();
+                  const res = await api.renewalDryRun();
                   setRenewalDryRunResult(res);
                 } catch (e: any) {
                   setRenewalDryRunResult({ total_checked: 0, matched: 0, emails: [], error: e.message });
@@ -806,7 +807,7 @@ export default function Settings() {
                   smtp_tls: smtpTls,
                   report_email_to: f.report_email_to,
                 };
-                const res = await (window as any).electronAPI.smtpTestEmail(settingsOverride);
+                const res = await api.testSmtp(settingsOverride);
                 setSmtpTestResult(res);
               } catch (e: any) {
                 setSmtpTestResult({ success: false, message: e.message });
@@ -890,9 +891,9 @@ export default function Settings() {
               const resultDiv = btn.parentElement?.querySelector('.slack-test-result') as HTMLElement;
               if (resultDiv) resultDiv.style.display = 'none';
               try {
-                const res = await (window as any).electronAPI.slackTestWebhook({
+                const res = await api.testSlack({
                   slack_webhook_url: formVals.current.slack_webhook_url,
-                });
+                }) as any;
                 if (resultDiv) {
                   resultDiv.style.display = 'block';
                   resultDiv.style.background = res.success ? '#f0fdf4' : '#fef2f2';
@@ -1068,7 +1069,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
     setPolling(true);
     setPollMsg('폴링 중...');
     try {
-      const result = await (window as any).electronAPI.pollNow(sourceId);
+      const result = await api.pollNow(sourceId) as any;
       setPollMsg(`${t(lang, 'poll_complete')}${result.found}${t(lang, 'poll_collected')}${result.errors.length > 0 ? `${t(lang, 'poll_error_count')}${result.errors.length}${t(lang, 'poll_error_suffix')}` : ''}`);
       if (result.errors.length > 0) alert('오류:\n' + result.errors.join('\n'));
     } catch (e: any) {
@@ -1083,7 +1084,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
     try {
       // \ud604\uc7ac form\uc5d0 \uc785\ub825\ub41c \uac12\uc744 \uc800\uc7a5 \uc804\uc5d0\ub3c4 \ubc18\uc601\ud558\uae30 \uc704\ud574 source \uac1d\uccb4 \uc790\uccb4\ub97c overrides\ub85c \uc804\ub2ec
       const currentSrc = sources.find((s: any) => s.id === sourceId);
-      const dryResult = await (window as any).electronAPI.pollDryRun(sourceId, currentSrc || {});
+      const dryResult = await api.pollDryRun(sourceId, currentSrc || {}) as any;
       // dryResult.sources[0] is the result for this source
       const sourceResult = dryResult.sources && dryResult.sources[0] ? dryResult.sources[0] : null;
       setDryRunState(prev => ({ ...prev, [sourceId]: { running: false, result: sourceResult } }));

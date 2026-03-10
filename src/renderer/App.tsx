@@ -6,13 +6,14 @@ import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import type { Language } from './i18n';
 import { t } from './i18n';
+import { api } from './api';
 
 // ── 언어 Context ──────────────────────────────────────────────────────────────
 interface LangCtx {
   lang: Language;
   setLang: (l: Language) => void;
 }
-export const LanguageContext = createContext<LangCtx>({ lang: 'ko', setLang: () => {} });
+export const LanguageContext = createContext<LangCtx>({ lang: 'ko', setLang: () => { } });
 export const useLang = () => useContext(LanguageContext);
 
 type Page = 'dashboard' | 'serials' | 'orders' | 'settings' | 'logs';
@@ -25,7 +26,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const settings = await window.electronAPI.getSettings();
+        const settings = await api.getSettings() as any;
         if (settings.app_language) {
           setLang(settings.app_language as Language);
         }
@@ -37,19 +38,19 @@ export default function App() {
 
   const NAV_ITEMS: { key: Page; label: string; icon: string }[] = [
     { key: 'dashboard', label: t(lang, 'nav_dashboard'), icon: '📊' },
-    { key: 'serials',   label: t(lang, 'nav_serials'),   icon: '🔑' },
-    { key: 'orders',    label: t(lang, 'nav_orders'),    icon: '📬' },
-    { key: 'logs',      label: t(lang, 'nav_logs'),      icon: '📋' },
-    { key: 'settings',  label: t(lang, 'nav_settings'),  icon: '⚙️' },
+    { key: 'serials', label: t(lang, 'nav_serials'), icon: '🔑' },
+    { key: 'orders', label: t(lang, 'nav_orders'), icon: '📬' },
+    { key: 'logs', label: t(lang, 'nav_logs'), icon: '📋' },
+    { key: 'settings', label: t(lang, 'nav_settings'), icon: '⚙️' },
   ];
 
   const renderPage = () => {
     switch (page) {
       case 'dashboard': return <Dashboard />;
-      case 'serials':   return <Serials />;
-      case 'orders':    return <Orders />;
-      case 'settings':  return <Settings />;
-      case 'logs':      return <Logs />;
+      case 'serials': return <Serials />;
+      case 'orders': return <Orders />;
+      case 'settings': return <Settings />;
+      case 'logs': return <Logs />;
     }
   };
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../api';
 
 interface Props {
   serial: any;
@@ -17,16 +18,14 @@ export default function AddOnManager({ serial, onClose }: Props) {
       name: newAddon.trim(),
       added_date: new Date().toISOString().slice(0, 10),
     };
-    await window.electronAPI.addAddon(serial.id, addon);
+    await api.addAddon(serial.id, addon);
     setAddOns([...addOns, addon]);
     setNewAddon('');
   };
 
   const handleRemove = async (name: string) => {
     const updated = addOns.filter(a => a.name !== name);
-    await window.electronAPI.updateSerial(serial.id, {
-      add_ons: updated,
-    });
+    await api.updateSerial(serial.id, { add_ons: updated });
     setAddOns(updated);
   };
 

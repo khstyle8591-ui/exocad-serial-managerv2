@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
+import { api } from '../api';
 
 interface PendingOrder {
   id: number;
@@ -42,7 +43,7 @@ export default function Orders() {
 
   const loadOrders = async () => {
     try {
-      const data = await window.electronAPI.getOrders();
+      const data = await api.getOrders() as PendingOrder[];
       setOrders(data || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -52,7 +53,7 @@ export default function Orders() {
     setPolling(true);
     setPollMsg(t(lang, 'orders_polling'));
     try {
-      const result = await window.electronAPI.pollNow();
+      const result = await api.pollNow() as any;
       setPollMsg(`${t(lang, 'orders_poll_done')}${result.found}${t(lang, 'orders_poll_unit')}`);
       if (result.errors?.length > 0) alert(t(lang, 'orders_poll_errors') + result.errors.join('\n'));
       loadOrders();
@@ -64,7 +65,7 @@ export default function Orders() {
   };
 
   const handleApprove = async (id: number) => {
-    const result = await window.electronAPI.approveOrder(id);
+    const result = await api.approveOrder(id) as any;
     if (result.success) {
       alert(t(lang, 'orders_approve_success'));
     } else {
@@ -75,18 +76,18 @@ export default function Orders() {
 
   const handleReject = async (id: number) => {
     if (!confirm(t(lang, 'orders_confirm_reject'))) return;
-    await window.electronAPI.rejectOrder(id);
+    await api.rejectOrder(id);
     loadOrders();
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm(t(lang, 'orders_confirm_delete'))) return;
-    await window.electronAPI.deleteOrder(id);
+    await api.deleteOrder(id);
     loadOrders();
   };
 
   const handleEditSave = async (updated: PendingOrder) => {
-    await window.electronAPI.updateOrder(updated.id, updated);
+    await api.updateOrder(updated.id, updated);
     setEditOrder(null);
     loadOrders();
   };
@@ -169,8 +170,8 @@ export default function Orders() {
               key={order.id}
               style={{
                 border: `1px solid ${order.flag_duplicate ? '#fca5a5'
-                    : order.status === 'pending' ? '#fbbf24'
-                      : '#e5e7eb'
+                  : order.status === 'pending' ? '#fbbf24'
+                    : '#e5e7eb'
                   }`,
                 borderRadius: 10,
                 padding: '16px 20px',
