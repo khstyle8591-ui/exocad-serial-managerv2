@@ -1,0 +1,9 @@
+/src
+/release
+/release2
+/\.git
+/\.claude
+/tsconfig.*
+/vite\.config.*
+/electron-builder\.json
+/README\.md

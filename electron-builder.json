@@ -1,0 +1,39 @@
+{
+  "appId": "com.exocad.manager",
+  "productName": "Exocad Serial Manager",
+  "copyright": "Copyright © 2024",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "node_modules/**/*",
+    "!node_modules/.cache/**/*",
+    "!node_modules/**/test/**/*",
+    "!node_modules/**/tests/**/*",
+    "!node_modules/**/__tests__/**/*",
+    "!node_modules/**/docs/**/*",
+    "!node_modules/**/example/**/*",
+    "!node_modules/**/examples/**/*",
+    "!**/.git/**/*",
+    "!**/node_modules/electron/**/*",
+    "!**/node_modules/electron-builder/**/*"
+  ],
+  "asar": true,
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": null,
+    "signingHashAlgorithms": null,
+    "sign": null
+  },
+  "portable": {
+    "splashImage": null
+  },
+  "extraResources": []
+}
