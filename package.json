@@ -5,6 +5,8 @@
   "author": "Exocad Manager",
   "main": "dist/main/main/index.js",
   "scripts": {
+    "start:server": "node dist/main/main/server.js",
+    "build:server": "tsc -p tsconfig.main.json",
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite --config vite.config.mts",
