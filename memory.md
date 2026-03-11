@@ -1,49 +1,42 @@
 # Exocad Manager — Memory
 
-> Last Update: 2026-03-03 (Order Polling — CAD Category Pre-select)
+> Last Update: 2026-03-11 (Express Web Server Migration & GCP Deployment)
 
-## Projects
+## Project Overview
+Exocad serial number management automation system. Originally a Windows Electron Desktop App, now fully migrated to a standalone **Express Web Server for GCP deployment**.
 
-### 1. exocad-manager (Electron Desktop App)
 - **Path**: `C:\Users\pf-5y\OneDrive\Desktop\Project\exocad-manager`
-- **Stack**: Electron 28, React 18, TypeScript 5, Vite, better-sqlite3
-- **Tools**: Playwright (Chromium), node-pop3, imap, nodemailer, node-cron, xlsx
+- **Stack**: Express.js + React 18, TypeScript 5, Vite, better-sqlite3
+- **Tools**: Playwright (Chromium), node-pop3, imap, nodemailer, node-cron, xlsx, PM2, Certbot (HTTPS)
+- **Deployment Status**: ✅ Running on GCP (`geomedi-exocad.duckdns.org`, HTTPS enabled)
 
-### 2. exocad-web-server (Web Server — NEW)
-- **Path**: `C:\Users\pf-5y\OneDrive\Desktop\Project\exocad-web-server`
-- **Stack**: Express.js + React 18 + Vite, better-sqlite3, same service layer
-- **Status**: ✅ Running on External Server (Oracle Cloud).
-- **Public URL**: Managed via `scripts/tunnel.js` (supports Cloudflare, ngrok, direct).
-- **Deployment**: `scripts/deploy.sh` for one-click Ubuntu setup.
-- **Config**: Settings managed via `.env` (prioritized) and `tunnel.config.json`.
+## Architecture (Web Server Mode)
 
-## exocad-web-server Architecture
-
-- `src/main/`: Node.js backend services (copied & adapted from Electron)
-  - `database.ts` — uses `process.cwd()/data` (not Electron path)
+- `src/main/`: Node.js backend services (Logic separated from Electron)
+  - `server.ts` — Express main entry point (HTTP: 3000, HTTPS: 3443 fallback)
+  - `database.ts` — uses `process.cwd()/data`
   - `settings.ts`, `scheduler.ts`, `utils/logger.ts`
   - `services/`: serial, cancel, email-monitor, notification, excel, order
-  - `types/node-pop3.d.ts` — custom declaration shim
-- `src/server/`: Express HTTP server
-  - `index.ts` — entry point, mounts all routers, serves React build
-  - `routes/`: serials, settings, orders, logs, cancel, renewal, reports
-- `src/renderer/`: React frontend, uses `src/renderer/api.ts` (fetch-based, replaces `window.electronAPI`)
-- `src/shared/types.ts`
+- `src/server/routes/`: Express API endpoints (replaces `ipcMain` handlers)
+  - `serials.ts`, `settings.ts`, `orders.ts`, `logs.ts`, `cancel.ts`, `reports.ts`, `renewal.ts`
+- `src/renderer/`: React frontend (Vite)
+  - `src/renderer/api.ts` — fetch-based API client (replaces `window.electronAPI`)
 
-### Key Adaptations (Electron → Web)
-- `window.electronAPI.*` → `api.*` (fetch calls to `/api/...`)
-- `app.getPath('userData')` → `process.cwd()/data`
-- `dialog.showOpenDialog()` → `<input type="file">` + multipart POST
-- `generateTemplate()` → returns `Buffer` for HTTP streaming
-- `ipcMain` handlers → Express routes
+### Key Migrations (Electron → Web Server)
+- **IPC to HTTP**: `window.electronAPI.*` calls entirely replaced with standard `fetch` API calls (`api.*`).
+- **File System**: `app.getPath('userData')` removed in favor of `process.cwd()/data` and `logs/`.
+- **Uploads/Downloads**: Removed Electron native dialogs. Uses `<input type="file">` for multipart logic and downloads Buffer streams.
+- **Express Integration**: Serve static React files (`dist/renderer`) and APIs (`/api/*`) on a single port.
+- **Build System**: Added `tsconfig.server.json`. Build commands changed to `build:server` and `build:renderer`.
 
-### Build Fixes Applied
-- `tsconfig.server.json` `outDir`: `"dist/server"` → `"dist"` (rootDir=src → src/server/index.ts compiles to dist/server/index.js)
-- `vite.config.mts` `root`/`outDir`: changed to `path.resolve(__dirname,...)` + `fileURLToPath(import.meta.url)` for ESM `__dirname`
-- `tsconfig.server.json` `lib`: added `"dom"` for Playwright `page.evaluate()` callbacks
-- Route imports: `../main/` → `../../main/` (routes are in `src/server/routes/`)
-- `node-pop3` has no `@types` — added `src/main/types/node-pop3.d.ts`
-- Removed Windows-incompatible `postinstall` script (used Unix `true` command)
+## GCP Deployment Workflow (Ubuntu)
+
+1. **Git Sync**: `git pull` from GitHub repository.
+2. **Native Modules Rebuild**: `npm rebuild better-sqlite3` is required on the Linux server because it's locally built for Windows/Electron.
+3. **Build**: `npm run build:server` & `npm run build:renderer`.
+4. **PM2 Process Manager**: Run via `pm2 start ecosystem.config.js` (managed as `exocad-serial`).
+5. **Port Forwarding**: Iptables routes traffic from `80` to `3000` and `443` to `3443`.
+6. **HTTPS SSL**: Configured with Let's Encrypt Certbot (`geomedi-exocad.duckdns.org`), dynamically read by `server.ts` on boot.
 
 ## exocad-manager Architecture (Electron)
 
@@ -158,7 +151,8 @@ Exocad serial number management automation desktop app.
 - Link Webhook port & auto-cancel time to UI (Low).
 - E2E verify full cancel flow with an Active serial (High).
 
-## Dev Commands
-- `npm run dev` (run everything sequentially/concurrently)
-- `npm run dev:main`, `npm run dev:renderer`, `npm run dev:electron`.
-- Build check: `cmd /c "node_modules\.bin\tsc -p tsconfig.main.json --noEmit"` (PowerShell 실행 정책 제한으로 npx 대신 직접 경로 호출)
+## Dev Commands (Local Workflow)
+- `npm run build:server` — Compile backend Express server (tsc)
+- `npm run build:renderer` — Compile frontend React UI (Vite)
+- `npm run dev` — Concurrent development (Not heavily used in pure server mode)
+- Deploy to GCP: Push to `main`, pull on GCP, rebuild, and `pm2 restart exocad-serial`.

@@ -4,11 +4,7 @@ import { restartPreExpiryTask } from '../../main/scheduler';
 
 const router = Router();
 
-// POST /api/cancel/:serialNumber  (수동 취소)
-router.post('/:serialNumber', async (req: Request, res: Response) => {
-    const result = await cancelService.cancelSubscription(req.params.serialNumber as string, true); // headless=true (서버)
-    res.json(result);
-});
+
 
 // POST /api/cancel/run/expired  (만료된 시리얼 일괄 취소)
 router.post('/run/expired', async (_req: Request, res: Response) => {
@@ -32,6 +28,12 @@ router.post('/run/dry-run', async (_req: Request, res: Response) => {
 router.post('/restart-scheduler', (_req: Request, res: Response) => {
     restartPreExpiryTask();
     res.json({ ok: true });
+});
+
+// POST /api/cancel/:serialNumber  (수동 취소. 반드시 하단에 위치해야 라우팅 우선순위를 침범하지 않음)
+router.post('/:serialNumber', async (req: Request, res: Response) => {
+    const result = await cancelService.cancelSubscription(req.params.serialNumber as string, true); // headless=true (서버)
+    res.json(result);
 });
 
 export default router;
