@@ -459,7 +459,36 @@ export class NotificationService {
       return { success: true, message: 'SMTP 연결 성공 및 테스트 메일 발송 완료' };
     } catch (err: any) {
       logger.error(`SMTP 연결 테스트 오류: ${err.message}`);
-      return { success: false, message: `테스트 실패: ${err.message}` };
+
+      // Gmail 530 / 535 인증 오류 → App Password 안내
+      const msg: string = err.message || '';
+      if (
+        msg.includes('535') || msg.includes('530') ||
+        msg.includes('Authentication') || msg.includes('Username and Password not accepted')
+      ) {
+        const isGmail = (settings.smtp_host || '').toLowerCase().includes('gmail');
+        if (isGmail) {
+          return {
+            success: false,
+            message:
+              '❌ Gmail 인증 실패 (530/535)\n\n' +
+              '✅ 해결 방법: Gmail 계정의 일반 비밀번호 대신 "앱 비밀번호(App Password)"를 사용해야 합니다.\n\n' +
+              '📌 앱 비밀번호 생성 방법:\n' +
+              '1. Google 계정 → 보안 → 2단계 인증 활성화 필수\n' +
+              '2. 보안 → 앱 비밀번호 → "기타(사용자 지정)" 선택\n' +
+              '3. 생성된 16자리 비밀번호를 SMTP Password에 입력\n\n' +
+              '🔗 https://myaccount.google.com/apppasswords',
+          };
+        }
+        return {
+          success: false,
+          message:
+            `❌ SMTP 인증 실패: ${msg}\n\n` +
+            '비밀번호 또는 계정 설정을 확인하세요. Gmail 사용 시 앱 비밀번호가 필요합니다.',
+        };
+      }
+
+      return { success: false, message: `테스트 실패: ${msg}` };
     }
   }
 

@@ -554,6 +554,7 @@ export class EmailMonitorService {
   private analyzeEmail(email: ParsedEmail): {
     isRenewal: boolean;
     isRelated: boolean;
+    isExcluded: boolean;
     serialNumber: string | null;
     matchedGroups: { product: string[]; action: string[] };
     isDedicated: boolean;
@@ -562,23 +563,33 @@ export class EmailMonitorService {
     const isDedicated = this.isDedicatedEmailTarget(email);
     const searchText = `${email.subject} ${email.body}`.toLowerCase();
 
-    // 0. Exclude keywords: 제외 키워드 하나라도 매칭되면 전체 스킵
+    // 1. Product keywords - 먼저 체크 (제외 키워드 판단에도 사용)
+    const productKws = settings.renewal_product_keywords || [];
+    const matchedProducts = productKws.filter((kw: string) => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    const hasProductMatch = matchedProducts.length > 0;
+
+    // 0. Exclude keywords: 제외 키워드 하나라도 매칭되면 갱신 제외
+    //    단, 제품 키워드도 매칭됐다면 '관련 메일 알림'은 계속 발송
     const excludeKws = settings.renewal_exclude_keywords || [];
-    const hasExcluded = excludeKws.some(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    const hasExcluded = excludeKws.some((kw: string) => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
     if (hasExcluded) {
-      logger.info(`[analyzeEmail] 제외 키워드 매칭으로 스킵: from=${email.from}, subject=${email.subject}`);
-      return { isRenewal: false, isRelated: false, serialNumber: null, matchedGroups: { product: [], action: [] }, isDedicated: false };
+      logger.info(`[analyzeEmail] 제외 키워드 매칭 → 갱신 제외 (알림은 ${hasProductMatch ? '발송' : '없음'}): from=${email.from}, subject=${email.subject}`);
+      // 제품 키워드가 매칭된 경우에만 관련 메일 알림 전송 (갱신 처리는 하지 않음)
+      return {
+        isRenewal: false,
+        isRelated: hasProductMatch,       // 제품 키워드 매칭됐으면 알림은 보냄
+        isExcluded: true,                 // 제외 키워드 플래그
+        serialNumber: null,
+        matchedGroups: { product: matchedProducts, action: [] },
+        isDedicated: false,
+      };
     }
 
-    // 1. Condition 1: Product keywords
-    const productKws = settings.renewal_product_keywords || [];
-    const matchedProducts = productKws.filter(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
-    const productMatched = productKws.length === 0 || matchedProducts.length > 0;
-    const hasProductMatch = matchedProducts.length > 0;
+    const productMatched = productKws.length === 0 || hasProductMatch;
 
     // 2. Condition 2: Action keywords (fallback to renewal_keywords if action is empty)
     const actionKws = (settings.renewal_action_keywords?.length > 0 ? settings.renewal_action_keywords : settings.renewal_keywords) || [];
-    const matchedActions = actionKws.filter(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    const matchedActions = actionKws.filter((kw: string) => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
     const actionMatched = actionKws.length === 0 || matchedActions.length > 0;
 
     // 3. Condition 3: Serial extraction
@@ -596,6 +607,7 @@ export class EmailMonitorService {
     return {
       isRenewal,
       isRelated,
+      isExcluded: false,
       serialNumber,
       matchedGroups: { product: matchedProducts, action: matchedActions },
       isDedicated,

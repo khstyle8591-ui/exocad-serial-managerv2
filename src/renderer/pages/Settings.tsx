@@ -830,6 +830,20 @@ export default function Settings() {
             <input key={`smtppw-${loadKey}`} type="password" defaultValue={formVals.current.smtp_password || ''} onChange={e => setVal('smtp_password', e.target.value)} />
           </div>
         </div>
+
+        {/* Gmail App Password 안내 */}
+        <div style={{
+          marginTop: 4, marginBottom: 8, padding: '10px 14px',
+          background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, fontSize: 12,
+        }}>
+          <strong>💡 Gmail 사용 시 안내:</strong> Gmail은 일반 비밀번호 로그인이 더 이상 지원되지 않습니다.
+          <strong>"앱 비밀번호(App Password)"</strong>를 생성해서 이곳에 입력해야 합니다.{' '}
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer"
+            style={{ color: '#ea580c', fontWeight: 700 }}>
+            → 앱 비밀번호 생성
+          </a>
+          {' '}(구글 전 반드시 2단계 인증 활성화 필요)
+        </div>
         <div className="form-group">
           <label>{t(lang, 'label_report_email')}</label>
           <input key={`rmail-${loadKey}`} defaultValue={formVals.current.report_email_to || ''} onChange={e => setVal('report_email_to', e.target.value)} placeholder="admin@example.com" />
@@ -872,12 +886,14 @@ export default function Settings() {
           </button>
           {smtpTestResult && (
             <div style={{
-              marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 13,
+              marginTop: 8, padding: '10px 14px', borderRadius: 8, fontSize: 13,
               background: smtpTestResult.success ? '#f0fdf4' : '#fef2f2',
               border: `1px solid ${smtpTestResult.success ? '#86efac' : '#fca5a5'}`,
               color: smtpTestResult.success ? '#166534' : '#dc2626',
+              whiteSpace: 'pre-wrap',    // \n 줄바꽔으로 표시
+              lineHeight: 1.8,
             }}>
-              {smtpTestResult.success ? '✅' : '❌'} {smtpTestResult.message}
+              {smtpTestResult.message}
             </div>
           )}
         </div>
