@@ -312,10 +312,12 @@ export class NotificationService {
         port,
         secure: useImplicitSSL,
         requireTLS: !useImplicitSSL && settings.smtp_tls,
-        auth: {
-          user: settings.smtp_user,
-          pass: settings.smtp_password,
-        },
+        ...(settings.smtp_user ? {
+          auth: {
+            user: settings.smtp_user,
+            pass: settings.smtp_password,
+          }
+        } : {}),
       });
 
       await transporter.sendMail({
@@ -355,10 +357,12 @@ export class NotificationService {
         port,
         secure: useImplicitSSL,
         requireTLS: !useImplicitSSL && settings.smtp_tls,
-        auth: {
-          user: settings.smtp_user,
-          pass: settings.smtp_password,
-        },
+        ...(settings.smtp_user ? {
+          auth: {
+            user: settings.smtp_user,
+            pass: settings.smtp_password,
+          }
+        } : {}),
         connectionTimeout: 10000,
       });
 

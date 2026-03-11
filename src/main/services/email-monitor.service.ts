@@ -150,6 +150,8 @@ export class EmailMonitorService {
           const rawMessage = await pop3.RETR(msgNum);
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
           const email = this.parseEmailRaw(rawStr);
+          // 1일 이내 메일만 dry-run 스캔
+          if (!this.isWithin1Day(email.date)) continue;
           const dryEntry = this.buildDryRunEntry(email);
           if (dryEntry) emails.push(dryEntry);
         } catch { /* skip individual mail errors */ }
@@ -192,8 +194,9 @@ export class EmailMonitorService {
         imap.openBox('INBOX', true, (err) => {
           if (err) { return done(); }
 
-          // Dry-run: check ALL mails (not just UNSEEN), no markSeen
-          imap.search(['ALL'], (err, uids) => {
+          // Dry-run: check ALL mails since 1 day ago (not just UNSEEN), no markSeen
+          const since1Day = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+          imap.search(['ALL', ['SINCE', since1Day]], (err, uids) => {
             if (err || !uids || uids.length === 0) { return done(); }
 
             // Limit to last 50 to avoid overloading
@@ -296,12 +299,12 @@ export class EmailMonitorService {
   }
 
   // ─── 3일 내 수신 여부 판단 ─────────────────────────────────────────────────
-  private isWithin3Days(dateStr: string): boolean {
+  private isWithin1Day(dateStr: string): boolean {
     if (!dateStr) return false;
     try {
       const mailDate = new Date(dateStr).getTime();
       if (isNaN(mailDate)) return false;
-      const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000; // 3일 전 timestamp
+      const cutoff = Date.now() - 1 * 24 * 60 * 60 * 1000; // 1일 전 timestamp
       return mailDate >= cutoff;
     } catch {
       return false;
@@ -338,9 +341,9 @@ export class EmailMonitorService {
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
           const email = this.parseEmailRaw(rawStr);
 
-          // 3일 이내 메일만 처리 — 날짜가 없거나 콩뽐 이전 메일은 스킵 (DELE는 실행해 다음에 다시 안 올 수 있게)
-          if (!this.isWithin3Days(email.date)) {
-            logger.info(`POP3: 3일 초과 메일 건너눠: from=${email.from}, date=${email.date}`);
+          // 1일 이내 메일만 처리 — 날짜가 없거나 콩뽐 이전 메일은 스킵 (DELE는 실행해 다음에 다시 안 올 수 있게)
+          if (!this.isWithin1Day(email.date)) {
+            logger.info(`POP3: 1일 초과 메일 건너뜀: from=${email.from}, date=${email.date}`);
             try { await pop3.DELE(msgNum); } catch { /* ignore */ }
             continue;
           }
@@ -407,9 +410,9 @@ export class EmailMonitorService {
             return done();
           }
 
-          // UNSEEN 미독 + 최근 3일 이내 메일만 검색 (서버사이드 필터)
-          const since3Days = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-          imap.search(['UNSEEN', ['SINCE', since3Days]], (err, uids) => {
+          // UNSEEN 미독 + 최근 1일 이내 메일만 검색 (서버사이드 필터)
+          const since1Day = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+          imap.search(['UNSEEN', ['SINCE', since1Day]], (err, uids) => {
             if (err) {
               errors.push(`메일 검색 오류: ${err.message}`);
               return done();
