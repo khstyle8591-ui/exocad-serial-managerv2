@@ -380,20 +380,20 @@ export class NotificationService {
 
     try {
       const port = Number(settings.smtp_port) || 587;
-      // port 465 → implicit SSL (secure:true)
-      // port 587/other → STARTTLS (secure:false, requireTLS if smtp_tls checked)
       const useImplicitSSL = port === 465;
+      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
+      // 앱 비밀번호 공백 제거
+      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
+
       const transporter = nodemailer.createTransport({
         host: settings.smtp_host,
         port,
         secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && settings.smtp_tls,
-        ...(settings.smtp_user ? {
-          auth: {
-            user: settings.smtp_user,
-            pass: settings.smtp_password,
-          }
-        } : {}),
+        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
+        auth: {
+          user: settings.smtp_user,
+          pass: cleanPassword,
+        },
       });
 
       await transporter.sendMail({
@@ -413,11 +413,24 @@ export class NotificationService {
 
   // === Test Connection (SMTP) ===
   async testSmtpConnection(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
-    // settingsOverride는 UI에서 보낼 때 partial일 수 있으므로, 저장된 설정과 반드시 병합
-    const settings = { ...getSettings(), ...(settingsOverride || {}) };
+    // settingsOverride에 undefined 값이 있으면 DB 저장값을 덮어쓰는 버그 방지
+    // undefined/null 제거 후 병합
+    const cleanOverride = Object.fromEntries(
+      Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    );
+    const settings = { ...getSettings(), ...cleanOverride };
+
+    // 로그: 어떤 값으로 테스트하는지 확인 (비밀번호는 마스킹)
+    logger.info(`SMTP 테스트 - host: ${settings.smtp_host}, port: ${settings.smtp_port}, user: ${settings.smtp_user}, hasPassword: ${!!settings.smtp_password}`);
 
     if (!settings.smtp_host) {
       return { success: false, message: 'SMTP 서버 주소를 입력해주세요.' };
+    }
+    if (!settings.smtp_user) {
+      return { success: false, message: 'SMTP 사용자명(이메일)을 입력해주세요.' };
+    }
+    if (!settings.smtp_password) {
+      return { success: false, message: 'SMTP 비밀번호 또는 앱 비밀번호를 입력해주세요.' };
     }
     if (!settings.report_email_to) {
       return { success: false, message: '리포트 수신 이메일을 입력해주세요.' };
@@ -426,21 +439,23 @@ export class NotificationService {
     try {
       logger.info(`SMTP 연결 테스트 시작: ${settings.smtp_host}:${settings.smtp_port}`);
       const port = Number(settings.smtp_port) || 587;
-      // port 465 → implicit SSL (secure:true)
-      // port 587/other → STARTTLS (secure:false, requireTLS if smtp_tls checked)
       const useImplicitSSL = port === 465;
+      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
+
+      // 앱 비밀번호 공백 제거 (Google App Password는 'xxxx xxxx xxxx xxxx' 형태로 복붙되는 경우 있음)
+      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
+
       const transporter = nodemailer.createTransport({
         host: settings.smtp_host,
         port,
         secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && settings.smtp_tls,
-        ...(settings.smtp_user ? {
-          auth: {
-            user: settings.smtp_user,
-            pass: settings.smtp_password,
-          }
-        } : {}),
-        connectionTimeout: 10000,
+        // Gmail port 587 사용 시 STARTTLS 강제 (requireTLS: true)
+        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
+        auth: {
+          user: settings.smtp_user,
+          pass: cleanPassword,
+        },
+        connectionTimeout: 15000,
       });
 
       // Verify connection configuration
