@@ -252,6 +252,7 @@ export interface AppSettings {
 
   // Slack Settings
   slack_webhook_url: string;
+  slack_webhook_url_related: string; // 새로 추가된 관련된 메일 전용 슬랙 알림 웹훅
   slack_language: 'ko' | 'en' | 'ja';  // Slack 메시지 언어 (UI 언어와 독립)
 
   // Exocad Site Settings (브라우저 자동화)

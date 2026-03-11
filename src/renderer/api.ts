@@ -78,10 +78,12 @@ export const api = {
     saveSettings: (data: unknown) => post('/settings', data),
     testSmtp: (override?: unknown) => post('/settings/test-smtp', override),
     testSlack: (override?: unknown) => post('/settings/test-slack', override),
+    testSlackRelated: (override?: unknown) => post('/settings/test-slack-related', override),
 
     // ── Logs ──────────────────────────────────────────────────────────────────
     getLogs: (limit = 100, offset = 0) => get(`/logs?limit=${limit}&offset=${offset}`),
     getTodayLogs: () => get('/logs/today'),
+    getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
 
     // ── Webhook (stub) ────────────────────────────────────────────────────────
     getWebhookStatus: () => Promise.resolve({ running: false, port: 3000 }),

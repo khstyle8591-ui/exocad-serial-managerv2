@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   smtp_tls: false,
   report_email_to: '',
   slack_webhook_url: '',
+  slack_webhook_url_related: '',
   slack_language: 'ko' as const,
   exocad_site_url: 'https://partner.exocad.com/license-management',
   exocad_login_url: 'https://myaccount-us.aligntech.com/u/login?state=hKFo2SBvVS1pa3MyUFUtZkhvSWdVWngzZmZiY3VISUhPWW5TNKFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIElkN25mZDdNTzBOdWRWaU9lVHZyVEdnLVBLSkR2Mjk5o2NpZNkgV3NZNmUyY0ZTWEFwMUdlSkhsRmJwcllhYUNySWVZWVQ',

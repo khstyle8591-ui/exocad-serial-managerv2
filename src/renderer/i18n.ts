@@ -10,6 +10,7 @@ export const translations = {
     nav_serials: 'Serials',
     nav_orders: '대기 주문',
     nav_logs: 'Activity Logs',
+    nav_system_logs: 'System Logs',
     nav_settings: 'Settings',
     app_title: 'Exocad Manager',
 
@@ -322,6 +323,7 @@ export const translations = {
     nav_serials: 'Serials',
     nav_orders: 'Pending Orders',
     nav_logs: 'Activity Logs',
+    nav_system_logs: 'System Logs',
     nav_settings: 'Settings',
     app_title: 'Exocad Manager',
 
@@ -634,6 +636,7 @@ export const translations = {
     nav_serials: 'シリアル',
     nav_orders: '保留注文',
     nav_logs: 'アクティビティログ',
+    nav_system_logs: 'システムログ',
     nav_settings: '設定',
     app_title: 'Exocad Manager',
 

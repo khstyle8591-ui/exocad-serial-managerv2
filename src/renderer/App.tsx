@@ -4,6 +4,7 @@ import Serials from './pages/Serials';
 import Orders from './pages/Orders';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
+import SystemLogs from './pages/SystemLogs';
 import type { Language } from './i18n';
 import { t } from './i18n';
 import { api } from './api';
@@ -16,7 +17,7 @@ interface LangCtx {
 export const LanguageContext = createContext<LangCtx>({ lang: 'ko', setLang: () => { } });
 export const useLang = () => useContext(LanguageContext);
 
-type Page = 'dashboard' | 'serials' | 'orders' | 'settings' | 'logs';
+type Page = 'dashboard' | 'serials' | 'orders' | 'settings' | 'logs' | 'system_logs';
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
@@ -41,6 +42,7 @@ export default function App() {
     { key: 'serials', label: t(lang, 'nav_serials'), icon: '🔑' },
     { key: 'orders', label: t(lang, 'nav_orders'), icon: '📬' },
     { key: 'logs', label: t(lang, 'nav_logs'), icon: '📋' },
+    { key: 'system_logs', label: t(lang, 'nav_system_logs'), icon: '🖥️' },
     { key: 'settings', label: t(lang, 'nav_settings'), icon: '⚙️' },
   ];
 
@@ -51,6 +53,7 @@ export default function App() {
       case 'orders': return <Orders />;
       case 'settings': return <Settings />;
       case 'logs': return <Logs />;
+      case 'system_logs': return <SystemLogs />;
     }
   };
 

@@ -870,8 +870,13 @@ export default function Settings() {
       <div className="settings-section">
         <SectionHeader title={t(lang, 'section_slack')} onManual={() => setManualOpen('slack')} />
         <div className="form-group">
-          <label>{t(lang, 'label_slack_webhook')}</label>
+          <label>기본 알림 Slack Webhook URL</label>
           <input key={`slack-${loadKey}`} defaultValue={formVals.current.slack_webhook_url || ''} onChange={e => setVal('slack_webhook_url', e.target.value)} placeholder="https://hooks.slack.com/services/..." />
+        </div>
+
+        <div className="form-group" style={{ marginTop: 14 }}>
+          <label>관련 메일 수신(System Log) 전용 Slack Webhook URL (선택적)</label>
+          <input key={`slack-related-${loadKey}`} defaultValue={formVals.current.slack_webhook_url_related || ''} onChange={e => setVal('slack_webhook_url_related', e.target.value)} placeholder="https://hooks.slack.com/services/... (비워두면 기본 Webhook 사용)" />
         </div>
 
         {/* Slack 메시지 언어 선택 */}
@@ -914,51 +919,100 @@ export default function Settings() {
         </div>
 
         {/* Slack Webhook Test */}
-        <div style={{ marginTop: 12 }}>
-          <button
-            className="btn btn-secondary"
-            style={{ background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a' }}
-            disabled={(window as any).__slackTesting}
-            onClick={async (e) => {
-              const btn = e.currentTarget;
-              btn.disabled = true;
-              btn.textContent = t(lang, 'slack_test_sending');
-              const resultDiv = btn.parentElement?.querySelector('.slack-test-result') as HTMLElement;
-              if (resultDiv) resultDiv.style.display = 'none';
-              try {
-                const res = await api.testSlack({
-                  slack_webhook_url: formVals.current.slack_webhook_url,
-                }) as any;
-                if (resultDiv) {
-                  resultDiv.style.display = 'block';
-                  resultDiv.style.background = res.success ? '#f0fdf4' : '#fef2f2';
-                  resultDiv.style.borderColor = res.success ? '#86efac' : '#fca5a5';
-                  resultDiv.style.color = res.success ? '#166534' : '#dc2626';
-                  resultDiv.textContent = `${res.success ? '✅' : '❌'} ${res.message}`;
+        <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <button
+              className="btn btn-secondary"
+              style={{ background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a' }}
+              disabled={(window as any).__slackTesting}
+              onClick={async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = t(lang, 'slack_test_sending');
+                const resultDiv = btn.parentElement?.querySelector('.slack-test-result') as HTMLElement;
+                if (resultDiv) resultDiv.style.display = 'none';
+                try {
+                  const res = await api.testSlack({
+                    slack_webhook_url: formVals.current.slack_webhook_url,
+                  }) as any;
+                  if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = res.success ? '#f0fdf4' : '#fef2f2';
+                    resultDiv.style.borderColor = res.success ? '#86efac' : '#fca5a5';
+                    resultDiv.style.color = res.success ? '#166534' : '#dc2626';
+                    resultDiv.textContent = `${res.success ? '✅' : '❌'} ${res.message}`;
+                  }
+                } catch (err: any) {
+                  if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = '#fef2f2';
+                    resultDiv.style.borderColor = '#fca5a5';
+                    resultDiv.style.color = '#dc2626';
+                    resultDiv.textContent = `❌ ${err.message}`;
+                  }
+                } finally {
+                  btn.disabled = false;
+                  btn.textContent = '기본 URL 테스트';
                 }
-              } catch (err: any) {
-                if (resultDiv) {
-                  resultDiv.style.display = 'block';
-                  resultDiv.style.background = '#fef2f2';
-                  resultDiv.style.borderColor = '#fca5a5';
-                  resultDiv.style.color = '#dc2626';
-                  resultDiv.textContent = `❌ ${err.message}`;
+              }}
+            >
+              기본 URL 테스트
+            </button>
+            <div
+              className="slack-test-result"
+              style={{
+                display: 'none', marginTop: 8, padding: '8px 12px',
+                borderRadius: 8, fontSize: 13, border: '1px solid #e5e7eb',
+              }}
+            />
+          </div>
+
+          <div>
+            <button
+              className="btn btn-secondary"
+              style={{ background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}
+              disabled={(window as any).__slackTestingRelated}
+              onClick={async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = '테스트 중...';
+                const resultDiv = btn.parentElement?.querySelector('.slack-test-related-result') as HTMLElement;
+                if (resultDiv) resultDiv.style.display = 'none';
+                try {
+                  const res = await api.testSlackRelated({
+                    slack_webhook_url_related: formVals.current.slack_webhook_url_related,
+                  }) as any;
+                  if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = res.success ? '#f0fdf4' : '#fef2f2';
+                    resultDiv.style.borderColor = res.success ? '#86efac' : '#fca5a5';
+                    resultDiv.style.color = res.success ? '#166534' : '#dc2626';
+                    resultDiv.textContent = `${res.success ? '✅' : '❌'} ${res.message}`;
+                  }
+                } catch (err: any) {
+                  if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = '#fef2f2';
+                    resultDiv.style.borderColor = '#fca5a5';
+                    resultDiv.style.color = '#dc2626';
+                    resultDiv.textContent = `❌ ${err.message}`;
+                  }
+                } finally {
+                  btn.disabled = false;
+                  btn.textContent = '관련 메일용 URL 테스트';
                 }
-              } finally {
-                btn.disabled = false;
-                btn.textContent = t(lang, 'slack_test_btn');
-              }
-            }}
-          >
-            {t(lang, 'slack_test_btn')}
-          </button>
-          <div
-            className="slack-test-result"
-            style={{
-              display: 'none', marginTop: 8, padding: '8px 12px',
-              borderRadius: 8, fontSize: 13, border: '1px solid #e5e7eb',
-            }}
-          />
+              }}
+            >
+              관련 메일용 URL 테스트
+            </button>
+            <div
+              className="slack-test-related-result"
+              style={{
+                display: 'none', marginTop: 8, padding: '8px 12px',
+                borderRadius: 8, fontSize: 13, border: '1px solid #e5e7eb',
+              }}
+            />
+          </div>
         </div>
       </div>
 

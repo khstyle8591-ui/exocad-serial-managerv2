@@ -115,15 +115,16 @@ function sf(key: string, values: Record<string, string | number> = {}): string {
 
 export class NotificationService {
   // === Slack ===
-  async sendSlack(message: string): Promise<boolean> {
+  async sendSlack(message: string, urlOverride?: string): Promise<boolean> {
     const settings = getSettings();
-    if (!settings.slack_webhook_url) {
+    const targetUrl = urlOverride || settings.slack_webhook_url;
+    if (!targetUrl) {
       logger.warn('Slack webhook URL이 설정되지 않았습니다');
       return false;
     }
 
     return new Promise((resolve) => {
-      const url = new URL(settings.slack_webhook_url);
+      const url = new URL(targetUrl);
       const data = JSON.stringify({ text: message });
       const protocol = url.protocol === 'https:' ? https : http;
 
@@ -194,6 +195,64 @@ export class NotificationService {
 
         req.on('error', (err) => {
           logger.error(`Slack Webhook 테스트 오류: ${err.message}`);
+          resolve({ success: false, message: `연결 실패: ${err.message}` });
+        });
+
+        req.on('timeout', () => {
+          req.destroy();
+          resolve({ success: false, message: '연결 시간 초과 (10초)' });
+        });
+
+        req.write(data);
+        req.end();
+      });
+    } catch (err: any) {
+      return { success: false, message: `URL 형식 오류: ${err.message}` };
+    }
+  }
+
+  // === Slack Related Mail Webhook 테스트 ===
+  async testSlackRelatedWebhook(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
+    const webhookUrl = settingsOverride?.slack_webhook_url_related
+      || getSettings().slack_webhook_url_related;
+
+    if (!webhookUrl) {
+      return { success: false, message: '관련 메일 수신용 Slack Webhook URL이 입력되지 않았습니다.' };
+    }
+
+    try {
+      const url = new URL(webhookUrl);
+      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const data = JSON.stringify({
+        text: sf('test_ok', { time: now }),
+      });
+      const protocol = url.protocol === 'https:' ? https : http;
+
+      return new Promise((resolve) => {
+        const req = protocol.request(
+          {
+            hostname: url.hostname,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(data),
+            },
+            timeout: 10000,
+          },
+          (res) => {
+            if (res.statusCode === 200) {
+              logger.info('Related Slack Webhook 테스트 성공');
+              resolve({ success: true, message: 'Related Slack 전송 성공! 채널을 확인하세요.' });
+            } else {
+              logger.warn(`Related Slack Webhook 테스트 실패: HTTP ${res.statusCode}`);
+              resolve({ success: false, message: `HTTP ${res.statusCode} 오류. URL을 확인해주세요.` });
+            }
+          }
+        );
+
+        req.on('error', (err) => {
+          logger.error(`Related Slack Webhook 테스트 오류: ${err.message}`);
           resolve({ success: false, message: `연결 실패: ${err.message}` });
         });
 
@@ -302,7 +361,13 @@ export class NotificationService {
   async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[]): Promise<boolean> {
     const kwsStr = matchedKeywords.join(', ');
     const msg = sf('related_mail', { kws: kwsStr, from, subject });
-    return this.sendSlack(msg);
+    const settings = getSettings();
+    if (settings.slack_webhook_url_related) {
+      return this.sendSlack(msg, settings.slack_webhook_url_related);
+    } else {
+      // fallback to main webhook if related is not set
+      return this.sendSlack(msg);
+    }
   }
 
   // === Email ===

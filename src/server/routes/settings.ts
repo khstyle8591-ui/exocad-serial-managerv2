@@ -32,6 +32,12 @@ router.post('/test-slack', async (req: Request, res: Response) => {
     res.json(result);
 });
 
+// POST /api/settings/test-slack-related
+router.post('/test-slack-related', async (req: Request, res: Response) => {
+    const result = await notificationService.testSlackRelatedWebhook(req.body);
+    res.json(result);
+});
+
 // POST /api/settings/test-mail-connection
 router.post('/test-mail-connection', async (req: Request, res: Response) => {
     const result = await emailMonitorService.testMailConnection(req.body);

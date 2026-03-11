@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { serialService } from '../../main/services/serial.service';
 import { emailMonitorService } from '../../main/services/email-monitor.service';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
 
@@ -26,6 +28,37 @@ router.post('/renewal-check', async (_req: Request, res: Response) => {
 router.post('/renewal-dry-run', async (_req: Request, res: Response) => {
     const result = await emailMonitorService.renewalDryRun();
     res.json(result);
+});
+
+// GET /api/logs/system
+router.get('/system', (req: Request, res: Response) => {
+    try {
+        const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+        const logDir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+        const logFile = path.join(logDir, `${date}.log`);
+
+        if (!fs.existsSync(logFile)) {
+            return res.json({ systemLogs: [], relatedEmails: [] });
+        }
+
+        const content = fs.readFileSync(logFile, 'utf-8');
+        const lines = content.split('\n').filter(Boolean);
+
+        const systemLogs: string[] = [];
+        const relatedEmails: string[] = [];
+
+        for (const line of lines) {
+            if (line.includes('[System Log] 관련 메일 수신')) {
+                relatedEmails.push(line);
+            } else {
+                systemLogs.push(line);
+            }
+        }
+
+        res.json({ systemLogs: systemLogs.reverse(), relatedEmails: relatedEmails.reverse() });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 export default router;
