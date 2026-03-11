@@ -6,7 +6,7 @@ const router = Router();
 
 // POST /api/cancel/:serialNumber  (수동 취소)
 router.post('/:serialNumber', async (req: Request, res: Response) => {
-    const result = await cancelService.cancelSubscription(req.params.serialNumber, true); // headless=true (서버)
+    const result = await cancelService.cancelSubscription(req.params.serialNumber as string, true); // headless=true (서버)
     res.json(result);
 });
 
