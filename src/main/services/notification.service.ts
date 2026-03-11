@@ -397,7 +397,7 @@ export class NotificationService {
       });
 
       await transporter.sendMail({
-        from: settings.smtp_user,
+        from: settings.smtp_user ? `Exocad Manager <${settings.smtp_user}>` : settings.smtp_host,
         to: settings.report_email_to,
         subject,
         html: htmlBody,
@@ -413,7 +413,8 @@ export class NotificationService {
 
   // === Test Connection (SMTP) ===
   async testSmtpConnection(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
-    const settings = settingsOverride || getSettings();
+    // settingsOverride는 UI에서 보낼 때 partial일 수 있으므로, 저장된 설정과 반드시 병합
+    const settings = { ...getSettings(), ...(settingsOverride || {}) };
 
     if (!settings.smtp_host) {
       return { success: false, message: 'SMTP 서버 주소를 입력해주세요.' };

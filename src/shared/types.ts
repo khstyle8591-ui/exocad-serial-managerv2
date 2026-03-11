@@ -270,6 +270,7 @@ export interface AppSettings {
   // Renewal email keywords (기존 호환성 유지 옵션 또는 Action/Product로 분리)
   renewal_product_keywords: string[];
   renewal_action_keywords: string[];
+  renewal_exclude_keywords: string[]; // 제외 키워드 (하나라돈 매칭되면 갱신 미처리)
   require_serial_format: boolean;
   renewal_keywords: string[]; // (legacy)
 

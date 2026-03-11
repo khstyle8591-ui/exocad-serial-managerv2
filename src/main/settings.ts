@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   poll_sources: [],                          // URL 폴링 소스 목록
   renewal_product_keywords: ['exocad', 'exoplan'],
   renewal_action_keywords: ['renewal', 'renew', '갱신', '연장'],
+  renewal_exclude_keywords: [],
   require_serial_format: true,
   renewal_keywords: ['renewal', 'renew', '갱신', '연장'],
   mail_check_times: ['12:00', '17:00'],

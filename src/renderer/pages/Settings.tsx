@@ -131,6 +131,7 @@ export default function Settings() {
       formVals.current = { ...data };
       formVals.current.renewal_product_keywords_raw = (data.renewal_product_keywords || []).join(', ');
       formVals.current.renewal_action_keywords_raw = (data.renewal_action_keywords || Object.values(data.renewal_keywords || [])).join(', ');
+      formVals.current.renewal_exclude_keywords_raw = (data.renewal_exclude_keywords || []).join(', ');
       pollSourcesRef.current = data.poll_sources || [];
       // Set UI-controlling state
       setProtocol(data.mail_protocol || 'pop3');
@@ -161,6 +162,7 @@ export default function Settings() {
     try {
       const productRaw: string = formVals.current.renewal_product_keywords_raw ?? '';
       const actionRaw: string = formVals.current.renewal_action_keywords_raw ?? '';
+      const excludeRaw: string = formVals.current.renewal_exclude_keywords_raw ?? '';
       const finalSettings = {
         ...formVals.current,
         mail_protocol: protocol,
@@ -175,11 +177,13 @@ export default function Settings() {
         require_serial_format: requireSerial,
         renewal_product_keywords: productRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
         renewal_action_keywords: actionRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
+        renewal_exclude_keywords: excludeRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
       };
       // Clean up temp keys
       delete finalSettings.renewal_keywords_raw;
       delete finalSettings.renewal_product_keywords_raw;
       delete finalSettings.renewal_action_keywords_raw;
+      delete finalSettings.renewal_exclude_keywords_raw;
       await api.saveSettings(finalSettings);
       // Restart auto-cancel scheduler
       await api.restartCancelScheduler();
@@ -647,6 +651,19 @@ export default function Settings() {
               placeholder="renewal, renew, 갱신, 연장"
             />
             <small style={{ color: '#6b7280', fontSize: 12 }}>제품명과 함께 이 단어가 추가로 포함되어야 실제 '갱신 요청'으로 인식합니다. (예: 갱신, 연장)</small>
+          </div>
+          <div className="form-group" style={{ marginBottom: 16, borderLeft: '3px solid #fca5a5', paddingLeft: 12, background: '#fef2f2', borderRadius: 4, padding: '10px 12px' }}>
+            <label style={{ fontWeight: 600, color: '#dc2626' }}>🚫 제외 키워드 (Exclude Keywords) — 콤마(,) 구분</label>
+            <input
+              key={`kw-excl-${loadKey}`}
+              defaultValue={formVals.current.renewal_exclude_keywords_raw || ''}
+              onChange={e => setVal('renewal_exclude_keywords_raw', e.target.value)}
+              placeholder="Newsletter, 뉴스레터, 광고, unsubscribe"
+              style={{ marginTop: 6 }}
+            />
+            <small style={{ color: '#7f1d1d', fontSize: 12, display: 'block', marginTop: 4 }}>
+              ⚠️ 이 키워드 중 하나라도 메일 제목/본문에 포함되면, 나머지 조건과 무관하게 <strong>완전히 제외</strong>됩니다. (갱신 및 관련 메일 알림 모두 건너뜀)
+            </small>
           </div>
           <div className="form-group">
             <label style={{ fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 6 }}>

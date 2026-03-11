@@ -144,7 +144,12 @@ export class EmailMonitorService {
         return { total_checked: 0, matched: 0, emails: [] };
       }
 
-      for (let i = 0; i < list.length; i++) {
+      // 최신 메일부터 역순으로 처리, 1일 입사 내 메일만 파싱
+      // POP3 메일베스는 오래된 메일부터 오름이 일반적이지만 마지막이 최신
+      const MAX_SCAN = 100;
+      const startIdx = Math.max(0, list.length - MAX_SCAN);
+
+      for (let i = list.length - 1; i >= startIdx; i--) {
         totalChecked++;
         try {
           const msgNum = Array.isArray(list[i]) ? (list[i] as any)[0] : String(i + 1);
@@ -152,7 +157,11 @@ export class EmailMonitorService {
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
           const email = this.parseEmailRaw(rawStr);
           // 1일 이내 메일만 dry-run 스캔
-          if (!this.isWithin1Day(email.date)) continue;
+          if (!this.isWithin1Day(email.date)) {
+            // 날짜를 파싱할 수 있으면 더 오래된 메일이라 조기 종료
+            if (email.date) break;
+            continue;
+          }
           const dryEntry = this.buildDryRunEntry(email);
           if (dryEntry) emails.push(dryEntry);
         } catch { /* skip individual mail errors */ }
@@ -327,18 +336,24 @@ export class EmailMonitorService {
         return { processed: 0, errors: [] };
       }
 
-      for (let i = 0; i < list.length; i++) {
+      // 최신 메일부터 역순으로 확인, 1일 이전 메일 만나면 조기 종료 (POP3 속도 개선)
+      const MAX_SCAN = 100;
+      const startIdx = Math.max(0, list.length - MAX_SCAN);
+
+      for (let i = list.length - 1; i >= startIdx; i--) {
         try {
           const msgNum = Array.isArray(list[i]) ? (list[i] as any)[0] : String(i + 1);
           const rawMessage = await pop3.RETR(msgNum);
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
           const email = this.parseEmailRaw(rawStr);
 
-          // 1일 이내 메일만 처리 — 날짜가 없거나 콩뽐 이전 메일은 스킵 (DELE는 실행해 다음에 다시 안 올 수 있게)
+          // 1일 이내 메일만 처리 — 날짜 파싱이 되면 오래된 메일에서 조기 종료
           if (!this.isWithin1Day(email.date)) {
-            logger.info(`POP3: 1일 초과 메일 건너뜀: from=${email.from}, date=${email.date}`);
-            try { await pop3.DELE(msgNum); } catch { /* ignore */ }
-            continue;
+            if (email.date) {
+              logger.info(`POP3: 1일 이전 메일 만남, 스캔 종료 (date=${email.date})`);
+              break; // 더 오래된 메일만 남았으므로 중단
+            }
+            continue; // 날짜 파싱 안되면 그냥 스킵
           }
 
           const analysis = this.analyzeEmail(email);
@@ -351,7 +366,6 @@ export class EmailMonitorService {
           }
 
           // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨)
-          // 삭제하지 않으면 다음 실행 시 동일 메일이 반복 처리됨
           try {
             await pop3.DELE(msgNum);
           } catch (deleErr: any) {
@@ -547,6 +561,14 @@ export class EmailMonitorService {
     const settings = getSettings();
     const isDedicated = this.isDedicatedEmailTarget(email);
     const searchText = `${email.subject} ${email.body}`.toLowerCase();
+
+    // 0. Exclude keywords: 제외 키워드 하나라도 매칭되면 전체 스킵
+    const excludeKws = settings.renewal_exclude_keywords || [];
+    const hasExcluded = excludeKws.some(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    if (hasExcluded) {
+      logger.info(`[analyzeEmail] 제외 키워드 매칭으로 스킵: from=${email.from}, subject=${email.subject}`);
+      return { isRenewal: false, isRelated: false, serialNumber: null, matchedGroups: { product: [], action: [] }, isDedicated: false };
+    }
 
     // 1. Condition 1: Product keywords
     const productKws = settings.renewal_product_keywords || [];
