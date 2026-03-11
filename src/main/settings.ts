@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   cancel_confirm_text: 'okay',
   cancel_option_button_text: '',             // 비어있으면 CSS 클래스 자동 감지 (기존 동작 유지)
   poll_sources: [],                          // URL 폴링 소스 목록
+  renewal_product_keywords: ['exocad', 'exoplan'],
+  renewal_action_keywords: ['renewal', 'renew', '갱신', '연장'],
+  require_serial_format: true,
   renewal_keywords: ['renewal', 'renew', '갱신', '연장'],
   mail_check_times: ['12:00', '17:00'],
   auto_cancel_enabled: false,

@@ -188,6 +188,8 @@ export interface RenewalDryRunEmail {
   is_dedicated: boolean;        // detected via dedicated_email header
   serial_number: string | null; // extracted serial number
   serial_exists: boolean;       // whether serial exists in DB
+  is_renewal: boolean;
+  is_related: boolean;
 }
 
 export interface RenewalDryRunResult {
@@ -264,8 +266,11 @@ export interface AppSettings {
   // URL 폴링 소스 목록 (JSON 직렬화)
   poll_sources: PollSource[];
 
-  // Renewal email keywords
-  renewal_keywords: string[];
+  // Renewal email keywords (기존 호환성 유지 옵션 또는 Action/Product로 분리)
+  renewal_product_keywords: string[];
+  renewal_action_keywords: string[];
+  require_serial_format: boolean;
+  renewal_keywords: string[]; // (legacy)
 
   // Mail check times (HH:MM format)
   mail_check_times: string[];

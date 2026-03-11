@@ -37,6 +37,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *만료 예정 리포트* — {month}',
     monthly_total: '총 {n}건의 시리얼이 만료 예정입니다.',
     cancel_failures: '⚠️ *Cancel 실패:*',
+    related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 발신자: {from}\n• 제목: {subject}',
   },
   en: {
     test_ok: '✅ *Exocad Manager* — Slack webhook test successful!\nIf you see this message, the webhook is working. 🎉\nSent at: {time}',
@@ -62,8 +63,9 @@ const S: Record<SlackLang, Record<string, string>> = {
     screenshot: '📷 Screenshot: {file}',
     daily_report: '📊 *Daily Work Report* — {date}',
     monthly_report: '📋 *Expiry Forecast Report* — {month}',
-    monthly_total: 'Total {n} serials expiring.',
+    monthly_total: 'A total of {n} serials are scheduled to expire.',
     cancel_failures: '⚠️ *Cancel Failures:*',
+    related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• From: {from}\n• Subject: {subject}',
   },
   ja: {
     test_ok: '✅ *Exocad Manager* — Slack連携テスト成功！\nこのメッセージが見えれば、Webhookは正常に動作しています。🎉\n送信時刻: {time}',
@@ -89,8 +91,9 @@ const S: Record<SlackLang, Record<string, string>> = {
     screenshot: '📷 スクリーンショット: {file}',
     daily_report: '📊 *日次作業レポート* — {date}',
     monthly_report: '📋 *失効予定レポート* — {month}',
-    monthly_total: '合計 {n}件のシリアルが失効予定です。',
-    cancel_failures: '⚠️ *キャンセル失敗:*',
+    monthly_total: '合計 {n} 件のシリアルが期限切れになる予定です。',
+    cancel_failures: '⚠️ *Cancel 失敗:*',
+    related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 送信者: {from}\n• 件名: {subject}',
   },
 };
 
@@ -294,6 +297,14 @@ export class NotificationService {
 
     return this.sendSlack(lines.join('\n'));
   }
+
+  // === 관련 메일 수신 알림 (System Log 용도) ===
+  async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[]): Promise<boolean> {
+    const kwsStr = matchedKeywords.join(', ');
+    const msg = sf('related_mail', { kws: kwsStr, from, subject });
+    return this.sendSlack(msg);
+  }
+
   // === Email ===
   async sendEmail(subject: string, htmlBody: string): Promise<boolean> {
     const settings = getSettings();

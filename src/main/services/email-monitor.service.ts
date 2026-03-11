@@ -4,6 +4,7 @@ import { simpleParser } from 'mailparser';
 import { getSettings } from '../settings';
 import { serialService } from './serial.service';
 import { logger } from '../utils/logger';
+import { notificationService } from './notification.service';
 import type { RenewalDryRunResult, RenewalDryRunEmail, MailConnectionResult } from '../../shared/types';
 
 // ── 파싱된 이메일 구조 ────────────────────────────────────────────────────────
@@ -269,32 +270,24 @@ export class EmailMonitorService {
 
   // ─── Dry-Run 공통: 이메일 → RenewalDryRunEmail 변환 ─────────────────────────
   private buildDryRunEntry(email: ParsedEmail): RenewalDryRunEmail | null {
-    const settings = getSettings();
-    const isDedicated = this.isDedicatedEmailTarget(email);
+    const analysis = this.analyzeEmail(email);
 
-    // 키워드 매칭
-    const keywords = settings.renewal_keywords.length > 0
-      ? settings.renewal_keywords
-      : ['renewal', 'renew', '갱신', '연장', 'extend', 'subscription renewal'];
-    const searchText = `${email.subject} ${email.body}`.toLowerCase();
-    const matchedKeywords = keywords.filter(kw => searchText.includes(kw.toLowerCase()));
+    if (!analysis.isRenewal && !analysis.isRelated) {
+      return null;
+    }
 
-    // 갱신 요청이 아닌 경우 null 반환
-    if (!isDedicated && matchedKeywords.length === 0) return null;
-
-    const serialNumber = this.extractSerialNumber(email);
-    const serialExists = serialNumber
-      ? !!serialService.getBySerialNumber(serialNumber)
-      : false;
+    const serialExists = analysis.serialNumber ? !!serialService.getBySerialNumber(analysis.serialNumber) : false;
 
     return {
       from: email.from,
       subject: email.subject,
       date: email.date,
-      matched_keywords: isDedicated && matchedKeywords.length === 0 ? ['[dedicated email]'] : matchedKeywords,
-      is_dedicated: isDedicated,
-      serial_number: serialNumber,
+      matched_keywords: [...analysis.matchedGroups.product, ...analysis.matchedGroups.action],
+      is_dedicated: analysis.isDedicated,
+      serial_number: analysis.serialNumber,
       serial_exists: serialExists,
+      is_renewal: analysis.isRenewal,
+      is_related: analysis.isRelated,
     };
   }
 
@@ -348,9 +341,13 @@ export class EmailMonitorService {
             continue;
           }
 
-          if (this.isRenewalRequest(email)) {
+          const analysis = this.analyzeEmail(email);
+          if (analysis.isRenewal) {
             const count = await this.processRenewalEmail(email, errors);
             processed += count;
+          } else if (analysis.isRelated) {
+            logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject}`);
+            notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product);
           }
 
           // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨)
@@ -481,9 +478,13 @@ export class EmailMonitorService {
                       rawHeaders,
                     };
 
-                    if (this.isRenewalRequest(email)) {
+                    const analysis = this.analyzeEmail(email);
+                    if (analysis.isRenewal) {
                       const count = await this.processRenewalEmail(email, errors);
                       processed += count;
+                    } else if (analysis.isRelated) {
+                      logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject}`);
+                      notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product);
                     }
                   } catch (parseErr: any) {
                     errors.push(`메일 파싱 오류: ${parseErr.message}`);
@@ -535,27 +536,48 @@ export class EmailMonitorService {
     return 0;
   }
 
-  // ─── 갱신 요청 여부 판단 ─────────────────────────────────────────────────────
-  // 조건 A: dedicated_email이 설정되어 있고, To/Cc/forward 헤더에 포함
-  //   → 키워드 없이도 갱신 요청으로 처리 (forward 자동 감지)
-  // 조건 B: 제목+본문에 갱신 키워드 포함 (기존 로직)
-  // 둘 중 하나만 만족해도 갱신 요청으로 처리
-  private isRenewalRequest(email: ParsedEmail): boolean {
+  // ─── 이메일 다중 조건 분석 (Product, Action, Serial) ──────────────────────────
+  private analyzeEmail(email: ParsedEmail): {
+    isRenewal: boolean;
+    isRelated: boolean;
+    serialNumber: string | null;
+    matchedGroups: { product: string[]; action: string[] };
+    isDedicated: boolean;
+  } {
     const settings = getSettings();
-
-    // 조건 A: dedicated email 수신/forward 감지
-    if (this.isDedicatedEmailTarget(email)) {
-      logger.info(`Dedicated email 감지 → 갱신 요청 처리 (from: ${email.from})`);
-      return true;
-    }
-
-    // 조건 B: 갱신 키워드 매칭
-    const keywords = settings.renewal_keywords.length > 0
-      ? settings.renewal_keywords
-      : ['renewal', 'renew', '갱신', '연장', 'extend', 'subscription renewal'];
-
+    const isDedicated = this.isDedicatedEmailTarget(email);
     const searchText = `${email.subject} ${email.body}`.toLowerCase();
-    return keywords.some(kw => searchText.includes(kw.toLowerCase()));
+
+    // 1. Condition 1: Product keywords
+    const productKws = settings.renewal_product_keywords || [];
+    const matchedProducts = productKws.filter(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    const productMatched = productKws.length === 0 || matchedProducts.length > 0;
+    const hasProductMatch = matchedProducts.length > 0;
+
+    // 2. Condition 2: Action keywords (fallback to renewal_keywords if action is empty)
+    const actionKws = (settings.renewal_action_keywords?.length > 0 ? settings.renewal_action_keywords : settings.renewal_keywords) || [];
+    const matchedActions = actionKws.filter(kw => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
+    const actionMatched = actionKws.length === 0 || matchedActions.length > 0;
+
+    // 3. Condition 3: Serial extraction
+    const serialNumber = this.extractSerialNumber(email);
+    const serialMatched = !!serialNumber;
+
+    // Evaluate combined logic
+    const requireSerial = settings.require_serial_format ?? true;
+    const allConditionsMet = productMatched && actionMatched && (requireSerial ? serialMatched : true);
+
+    const isRenewal = isDedicated || allConditionsMet;
+    // Notify related ONLY if at least a product keyword was explicitly matched, but it failed to become a full renewal request.
+    const isRelated = !isRenewal && hasProductMatch;
+
+    return {
+      isRenewal,
+      isRelated,
+      serialNumber,
+      matchedGroups: { product: matchedProducts, action: matchedActions },
+      isDedicated,
+    };
   }
 
   // ─── Dedicated email 수신 여부 확인 ─────────────────────────────────────────

@@ -109,6 +109,7 @@ export default function Settings() {
   // Mail Connection Test state
   const [connTesting, setConnTesting] = useState(false);
   const [connTestResult, setConnTestResult] = useState<any | null>(null);
+  const [requireSerial, setRequireSerial] = useState(true);
 
   // SMTP Connection Test state
   const [smtpTesting, setSmtpTesting] = useState(false);
@@ -128,6 +129,8 @@ export default function Settings() {
       const data = await api.getSettings() as any;
       // Store all values in ref
       formVals.current = { ...data };
+      formVals.current.renewal_product_keywords_raw = (data.renewal_product_keywords || []).join(', ');
+      formVals.current.renewal_action_keywords_raw = (data.renewal_action_keywords || Object.values(data.renewal_keywords || [])).join(', ');
       pollSourcesRef.current = data.poll_sources || [];
       // Set UI-controlling state
       setProtocol(data.mail_protocol || 'pop3');
@@ -138,6 +141,7 @@ export default function Settings() {
       setPop3Tls(data.pop3_tls ?? true);
       setImapTls(data.imap_tls ?? true);
       setSmtpTls(data.smtp_tls ?? false);
+      setRequireSerial(data.require_serial_format ?? true);
       // Increment key to reset all defaultValue inputs with new data
       setLoadKey(k => k + 1);
     } catch (err) {
@@ -155,7 +159,8 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const keywordsRaw: string = formVals.current.renewal_keywords_raw ?? '';
+      const productRaw: string = formVals.current.renewal_product_keywords_raw ?? '';
+      const actionRaw: string = formVals.current.renewal_action_keywords_raw ?? '';
       const finalSettings = {
         ...formVals.current,
         mail_protocol: protocol,
@@ -167,10 +172,14 @@ export default function Settings() {
         imap_tls: imapTls,
         smtp_tls: smtpTls,
         poll_sources: pollSourcesRef.current,
-        renewal_keywords: keywordsRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
+        require_serial_format: requireSerial,
+        renewal_product_keywords: productRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
+        renewal_action_keywords: actionRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
       };
-      // Clean up temp key
+      // Clean up temp keys
       delete finalSettings.renewal_keywords_raw;
+      delete finalSettings.renewal_product_keywords_raw;
+      delete finalSettings.renewal_action_keywords_raw;
       await api.saveSettings(finalSettings);
       // Restart auto-cancel scheduler
       await api.restartCancelScheduler();
@@ -617,17 +626,38 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* ── 갱신 키워드 설정 ── */}
+        {/* ── 갱신 & 제품 조건 설정 (다중 조건) ── */}
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #e5e7eb' }}>
-          <div className="form-group">
-            <label style={{ fontWeight: 600 }}>🔑 {t(lang, 'label_renewal_keywords')}</label>
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label style={{ fontWeight: 600 }}>📦 제품 키워드 (Product Keywords) — 콤마(,) 구분</label>
             <input
-              key={`kw-${loadKey}`}
-              defaultValue={(formVals.current.renewal_keywords || []).join(', ')}
-              onChange={e => setVal('renewal_keywords_raw', e.target.value)}
+              key={`kw-prod-${loadKey}`}
+              defaultValue={formVals.current.renewal_product_keywords_raw || ''}
+              onChange={e => setVal('renewal_product_keywords_raw', e.target.value)}
+              placeholder="exocad, exoplan"
+            />
+            <small style={{ color: '#6b7280', fontSize: 12 }}>이 단어가 본문 또는 제목에 포함되어야 관련 메일로 수집됩니다. (예: exocad, exoplan)</small>
+          </div>
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label style={{ fontWeight: 600 }}>🔑 액션 키워드 (Action Keywords) — 콤마(,) 구분</label>
+            <input
+              key={`kw-act-${loadKey}`}
+              defaultValue={formVals.current.renewal_action_keywords_raw || ''}
+              onChange={e => setVal('renewal_action_keywords_raw', e.target.value)}
               placeholder="renewal, renew, 갱신, 연장"
             />
-            <small style={{ color: '#6b7280', fontSize: 12 }}>{t(lang, 'keyword_hint')}</small>
+            <small style={{ color: '#6b7280', fontSize: 12 }}>제품명과 함께 이 단어가 추가로 포함되어야 실제 '갱신 요청'으로 인식합니다. (예: 갱신, 연장)</small>
+          </div>
+          <div className="form-group">
+            <label style={{ fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={requireSerial}
+                onChange={e => setRequireSerial(e.target.checked)}
+              />
+              검색 필터: 메일 본문 내 시리얼 번호(ex: xxxxx-xxxx) 필수 여부
+            </label>
+            <small style={{ color: '#6b7280', fontSize: 12, marginLeft: 22, display: 'block' }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
           </div>
         </div>
 
@@ -725,6 +755,7 @@ export default function Settings() {
                       <th style={thStyle}>From</th>
                       <th style={thStyle}>Subject</th>
                       <th style={thStyle}>Date</th>
+                      <th style={thStyle}>유형 (Type)</th>
                       <th style={thStyle}>{t(lang, 'renewal_dryrun_col_keyword')}</th>
                       <th style={thStyle}>Dedicated</th>
                       <th style={thStyle}>{t(lang, 'renewal_dryrun_col_serial')}</th>
@@ -737,6 +768,10 @@ export default function Settings() {
                         <td style={{ ...tdStyle, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.from}</td>
                         <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.subject}</td>
                         <td style={{ ...tdStyle, whiteSpace: 'nowrap', fontSize: 11 }}>{em.date ? new Date(em.date).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                        <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, fontSize: 11 }}>
+                          {em.is_renewal ? <span style={{ color: '#166534' }}>갱신 요청</span> :
+                            em.is_related ? <span style={{ color: '#d97706' }}>단순 수신(알림)</span> : '—'}
+                        </td>
                         <td style={tdStyle}>
                           {(em.matched_keywords || []).map((kw: string, ki: number) => (
                             <span key={ki} style={{ display: 'inline-block', background: '#ede9fe', color: '#6d28d9', borderRadius: 4, padding: '1px 6px', fontSize: 11, marginRight: 3 }}>{kw}</span>
