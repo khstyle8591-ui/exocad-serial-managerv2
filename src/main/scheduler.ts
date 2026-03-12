@@ -18,11 +18,25 @@ let dailySummaryTask: cron.ScheduledTask | null = null;
 // 하루 동안의 cancel 결과를 모아둠
 let dailyCancelResults: CancelResult[] = [];
 
-// HH:MM → cron expression (M H * * *)
-function timeToCron(hhmm: string): string {
-  const [hStr, mStr] = (hhmm || '09:00').split(':');
-  const h = parseInt(hStr, 10) || 9;
-  const m = parseInt(mStr, 10) || 0;
+// 시간 문자열 (HH:MM 또는 HH:MM AM/PM) → cron expression (M H * * *)
+function timeToCron(timeStr: string): string {
+  const clean = (timeStr || '09:00').trim().toUpperCase();
+  const isPM = clean.includes('PM');
+  const isAM = clean.includes('AM');
+
+  // AM/PM 제거 후 숫자만 추출
+  const timePart = clean.replace(/[AP]M/g, '').trim();
+  const parts = timePart.split(':');
+
+  let h = parseInt(parts[0], 10) || 0;
+  const m = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+
+  if (isPM && h < 12) h += 12;
+  else if (isAM && h === 12) h = 0;
+
+  // 0-23 범위 보장
+  h = h % 24;
+
   return `${m} ${h} * * *`;
 }
 

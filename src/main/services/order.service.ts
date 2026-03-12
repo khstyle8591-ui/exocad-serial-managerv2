@@ -1084,10 +1084,21 @@ export function startPollingScheduler(): void {
     if (source.schedule_times && source.schedule_times.length > 0) {
       const tasks: cron.ScheduledTask[] = [];
       for (const time of source.schedule_times) {
-        const [hour, minute] = time.split(':');
-        if (!hour || !minute) continue;
+        // AM/PM 지원을 위한 파싱
+        const clean = (time || '09:00').trim().toUpperCase();
+        const isPM = clean.includes('PM');
+        const isAM = clean.includes('AM');
+        const timePart = clean.replace(/[AP]M/g, '').trim();
+        const parts = timePart.split(':');
+        
+        let h = parseInt(parts[0], 10) || 0;
+        const m = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+        
+        if (isPM && h < 12) h += 12;
+        else if (isAM && h === 12) h = 0;
+        h = h % 24;
 
-        const cronExpr = `${minute} ${hour} * * *`;
+        const cronExpr = `${m} ${h} * * *`;
         const task = cron.schedule(cronExpr, async () => {
           logger.info(`[스케줄] ${source.name} 폴링 시작 (예약시간: ${time})`);
           await pollNow(source.id);
