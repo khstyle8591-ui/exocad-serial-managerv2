@@ -8,8 +8,8 @@ export interface Serial {
   customer_address: string;
   customer_phone: string;
   customer_manager: string;
-  purchase_date: string;
-  expiry_date: string;
+  purchase_date: string | null;
+  expiry_date: string | null;
   status: 'active' | 'cancelled' | 'expired' | 'not-activated';
   engine_build: string;
   version: string;
@@ -83,8 +83,8 @@ export interface SerialInput {
   customer_address?: string;
   customer_phone?: string;
   customer_manager?: string;
-  purchase_date: string;
-  expiry_date: string;
+  purchase_date?: string;
+  expiry_date?: string;
   engine_build?: string;
   version?: string;
   add_ons?: AddOn[];

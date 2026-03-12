@@ -48,7 +48,7 @@ export class SerialService {
 
     const result = db.prepare(
       `INSERT INTO serials (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       input.serial_number,
       input.customer_name,
@@ -56,8 +56,9 @@ export class SerialService {
       input.customer_address || '',
       input.customer_phone || '',
       input.customer_manager || '',
-      input.purchase_date,
-      input.expiry_date,
+      input.purchase_date || null,
+      input.expiry_date || null,
+      input.status || 'active',
       input.engine_build || '',
       input.version || '',
       addOnsJson,
@@ -145,7 +146,7 @@ export class SerialService {
     const existing = this.getById(id);
     if (!existing) return undefined;
 
-    const currentExpiry = new Date(existing.expiry_date);
+    const currentExpiry = existing.expiry_date ? new Date(existing.expiry_date) : new Date();
     const newExpiry = new Date(currentExpiry);
     newExpiry.setFullYear(newExpiry.getFullYear() + 1);
     const newExpiryStr = new Date(newExpiry).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
@@ -218,7 +219,7 @@ export class SerialService {
     const upsertStmt = db.prepare(
       `INSERT INTO serials 
        (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(serial_number) DO UPDATE SET
          customer_name = excluded.customer_name,
          customer_email = excluded.customer_email,
@@ -227,6 +228,7 @@ export class SerialService {
          customer_manager = excluded.customer_manager,
          purchase_date = excluded.purchase_date,
          expiry_date = excluded.expiry_date,
+         status = excluded.status,
          engine_build = excluded.engine_build,
          version = excluded.version,
          add_ons = excluded.add_ons,
@@ -245,8 +247,9 @@ export class SerialService {
             s.customer_address || '',
             s.customer_phone || '',
             s.customer_manager || '',
-            s.purchase_date,
-            s.expiry_date,
+            s.purchase_date || null,
+            s.expiry_date || null,
+            s.status || 'active',
             s.engine_build || '',
             s.version || '',
             JSON.stringify(s.add_ons || []),
