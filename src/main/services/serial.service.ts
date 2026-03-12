@@ -65,18 +65,18 @@ export class SerialService {
     const updates: string[] = [];
     const values: any[] = [];
 
-    if (input.serial_number !== undefined)   { updates.push('serial_number = ?');    values.push(input.serial_number); }
-    if (input.customer_name !== undefined)   { updates.push('customer_name = ?');    values.push(input.customer_name); }
-    if (input.customer_email !== undefined)  { updates.push('customer_email = ?');   values.push(input.customer_email); }
-    if (input.customer_address !== undefined){ updates.push('customer_address = ?'); values.push(input.customer_address); }
-    if (input.customer_phone !== undefined)  { updates.push('customer_phone = ?');   values.push(input.customer_phone); }
-    if (input.customer_manager !== undefined){ updates.push('customer_manager = ?'); values.push(input.customer_manager); }
-    if (input.purchase_date !== undefined)   { updates.push('purchase_date = ?');    values.push(input.purchase_date); }
-    if (input.expiry_date !== undefined)     { updates.push('expiry_date = ?');      values.push(input.expiry_date); }
-    if (input.engine_build !== undefined)    { updates.push('engine_build = ?');     values.push(input.engine_build); }
-    if (input.version !== undefined)         { updates.push('version = ?');          values.push(input.version); }
-    if (input.add_ons !== undefined)         { updates.push('add_ons = ?');          values.push(JSON.stringify(input.add_ons)); }
-    if (input.notes !== undefined)           { updates.push('notes = ?');            values.push(input.notes); }
+    if (input.serial_number !== undefined) { updates.push('serial_number = ?'); values.push(input.serial_number); }
+    if (input.customer_name !== undefined) { updates.push('customer_name = ?'); values.push(input.customer_name); }
+    if (input.customer_email !== undefined) { updates.push('customer_email = ?'); values.push(input.customer_email); }
+    if (input.customer_address !== undefined) { updates.push('customer_address = ?'); values.push(input.customer_address); }
+    if (input.customer_phone !== undefined) { updates.push('customer_phone = ?'); values.push(input.customer_phone); }
+    if (input.customer_manager !== undefined) { updates.push('customer_manager = ?'); values.push(input.customer_manager); }
+    if (input.purchase_date !== undefined) { updates.push('purchase_date = ?'); values.push(input.purchase_date); }
+    if (input.expiry_date !== undefined) { updates.push('expiry_date = ?'); values.push(input.expiry_date); }
+    if (input.engine_build !== undefined) { updates.push('engine_build = ?'); values.push(input.engine_build); }
+    if (input.version !== undefined) { updates.push('version = ?'); values.push(input.version); }
+    if (input.add_ons !== undefined) { updates.push('add_ons = ?'); values.push(JSON.stringify(input.add_ons)); }
+    if (input.notes !== undefined) { updates.push('notes = ?'); values.push(input.notes); }
 
     if (updates.length === 0) return existing;
 
@@ -201,15 +201,30 @@ export class SerialService {
     const errors: string[] = [];
     let imported = 0;
 
-    const insertStmt = db.prepare(
-      `INSERT OR IGNORE INTO serials (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))`
+    // ON CONFLICT(serial_number) DO UPDATE SET ... 을 사용하여 덮어쓰기 구현
+    const upsertStmt = db.prepare(
+      `INSERT INTO serials 
+       (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+       ON CONFLICT(serial_number) DO UPDATE SET
+         customer_name = excluded.customer_name,
+         customer_email = excluded.customer_email,
+         customer_address = excluded.customer_address,
+         customer_phone = excluded.customer_phone,
+         customer_manager = excluded.customer_manager,
+         purchase_date = excluded.purchase_date,
+         expiry_date = excluded.expiry_date,
+         engine_build = excluded.engine_build,
+         version = excluded.version,
+         add_ons = excluded.add_ons,
+         notes = excluded.notes,
+         updated_at = datetime('now', 'localtime')`
     );
 
     const transaction = db.transaction(() => {
       for (const s of serials) {
         try {
-          const result = insertStmt.run(
+          const result = upsertStmt.run(
             s.serial_number,
             s.customer_name,
             s.customer_email,
@@ -223,11 +238,11 @@ export class SerialService {
             JSON.stringify(s.add_ons || []),
             s.notes || ''
           );
+
           if (result.changes > 0) {
-            this.logActivity(result.lastInsertRowid as number, 'bulk_imported', `벌크 임포트: ${s.serial_number}`);
+            // 새로 삽입되었거나 업데이트됨
+            this.logActivity(0, 'bulk_imported', `벌크 임포트/업데이트: ${s.serial_number}`);
             imported++;
-          } else {
-            errors.push(`${s.serial_number}: 이미 존재하는 시리얼 넘버`);
           }
         } catch (err: any) {
           errors.push(`${s.serial_number}: ${err.message}`);

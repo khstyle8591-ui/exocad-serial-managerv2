@@ -41,7 +41,7 @@ export class ExcelService {
             if (addOnsVal.startsWith('[')) {
               addOns = JSON.parse(addOnsVal);
             } else if (addOnsVal !== '') {
-              addOns = addOnsVal.split(',').map((name: string) => ({
+              addOns = addOnsVal.split(/[,\/]/).map((name: string) => ({
                 name: name.trim(),
                 added_date: new Date().toISOString().slice(0, 10),
               }));
@@ -108,7 +108,7 @@ export class ExcelService {
             if (addOnsVal.startsWith('[')) {
               addOns = JSON.parse(addOnsVal);
             } else if (addOnsVal !== '') {
-              addOns = addOnsVal.split(',').map(n => ({ name: n.trim(), added_date: new Date().toISOString().slice(0, 10) }));
+              addOns = addOnsVal.split(/[,\/]/).map(n => ({ name: n.trim(), added_date: new Date().toISOString().slice(0, 10) }));
             }
           } catch { errors.push(`행 ${rowNum}: add_ons 파싱 실패`); }
         }
