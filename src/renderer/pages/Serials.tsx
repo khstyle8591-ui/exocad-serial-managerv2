@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import SerialForm from '../components/SerialForm';
-import { useLang } from '../App';
+import { useLang, useNav } from '../App';
 import { t } from '../i18n';
 import { api } from '../api';
 
@@ -35,11 +35,29 @@ export default function Serials() {
   const [newAddonInput, setNewAddonInput] = useState('');
   const [addonSaving, setAddonSaving] = useState(false);
 
-  useEffect(() => { loadSerials(); }, []);
+  const { params } = useNav();
+
+  useEffect(() => { loadSerials(); }, [params]);
 
   const loadSerials = async () => {
     try {
-      const data = await api.getSerials() as Serial[];
+      let data = await api.getSerials() as Serial[];
+
+      // Dashboard 등에서 넘어온 필터 처리
+      if (params?.filter) {
+        const filter = params.filter;
+        if (filter === 'active') data = data.filter(s => s.status === 'active');
+        else if (filter === 'cancelled') data = data.filter(s => s.status === 'cancelled');
+        else if (filter === 'expired') data = data.filter(s => s.status === 'expired');
+        else if (filter === 'expiring') {
+          const now = new Date();
+          const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+          const todayStr = now.toISOString().slice(0, 10);
+          const endOfMonthStr = endOfMonth.toISOString().slice(0, 10);
+          data = data.filter(s => s.status === 'active' && s.expiry_date >= todayStr && s.expiry_date <= endOfMonthStr);
+        }
+      }
+
       setSerials(data);
     } catch (err) {
       console.error(err);

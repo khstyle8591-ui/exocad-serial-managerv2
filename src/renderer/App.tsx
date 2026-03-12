@@ -15,13 +15,27 @@ interface LangCtx {
   setLang: (l: Language) => void;
 }
 export const LanguageContext = createContext<LangCtx>({ lang: 'ko', setLang: () => { } });
+
+export const NavigationContext = createContext<{
+  page: Page;
+  setPage: (p: Page, params?: any) => void;
+  params: any;
+}>({ page: 'dashboard', setPage: () => { }, params: null });
+
 export const useLang = () => useContext(LanguageContext);
+export const useNav = () => useContext(NavigationContext);
 
 type Page = 'dashboard' | 'serials' | 'orders' | 'settings' | 'logs' | 'system_logs';
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
+  const [params, setParams] = useState<any>(null);
   const [lang, setLang] = useState<Language>('ko');
+
+  const handleSetPage = (p: Page, pms?: any) => {
+    setPage(p);
+    setParams(pms || null);
+  };
 
   // 앱 시작 시 저장된 언어 설정 불러오기
   useEffect(() => {
@@ -59,26 +73,28 @@ export default function App() {
 
   return (
     <LanguageContext.Provider value={{ lang, setLang }}>
-      <div className="app-layout">
-        <div className="sidebar">
-          <div className="sidebar-header">{t(lang, 'app_title')}</div>
-          <ul className="sidebar-nav">
-            {NAV_ITEMS.map(item => (
-              <li
-                key={item.key}
-                className={page === item.key ? 'active' : ''}
-                onClick={() => setPage(item.key)}
-              >
-                <span>{item.icon}</span>
-                <span>{item.label}</span>
-              </li>
-            ))}
-          </ul>
+      <NavigationContext.Provider value={{ page, setPage: handleSetPage, params }}>
+        <div className="app-layout">
+          <div className="sidebar">
+            <div className="sidebar-header">{t(lang, 'app_title')}</div>
+            <ul className="sidebar-nav">
+              {NAV_ITEMS.map(item => (
+                <li
+                  key={item.key}
+                  className={page === item.key ? 'active' : ''}
+                  onClick={() => handleSetPage(item.key)}
+                >
+                  <span>{item.icon}</span>
+                  <span>{item.label}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="main-content">
+            {renderPage()}
+          </div>
         </div>
-        <div className="main-content">
-          {renderPage()}
-        </div>
-      </div>
+      </NavigationContext.Provider>
     </LanguageContext.Provider>
   );
 }

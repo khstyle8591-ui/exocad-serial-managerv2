@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useLang } from '../App';
+import { useLang, useNav } from '../App';
 import { t } from '../i18n';
 import { api } from '../api';
 
@@ -18,6 +18,7 @@ interface WebhookStatus {
 
 export default function Dashboard() {
   const { lang } = useLang();
+  const { setPage } = useNav();
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, cancelled: 0, expired: 0, expiringThisMonth: 0 });
   const [todayLogs, setTodayLogs] = useState<any[]>([]);
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ running: false, port: 3000 });
@@ -90,6 +91,10 @@ export default function Dashboard() {
     }
   };
 
+  const navigateToSerials = (filter: string) => {
+    setPage('serials', { filter });
+  };
+
   if (loading) return <div>{t(lang, 'loading')}</div>;
 
   return (
@@ -138,23 +143,23 @@ export default function Dashboard() {
       </div>
 
       <div className="stats-grid">
-        <div className="stat-card blue">
+        <div className="stat-card blue" onClick={() => navigateToSerials('all')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_total')}</div>
           <div className="value">{stats.total}</div>
         </div>
-        <div className="stat-card green">
+        <div className="stat-card green" onClick={() => navigateToSerials('active')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_active')}</div>
           <div className="value">{stats.active}</div>
         </div>
-        <div className="stat-card red">
+        <div className="stat-card red" onClick={() => navigateToSerials('cancelled')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_cancelled')}</div>
           <div className="value">{stats.cancelled}</div>
         </div>
-        <div className="stat-card gray">
+        <div className="stat-card gray" onClick={() => navigateToSerials('expired')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_expired')}</div>
           <div className="value">{stats.expired}</div>
         </div>
-        <div className="stat-card orange">
+        <div className="stat-card orange" onClick={() => navigateToSerials('expiring')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_expiring')}</div>
           <div className="value">{stats.expiringThisMonth}</div>
         </div>
