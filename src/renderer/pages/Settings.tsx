@@ -185,8 +185,6 @@ export default function Settings() {
       delete finalSettings.renewal_action_keywords_raw;
       delete finalSettings.renewal_exclude_keywords_raw;
       await api.saveSettings(finalSettings);
-      // Restart auto-cancel scheduler
-      await api.restartCancelScheduler();
       if (appLanguage) setLang(appLanguage);
       alert(t(lang, 'settings_saved'));
     } catch (err: any) {
