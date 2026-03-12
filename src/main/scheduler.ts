@@ -47,7 +47,7 @@ export function startScheduler(): void {
     } catch (err: any) {
       logger.error(`Cancel 작업 오류: ${err.message}`);
     }
-  });
+  }, { timezone: 'Asia/Seoul' });
 
   // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 요청 없으면)
   startPreExpiryTask();
@@ -74,7 +74,7 @@ export function startScheduler(): void {
     } catch (err: any) {
       logger.error(`일일 리포트 오류: ${err.message}`);
     }
-  });
+  }, { timezone: 'Asia/Seoul' });
 
   // 5. 매월 10일 09:00에 3개월 후 만료 시리얼 리포트
   monthlyReportTask = cron.schedule('0 9 10 * *', async () => {
@@ -101,7 +101,7 @@ export function startScheduler(): void {
     } catch (err: any) {
       logger.error(`월간 리포트 오류: ${err.message}`);
     }
-  });
+  }, { timezone: 'Asia/Seoul' });
 
   // 6. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
@@ -158,7 +158,7 @@ export function startScheduler(): void {
     } catch (err: any) {
       logger.error(`일일 요약 Slack 알림 오류: ${err.message}`);
     }
-  });
+  }, { timezone: 'Asia/Seoul' });
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -188,7 +188,7 @@ function startPreExpiryTask(): void {
     } catch (err: any) {
       logger.error(`만료 전 자동 cancel 오류: ${err.message}`);
     }
-  });
+  }, { timezone: 'Asia/Seoul' });
 }
 
 // Settings 저장 후 호출하여 시각 변경을 즉시 반영
@@ -224,7 +224,7 @@ export function startMailCheck(): void {
 
   for (const time of times) {
     const cronExpr = timeToCron(time);
-    const task = cron.schedule(cronExpr, runMailCheck);
+    const task = cron.schedule(cronExpr, runMailCheck, { timezone: 'Asia/Seoul' });
     mailCheckTasks.push(task);
   }
 

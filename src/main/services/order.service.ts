@@ -1091,7 +1091,7 @@ export function startPollingScheduler(): void {
         const task = cron.schedule(cronExpr, async () => {
           logger.info(`[스케줄] ${source.name} 폴링 시작 (예약시간: ${time})`);
           await pollNow(source.id);
-        });
+        }, { timezone: 'Asia/Seoul' });
         tasks.push(task);
         logger.info(`[스케줄] ${source.name} 등록 (예약시간: ${time})`);
       }
