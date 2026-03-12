@@ -49,11 +49,12 @@ export default function Serials() {
         if (filter === 'active') data = data.filter(s => s.status === 'active');
         else if (filter === 'cancelled') data = data.filter(s => s.status === 'cancelled');
         else if (filter === 'expired') data = data.filter(s => s.status === 'expired');
+        else if (filter === 'not-activated') data = data.filter(s => s.status === 'not-activated');
         else if (filter === 'expiring') {
           const now = new Date();
-          const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-          const todayStr = now.toISOString().slice(0, 10);
-          const endOfMonthStr = endOfMonth.toISOString().slice(0, 10);
+          const todayStr = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+          const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+          const endOfMonthStr = lastDayOfMonth.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
           data = data.filter(s => s.status === 'active' && s.expiry_date >= todayStr && s.expiry_date <= endOfMonthStr);
         }
       }
@@ -150,6 +151,7 @@ export default function Serials() {
     if (s === 'active') return t(lang, 'status_active');
     if (s === 'cancelled') return t(lang, 'status_cancelled');
     if (s === 'expired') return t(lang, 'status_expired');
+    if (s === 'not-activated') return t(lang, 'status_not_activated');
     return s;
   };
 

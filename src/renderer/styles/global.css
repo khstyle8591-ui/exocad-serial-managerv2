@@ -108,6 +108,7 @@ body {
 .stat-card.green .value { color: #22c55e; }
 .stat-card.red .value { color: #ef4444; }
 .stat-card.orange .value { color: #f59e0b; }
+.stat-card.purple .value { color: #8b5cf6; }
 .stat-card.gray .value { color: #6b7280; }
 
 /* Table */
@@ -171,6 +172,7 @@ table tr:hover {
 .badge.active { background: #dcfce7; color: #16a34a; }
 .badge.cancelled { background: #fee2e2; color: #dc2626; }
 .badge.expired { background: #f3f4f6; color: #6b7280; }
+.badge.not-activated { background: #fef3c7; color: #d97706; }
 
 /* Buttons */
 .btn {

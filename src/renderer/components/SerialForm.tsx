@@ -28,6 +28,7 @@ export default function SerialForm({ serial, onSave, onClose }: Props) {
     engine_build:     serial?.engine_build     || '',
     version:          serial?.version          || '',
     notes:            serial?.notes            || '',
+    status:           serial?.status           || 'active',
   });
 
   // Add-ons 관리 (등록/수정 폼 내부)
@@ -110,6 +111,27 @@ export default function SerialForm({ serial, onSave, onClose }: Props) {
               <label>{t(lang, 'label_version')}</label>
               <input name="version" value={form.version} onChange={handleChange} placeholder="24.01" />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label>{t(lang, 'col_status')}</label>
+            <select
+              name="status"
+              value={form.status}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                fontSize: '14px'
+              }}
+            >
+              <option value="active">{t(lang, 'status_active')}</option>
+              <option value="not-activated">{t(lang, 'status_not_activated')}</option>
+              <option value="cancelled">{t(lang, 'status_cancelled')}</option>
+              <option value="expired">{t(lang, 'status_expired')}</option>
+            </select>
           </div>
 
           {/* ── 고객 정보 ── */}

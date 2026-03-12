@@ -38,7 +38,7 @@ function createTables(): void {
       customer_manager TEXT NOT NULL DEFAULT '',
       purchase_date TEXT NOT NULL,
       expiry_date TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired', 'not-activated')),
       engine_build TEXT NOT NULL DEFAULT '',
       version TEXT NOT NULL DEFAULT '',
       add_ons TEXT NOT NULL DEFAULT '[]',

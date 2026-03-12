@@ -10,7 +10,7 @@ export interface Serial {
   customer_manager: string;
   purchase_date: string;
   expiry_date: string;
-  status: 'active' | 'cancelled' | 'expired';
+  status: 'active' | 'cancelled' | 'expired' | 'not-activated';
   engine_build: string;
   version: string;
   add_ons: string; // JSON string of AddOn[]
@@ -89,6 +89,7 @@ export interface SerialInput {
   version?: string;
   add_ons?: AddOn[];
   notes?: string;
+  status?: Serial['status'];
 }
 
 export interface ExcelSerialRow {

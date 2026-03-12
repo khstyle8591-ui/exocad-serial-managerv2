@@ -8,6 +8,7 @@ interface Stats {
   active: number;
   cancelled: number;
   expired: number;
+  notActivated: number;
   expiringThisMonth: number;
 }
 
@@ -19,7 +20,7 @@ interface WebhookStatus {
 export default function Dashboard() {
   const { lang } = useLang();
   const { setPage } = useNav();
-  const [stats, setStats] = useState<Stats>({ total: 0, active: 0, cancelled: 0, expired: 0, expiringThisMonth: 0 });
+  const [stats, setStats] = useState<Stats>({ total: 0, active: 0, cancelled: 0, expired: 0, notActivated: 0, expiringThisMonth: 0 });
   const [todayLogs, setTodayLogs] = useState<any[]>([]);
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ running: false, port: 3000 });
   const [loading, setLoading] = useState(true);
@@ -158,6 +159,10 @@ export default function Dashboard() {
         <div className="stat-card gray" onClick={() => navigateToSerials('expired')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_expired')}</div>
           <div className="value">{stats.expired}</div>
+        </div>
+        <div className="stat-card purple" onClick={() => navigateToSerials('not-activated')} style={{ cursor: 'pointer' }}>
+          <div className="label">{t(lang, 'status_not_activated')}</div>
+          <div className="value">{stats.notActivated}</div>
         </div>
         <div className="stat-card orange" onClick={() => navigateToSerials('expiring')} style={{ cursor: 'pointer' }}>
           <div className="label">{t(lang, 'dash_stat_expiring')}</div>

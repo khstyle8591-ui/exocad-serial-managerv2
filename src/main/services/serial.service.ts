@@ -90,6 +90,7 @@ export class SerialService {
     if (input.version !== undefined) { updates.push('version = ?'); values.push(input.version); }
     if (input.add_ons !== undefined) { updates.push('add_ons = ?'); values.push(JSON.stringify(input.add_ons)); }
     if (input.notes !== undefined) { updates.push('notes = ?'); values.push(input.notes); }
+    if (input.status !== undefined) { updates.push('status = ?'); values.push(input.status); }
 
     if (updates.length === 0) return existing;
 
@@ -292,13 +293,14 @@ export class SerialService {
     ).all(today) as ActivityLog[];
   }
 
-  getStats(): { total: number; active: number; cancelled: number; expired: number; expiringThisMonth: number } {
+  getStats(): { total: number; active: number; cancelled: number; expired: number; notActivated: number; expiringThisMonth: number } {
     this.syncExpiredStatus();
     const db = getDb();
     const total = (db.prepare('SELECT COUNT(*) as cnt FROM serials').get() as any).cnt;
     const active = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'active'").get() as any).cnt;
     const cancelled = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'cancelled'").get() as any).cnt;
     const expired = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'expired'").get() as any).cnt;
+    const notActivated = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'not-activated'").get() as any).cnt;
 
     const now = new Date();
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
@@ -307,7 +309,7 @@ export class SerialService {
       "SELECT COUNT(*) as cnt FROM serials WHERE expiry_date >= ? AND expiry_date <= ? AND status = 'active'"
     ).get(today, endOfMonth) as any).cnt;
 
-    return { total, active, cancelled, expired, expiringThisMonth };
+    return { total, active, cancelled, expired, notActivated, expiringThisMonth };
   }
 }
 
