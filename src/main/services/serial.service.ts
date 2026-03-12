@@ -224,7 +224,7 @@ export class SerialService {
     const transaction = db.transaction(() => {
       for (const s of serials) {
         try {
-          const result = upsertStmt.run(
+          upsertStmt.run(
             s.serial_number,
             s.customer_name,
             s.customer_email,
@@ -239,9 +239,10 @@ export class SerialService {
             s.notes || ''
           );
 
-          if (result.changes > 0) {
-            // 새로 삽입되었거나 업데이트됨
-            this.logActivity(0, 'bulk_imported', `벌크 임포트/업데이트: ${s.serial_number}`);
+          // 실제 저장된 시리얼의 ID를 찾아 로그에 기록 (외래키 제약조건 위반 방지)
+          const row = db.prepare('SELECT id FROM serials WHERE serial_number = ?').get(s.serial_number) as { id: number };
+          if (row) {
+            this.logActivity(row.id, 'bulk_imported', `벌크 임포트/업데이트: ${s.serial_number}`);
             imported++;
           }
         } catch (err: any) {
