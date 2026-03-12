@@ -7,7 +7,7 @@ const router = Router();
 // GET /api/reports/daily
 router.get('/daily', (_req: Request, res: Response) => {
     const todayLogs = serialService.getTodayLogs();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     res.json({
         date: today,
         new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
@@ -26,7 +26,7 @@ router.get('/monthly-expiry', (_req: Request, res: Response) => {
     const adjustedMonth = target.getMonth() + 1;
     const expiringSerials = serialService.getExpiringInMonth(targetYear, adjustedMonth);
     res.json({
-        report_date: now.toISOString().slice(0, 10),
+        report_date: now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }),
         target_month: `${targetYear}-${String(adjustedMonth).padStart(2, '0')}`,
         expiring_serials: expiringSerials,
         total_count: expiringSerials.length,
@@ -36,7 +36,7 @@ router.get('/monthly-expiry', (_req: Request, res: Response) => {
 // POST /api/reports/send-daily
 router.post('/send-daily', async (_req: Request, res: Response) => {
     const todayLogs = serialService.getTodayLogs();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     await notificationService.sendDailyReport({
         date: today,
         new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,

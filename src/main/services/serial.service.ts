@@ -3,11 +3,23 @@ import type { Serial, SerialInput, AddOn, ActivityLog } from '../../shared/types
 
 export class SerialService {
   getAll(): Serial[] {
+    this.syncExpiredStatus();
     const db = getDb();
     return db.prepare('SELECT * FROM serials ORDER BY expiry_date ASC').all() as Serial[];
   }
 
+  private syncExpiredStatus(): void {
+    const db = getDb();
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    db.prepare(
+      "UPDATE serials SET status = 'expired', updated_at = ? " +
+      "WHERE expiry_date < ? AND status = 'active'"
+    ).run(now, today);
+  }
+
   getById(id: number): Serial | undefined {
+    this.syncExpiredStatus();
     const db = getDb();
     return db.prepare('SELECT * FROM serials WHERE id = ?').get(id) as Serial | undefined;
   }
@@ -18,6 +30,7 @@ export class SerialService {
   }
 
   search(query: string): Serial[] {
+    this.syncExpiredStatus();
     const db = getDb();
     const like = `%${query}%`;
     return db.prepare(
@@ -31,7 +44,7 @@ export class SerialService {
   create(input: SerialInput): Serial {
     const db = getDb();
     const addOnsJson = JSON.stringify(input.add_ons || []);
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     const result = db.prepare(
       `INSERT INTO serials (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
@@ -80,7 +93,7 @@ export class SerialService {
 
     if (updates.length === 0) return existing;
 
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     updates.push('updated_at = ?');
     values.push(now);
     values.push(id);
@@ -103,7 +116,7 @@ export class SerialService {
     const addOns: AddOn[] = JSON.parse(existing.add_ons);
     addOns.push(addon);
 
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     db.prepare('UPDATE serials SET add_ons = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(addOns), now, id);
 
@@ -119,7 +132,7 @@ export class SerialService {
     const addOns: AddOn[] = JSON.parse(existing.add_ons);
     const filtered = addOns.filter(a => a.name !== addonName);
 
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     db.prepare('UPDATE serials SET add_ons = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(filtered), now, id);
 
@@ -134,9 +147,9 @@ export class SerialService {
     const currentExpiry = new Date(existing.expiry_date);
     const newExpiry = new Date(currentExpiry);
     newExpiry.setFullYear(newExpiry.getFullYear() + 1);
-    const newExpiryStr = newExpiry.toISOString().slice(0, 10);
+    const newExpiryStr = new Date(newExpiry).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     db.prepare('UPDATE serials SET expiry_date = ?, status = ?, updated_at = ? WHERE id = ?')
       .run(newExpiryStr, 'active', now, id);
 
@@ -153,7 +166,7 @@ export class SerialService {
     const existing = this.getById(id);
     if (!existing) return undefined;
 
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     db.prepare('UPDATE serials SET status = ?, updated_at = ? WHERE id = ?')
       .run('cancelled', now, id);
 
@@ -164,7 +177,7 @@ export class SerialService {
   getExpiringSerials(date: string): Serial[] {
     const db = getDb();
     return db.prepare(
-      "SELECT * FROM serials WHERE expiry_date <= ? AND status = 'active' ORDER BY expiry_date ASC"
+      "SELECT * FROM serials WHERE expiry_date <= ? AND status IN ('active', 'expired') ORDER BY expiry_date ASC"
     ).all(date) as Serial[];
   }
 
@@ -201,11 +214,10 @@ export class SerialService {
     const errors: string[] = [];
     let imported = 0;
 
-    // ON CONFLICT(serial_number) DO UPDATE SET ... 을 사용하여 덮어쓰기 구현
     const upsertStmt = db.prepare(
       `INSERT INTO serials 
        (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
        ON CONFLICT(serial_number) DO UPDATE SET
          customer_name = excluded.customer_name,
          customer_email = excluded.customer_email,
@@ -218,10 +230,11 @@ export class SerialService {
          version = excluded.version,
          add_ons = excluded.add_ons,
          notes = excluded.notes,
-         updated_at = datetime('now', 'localtime')`
+         updated_at = excluded.updated_at`
     );
 
     const transaction = db.transaction(() => {
+      const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
       for (const s of serials) {
         try {
           upsertStmt.run(
@@ -236,10 +249,11 @@ export class SerialService {
             s.engine_build || '',
             s.version || '',
             JSON.stringify(s.add_ons || []),
-            s.notes || ''
+            s.notes || '',
+            now, // created_at
+            now  // updated_at
           );
 
-          // 실제 저장된 시리얼의 ID를 찾아 로그에 기록 (외래키 제약조건 위반 방지)
           const row = db.prepare('SELECT id FROM serials WHERE serial_number = ?').get(s.serial_number) as { id: number };
           if (row) {
             this.logActivity(row.id, 'bulk_imported', `벌크 임포트/업데이트: ${s.serial_number}`);
@@ -257,9 +271,10 @@ export class SerialService {
 
   private logActivity(serialId: number, action: string, details: string): void {
     const db = getDb();
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     db.prepare(
-      'INSERT INTO activity_logs (serial_id, action, details) VALUES (?, ?, ?)'
-    ).run(serialId, action, details);
+      'INSERT INTO activity_logs (serial_id, action, details, created_at) VALUES (?, ?, ?, ?)'
+    ).run(serialId, action, details, now);
   }
 
   getLogs(limit: number = 100, offset: number = 0): ActivityLog[] {
@@ -271,13 +286,14 @@ export class SerialService {
 
   getTodayLogs(): ActivityLog[] {
     const db = getDb();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     return db.prepare(
       "SELECT * FROM activity_logs WHERE date(created_at) = ? ORDER BY created_at DESC"
     ).all(today) as ActivityLog[];
   }
 
   getStats(): { total: number; active: number; cancelled: number; expired: number; expiringThisMonth: number } {
+    this.syncExpiredStatus();
     const db = getDb();
     const total = (db.prepare('SELECT COUNT(*) as cnt FROM serials').get() as any).cnt;
     const active = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'active'").get() as any).cnt;
@@ -285,8 +301,8 @@ export class SerialService {
     const expired = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'expired'").get() as any).cnt;
 
     const now = new Date();
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-    const today = now.toISOString().slice(0, 10);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const today = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const expiringThisMonth = (db.prepare(
       "SELECT COUNT(*) as cnt FROM serials WHERE expiry_date >= ? AND expiry_date <= ? AND status = 'active'"
     ).get(today, endOfMonth) as any).cnt;

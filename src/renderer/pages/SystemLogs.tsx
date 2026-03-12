@@ -8,7 +8,7 @@ export default function SystemLogs() {
     const [systemLogs, setSystemLogs] = useState<string[]>([]);
     const [relatedEmails, setRelatedEmails] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
-    const [dateStr, setDateStr] = useState<string>(new Date().toISOString().slice(0, 10));
+    const [dateStr, setDateStr] = useState<string>(new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }));
 
     useEffect(() => { loadLogs(); }, [dateStr]);
 
@@ -82,7 +82,7 @@ export default function SystemLogs() {
                                     {relatedEmails.map((log, idx) => {
                                         // example log format: "[2026-03-11T03:55:00.000Z] [INFO] [System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=..., subject=..."
                                         const timeMatch = log.match(/\[(.*?)\]/);
-                                        const timeStr = timeMatch ? new Date(timeMatch[1]).toLocaleString() : '';
+                                        const timeStr = timeMatch ? timeMatch[1] : '';
                                         const detail = log.split(']: ')[1] || log;
 
                                         return (

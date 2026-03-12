@@ -164,7 +164,7 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
@@ -222,7 +222,7 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
@@ -320,7 +320,7 @@ export class NotificationService {
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
     yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const lines: string[] = [
       sf('daily_summary', { date: today }),
       sf('divider'),

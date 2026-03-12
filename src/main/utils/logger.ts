@@ -15,13 +15,15 @@ class Logger {
   }
 
   private updateLogFile(): void {
-    const date = new Date().toISOString().slice(0, 10);
+    // JST (UTC+9) 기준 날짜 문자열 (YYYY-MM-DD)
+    const date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     this.logFile = path.join(this.logDir, `${date}.log`);
   }
 
   private write(level: string, message: string): void {
     this.updateLogFile();
-    const timestamp = new Date().toISOString();
+    // JST (UTC+9) 기준 타임스탬프 (YYYY-MM-DD HH:mm:ss)
+    const timestamp = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const line = `[${timestamp}] [${level}] ${message}\n`;
     if (this.logFile) {
       try {

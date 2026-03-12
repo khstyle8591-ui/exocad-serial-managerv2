@@ -31,9 +31,9 @@ router.post('/renewal-dry-run', async (_req: Request, res: Response) => {
 });
 
 // GET /api/logs/system
-router.get('/system', (req: Request, res: Response) => {
+    router.get('/system', (req: Request, res: Response) => {
     try {
-        const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+        const date = (req.query.date as string) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
         const logDir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
         const logFile = path.join(logDir, `${date}.log`);
 
