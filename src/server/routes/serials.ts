@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
 import { excelService } from '../../main/services/excel.service';
 import type { SerialInput, AddOn } from '../../shared/types';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage() });
 
 // GET /api/serials
 router.get('/', (_req: Request, res: Response) => {
@@ -46,20 +48,28 @@ router.post('/', (req: Request, res: Response) => {
     }
 });
 
-// POST /api/serials/bulk-import  (application/octet-stream 또는 multipart — raw buffer)
-router.post('/bulk-import', (req: Request, res: Response) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        if (!buf.length) return res.status(400).json({ error: '파일이 없습니다' });
-        const { serials, errors: parseErrors } = excelService.parseExcelBuffer(buf);
-        if (serials.length === 0) {
-            return res.json({ imported: 0, errors: parseErrors.length > 0 ? parseErrors : ['유효한 데이터가 없습니다'] });
+// POST /api/serials/bulk-import  (multipart/form-data)
+router.post('/bulk-import', upload.single('file'), (req: Request, res: Response) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: '파일이 없습니다' });
         }
+
+        const { serials, errors: parseErrors } = excelService.parseExcelBuffer(req.file.buffer);
+
+        if (serials.length === 0) {
+            return res.json({
+                imported: 0,
+                errors: parseErrors.length > 0 ? parseErrors : ['유효한 데이터가 없습니다. 엑셀 행 구성을 확인해주세요.']
+            });
+        }
+
         const importResult = serialService.bulkImport(serials);
         res.json({ imported: importResult.imported, errors: [...parseErrors, ...importResult.errors] });
-    });
+    } catch (err: any) {
+        console.error('Bulk import error:', err);
+        res.status(500).json({ error: '임포트 중 오류 발생: ' + err.message });
+    }
 });
 
 // POST /api/serials/:id/addon
