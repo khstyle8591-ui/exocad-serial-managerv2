@@ -13,8 +13,11 @@ export class ExcelService {
       const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet);
 
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+        let row = rows[i] as any;
+        row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
+
+        if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
 
         if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
         if (!row.expiry_date) { errors.push(`행 ${rowNum}: expiry_date 누락`); continue; }
@@ -26,7 +29,7 @@ export class ExcelService {
               if (row.add_ons.startsWith('[')) {
                 addOns = JSON.parse(row.add_ons);
               } else {
-                addOns = row.add_ons.split(',').map(name => ({
+                addOns = row.add_ons.split(',').map((name: string) => ({
                   name: name.trim(),
                   added_date: new Date().toISOString().slice(0, 10),
                 }));
@@ -69,8 +72,12 @@ export class ExcelService {
       const sheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet);
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+        let row = rows[i] as any;
+        row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
+
+        if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
+
         if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
         if (!row.expiry_date) { errors.push(`행 ${rowNum}: expiry_date 누락`); continue; }
         let addOns: { name: string; added_date: string }[] = [];
@@ -150,6 +157,23 @@ export class ExcelService {
     } catch { /* ignore */ }
 
     return null;
+  }
+
+  private normalizeRowKeys(raw: any): any {
+    return {
+      serial_number: raw.serial_number || raw['시리얼 넘버 (필수)'] || raw['시리얼 넘버'] || raw['Serial Number'] || raw.serial,
+      expiry_date: raw.expiry_date || raw['만료일 (YYYY-MM-DD, 필수)'] || raw['만료일'] || raw['Expiry Date'] || raw.expiry,
+      customer_name: raw.customer_name || raw['고객명'] || raw['Customer Name'] || raw.customer,
+      customer_email: raw.customer_email || raw['이메일'] || raw['Email'] || raw.email,
+      customer_address: raw.customer_address || raw['주소'] || raw['Address'] || raw.address,
+      customer_phone: raw.customer_phone || raw['전화번호'] || raw['Phone'] || raw.phone,
+      customer_manager: raw.customer_manager || raw['담당자'] || raw['Manager'] || raw.manager,
+      purchase_date: raw.purchase_date || raw['구매일 (YYYY-MM-DD)'] || raw['구매일'] || raw['Purchase Date'] || raw.purchase,
+      engine_build: raw.engine_build || raw['엔진빌드'] || raw['Engine Build'] || raw.engine,
+      version: raw.version || raw['버전'] || raw['Version'],
+      add_ons: raw.add_ons || raw['Add-ons (쉼표로 구분)'] || raw['Add-ons'] || raw.addons || raw.add_ons,
+      notes: raw.notes || raw['비고'] || raw['Notes'],
+    };
   }
 }
 
