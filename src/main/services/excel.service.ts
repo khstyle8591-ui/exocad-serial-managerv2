@@ -17,9 +17,15 @@ export class ExcelService {
         row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
 
-        if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
+        if (row.serial_number === '시리얼 넘버 (필수)') continue;
 
-        if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
+        // Skip rows that are empty or sample placeholders
+        if (!row.serial_number) {
+          const hasOtherData = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
+          if (!hasOtherData) continue; // Just an empty row, skip silently
+          errors.push(`행 ${rowNum}: serial_number 누락`);
+          continue;
+        }
 
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
@@ -75,9 +81,13 @@ export class ExcelService {
         row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
 
-        if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
-
-        if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
+        if (row.serial_number === '시리얼 넘버 (필수)') continue;
+        if (!row.serial_number) {
+          const hasOtherData = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
+          if (!hasOtherData) continue; // Empty row, skip silently
+          errors.push(`행 ${rowNum}: serial_number 누락`);
+          continue;
+        }
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
           try {
@@ -158,19 +168,35 @@ export class ExcelService {
   }
 
   private normalizeRowKeys(raw: any): any {
+    const normalized: any = {};
+    for (const key of Object.keys(raw)) {
+      normalized[key.trim()] = raw[key];
+    }
+
+    const getVal = (keys: string[]) => {
+      for (const k of keys) {
+        let val = normalized[k];
+        if (val !== undefined && val !== null) {
+          if (typeof val === 'string') val = val.trim();
+          if (val !== '') return val;
+        }
+      }
+      return undefined;
+    };
+
     return {
-      serial_number: raw.serial_number || raw['시리얼 넘버 (필수)'] || raw['시리얼 넘버'] || raw['Serial Number'] || raw.serial,
-      expiry_date: raw.expiry_date || raw['만료일 (YYYY-MM-DD, 필수)'] || raw['만료일'] || raw['Expiry Date'] || raw.expiry,
-      customer_name: raw.customer_name || raw['고객명'] || raw['Customer Name'] || raw.customer,
-      customer_email: raw.customer_email || raw['이메일'] || raw['Email'] || raw.email,
-      customer_address: raw.customer_address || raw['주소'] || raw['Address'] || raw.address,
-      customer_phone: raw.customer_phone || raw['전화번호'] || raw['Phone'] || raw.phone,
-      customer_manager: raw.customer_manager || raw['담당자'] || raw['Manager'] || raw.manager,
-      purchase_date: raw.purchase_date || raw['구매일 (YYYY-MM-DD)'] || raw['구매일'] || raw['Purchase Date'] || raw.purchase,
-      engine_build: raw.engine_build || raw['엔진빌드'] || raw['Engine Build'] || raw.engine,
-      version: raw.version || raw['버전'] || raw['Version'],
-      add_ons: raw.add_ons || raw['Add-ons (쉼표로 구분)'] || raw['Add-ons'] || raw.addons || raw.add_ons,
-      notes: raw.notes || raw['비고'] || raw['Notes'],
+      serial_number: getVal(['serial_number', '시리얼 넘버 (필수)', '시리얼 넘버', 'Serial Number', 'serial', 'S/N', 'SN', '시리얼번호', '시리얼', 'LOT']),
+      expiry_date: getVal(['expiry_date', '만료일 (YYYY-MM-DD, 필수)', '만료일', 'Expiry Date', 'expiry', '만료날짜', '出荷日']),
+      customer_name: getVal(['customer_name', '고객명', 'Customer Name', 'customer', '고객', '注文先']),
+      customer_email: getVal(['customer_email', '이메일', 'Email', 'email']),
+      customer_address: getVal(['customer_address', '주소', 'Address', 'address', '納品先']),
+      customer_phone: getVal(['customer_phone', '전화번호', 'Phone', 'phone', '연락처']),
+      customer_manager: getVal(['customer_manager', '담당자', 'Manager', 'manager']),
+      purchase_date: getVal(['purchase_date', '구매일 (YYYY-MM-DD)', '구매일', 'Purchase Date', 'purchase', '구매날짜', '入荷일', '入荷日']),
+      engine_build: getVal(['engine_build', '엔진빌드', 'Engine Build', 'engine']),
+      version: getVal(['version', '버전', 'Version', '品名']),
+      add_ons: getVal(['add_ons', 'Add-ons (쉼표로 구분)', 'Add-ons', 'addons', '애드온']),
+      notes: getVal(['notes', '비고', 'Notes', '메모']),
     };
   }
 }
