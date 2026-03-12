@@ -120,14 +120,18 @@ export default function Serials() {
   };
 
   const handleFormSave = async (input: any) => {
-    if (editingSerial) {
-      await api.updateSerial(editingSerial.id, input);
-    } else {
-      await api.createSerial(input);
+    try {
+      if (editingSerial) {
+        await api.updateSerial(editingSerial.id, input);
+      } else {
+        await api.createSerial(input);
+      }
+      setShowForm(false);
+      setEditingSerial(null);
+      loadSerials();
+    } catch (err: any) {
+      alert(err.message || '저장 중 오류가 발생했습니다.');
     }
-    setShowForm(false);
-    setEditingSerial(null);
-    loadSerials();
   };
 
   // 상세 모달에서 add-on 추가

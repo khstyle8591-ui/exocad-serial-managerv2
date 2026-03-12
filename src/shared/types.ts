@@ -142,7 +142,7 @@ export interface CancelResult {
 export interface CancelDryRunResult {
   serial_number: string;
   customer_name: string;
-  expiry_date: string;
+  expiry_date: string | null;
   has_renewal: boolean;       // true = would be SKIPPED (renewal request exists)
   is_test_serial?: boolean;   // true = no DB targets found; used fallback test serial
   product_name?: string;      // product name detected from the result row

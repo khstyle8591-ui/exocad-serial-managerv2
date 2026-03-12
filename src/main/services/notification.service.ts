@@ -316,7 +316,7 @@ export class NotificationService {
   // - 갱신의뢰 접수 현황
   // - 전일 작업 요약
   async sendDailySummarySlack(summary: {
-    cancelTargets: { serial_number: string; customer_name: string; expiry_date: string; has_renewal: boolean }[];
+    cancelTargets: { serial_number: string; customer_name: string; expiry_date: string | null; has_renewal: boolean }[];
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
     yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {

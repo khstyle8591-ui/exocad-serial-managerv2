@@ -522,7 +522,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
             d.setFullYear(d.getFullYear() + 1);
             newExpiry = d.toISOString().slice(0, 10);
           } else {
-            const d = new Date(existing.expiry_date);
+            const d = new Date(existing.expiry_date || new Date());
             d.setFullYear(d.getFullYear() + 1);
             newExpiry = d.toISOString().slice(0, 10);
           }

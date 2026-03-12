@@ -136,7 +136,7 @@ export class ExcelService {
   generateTemplate(outputPath: string): void {
     const wb = XLSX.utils.book_new();
     const headerRow = ['serial_number', 'customer_name', 'customer_email', 'customer_address', 'customer_phone', 'customer_manager', 'purchase_date', 'expiry_date', 'engine_build', 'version', 'add_ons', 'notes'];
-    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD, 필수)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
+    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
     const sampleRow = ['EXO-2024-001', '홍길동 치과', 'hong@example.com', '서울시 강남구 테헤란로 123', '010-1234-5678', '김담당', '2024-01-15', '2025-01-15', '4.0.1', '24.01', 'DentalCAD, ChairsideCAD', '샘플 데이터'];
     const ws = XLSX.utils.aoa_to_sheet([headerRow, labelRow, sampleRow]);
     ws['!cols'] = [
@@ -151,7 +151,7 @@ export class ExcelService {
   generateTemplateBuffer(): Buffer {
     const wb = XLSX.utils.book_new();
     const headerRow = ['serial_number', 'customer_name', 'customer_email', 'customer_address', 'customer_phone', 'customer_manager', 'purchase_date', 'expiry_date', 'engine_build', 'version', 'add_ons', 'notes'];
-    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD, 필수)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
+    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
     const sampleRow = ['EXO-2024-001', '홍길동 치과', 'hong@example.com', '서울시 강남구 테헤란로 123', '010-1234-5678', '김담당', '2024-01-15', '2025-01-15', '4.0.1', '24.01', 'DentalCAD, ChairsideCAD', '샘플 데이터'];
     const ws = XLSX.utils.aoa_to_sheet([headerRow, labelRow, sampleRow]);
     XLSX.utils.book_append_sheet(wb, ws, 'Serials');
