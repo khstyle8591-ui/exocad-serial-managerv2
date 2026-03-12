@@ -10,19 +10,26 @@ export class ExcelService {
       const workbook = XLSX.readFile(filePath);
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet);
+      // defval: '' 를 추가하여 모든 키가 객체에 존재하도록 보장
+      const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet, { defval: '' });
 
       for (let i = 0; i < rows.length; i++) {
         let row = rows[i] as any;
         row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
 
-        if (row.serial_number === '시리얼 넘버 (필수)') continue;
+        // 헤더나 샘플 행 건너뛰기 (시리얼 넘버가 특정 키워드인 경우)
+        if (row.serial_number && (
+          row.serial_number.includes('시리얼 넘버') ||
+          row.serial_number.includes('EXO-2024-001') ||
+          row.serial_number === 'serial_number'
+        )) {
+          continue;
+        }
 
-        // Skip rows that are empty or sample placeholders
         if (!row.serial_number) {
           const hasOtherData = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
-          if (!hasOtherData) continue; // Just an empty row, skip silently
+          if (!hasOtherData) continue;
           errors.push(`행 ${rowNum}: serial_number 누락`);
           continue;
         }
@@ -30,15 +37,14 @@ export class ExcelService {
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
           try {
-            if (typeof row.add_ons === 'string') {
-              if (row.add_ons.startsWith('[')) {
-                addOns = JSON.parse(row.add_ons);
-              } else {
-                addOns = row.add_ons.split(',').map((name: string) => ({
-                  name: name.trim(),
-                  added_date: new Date().toISOString().slice(0, 10),
-                }));
-              }
+            const addOnsVal = String(row.add_ons).trim();
+            if (addOnsVal.startsWith('[')) {
+              addOns = JSON.parse(addOnsVal);
+            } else if (addOnsVal !== '') {
+              addOns = addOnsVal.split(',').map((name: string) => ({
+                name: name.trim(),
+                added_date: new Date().toISOString().slice(0, 10),
+              }));
             }
           } catch {
             errors.push(`행 ${rowNum}: add_ons 파싱 실패`);
@@ -75,25 +81,35 @@ export class ExcelService {
       const workbook = XLSX.read(buffer, { type: 'buffer' });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet);
+      const rows = XLSX.utils.sheet_to_json<ExcelSerialRow>(sheet, { defval: '' });
       for (let i = 0; i < rows.length; i++) {
         let row = rows[i] as any;
         row = this.normalizeRowKeys(row);
         const rowNum = i + 2;
 
-        if (row.serial_number === '시리얼 넘버 (필수)') continue;
+        if (row.serial_number && (
+          row.serial_number.includes('시리얼 넘버') ||
+          row.serial_number.includes('EXO-2024-001') ||
+          row.serial_number === 'serial_number'
+        )) {
+          continue;
+        }
+
         if (!row.serial_number) {
           const hasOtherData = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
-          if (!hasOtherData) continue; // Empty row, skip silently
+          if (!hasOtherData) continue;
           errors.push(`행 ${rowNum}: serial_number 누락`);
           continue;
         }
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
           try {
-            addOns = typeof row.add_ons === 'string' && row.add_ons.startsWith('[')
-              ? JSON.parse(row.add_ons)
-              : String(row.add_ons).split(',').map(n => ({ name: n.trim(), added_date: new Date().toISOString().slice(0, 10) }));
+            const addOnsVal = String(row.add_ons).trim();
+            if (addOnsVal.startsWith('[')) {
+              addOns = JSON.parse(addOnsVal);
+            } else if (addOnsVal !== '') {
+              addOns = addOnsVal.split(',').map(n => ({ name: n.trim(), added_date: new Date().toISOString().slice(0, 10) }));
+            }
           } catch { errors.push(`행 ${rowNum}: add_ons 파싱 실패`); }
         }
         serials.push({
@@ -170,15 +186,29 @@ export class ExcelService {
   private normalizeRowKeys(raw: any): any {
     const normalized: any = {};
     for (const key of Object.keys(raw)) {
-      normalized[key.trim()] = raw[key];
+      // BOM 및 제어문자 제거 루틴 강화
+      const cleanKey = key.replace(/[\ufeff\x00-\x1F\x7F-\x9F]/g, "").trim();
+      normalized[cleanKey] = raw[key];
     }
 
     const getVal = (keys: string[]) => {
+      // 1. 정확한 매칭
       for (const k of keys) {
         let val = normalized[k];
-        if (val !== undefined && val !== null) {
-          if (typeof val === 'string') val = val.trim();
-          if (val !== '') return val;
+        if (val !== undefined && val !== null && val !== '') {
+          return typeof val === 'string' ? val.trim() : val;
+        }
+      }
+
+      // 2. 소문자 및 공백 제거 후 비교 (강력한 매칭)
+      const simplifiedKeys = keys.map(k => k.toLowerCase().replace(/\s+/g, ''));
+      for (const actualKey of Object.keys(normalized)) {
+        const simplifiedActual = actualKey.toLowerCase().replace(/\s+/g, '');
+        if (simplifiedKeys.includes(simplifiedActual)) {
+          let val = normalized[actualKey];
+          if (val !== undefined && val !== null && val !== '') {
+            return typeof val === 'string' ? val.trim() : val;
+          }
         }
       }
       return undefined;
@@ -199,6 +229,7 @@ export class ExcelService {
       notes: getVal(['notes', '비고', 'Notes', '메모']),
     };
   }
+
 }
 
 export const excelService = new ExcelService();
