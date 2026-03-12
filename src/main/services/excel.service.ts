@@ -20,7 +20,6 @@ export class ExcelService {
         if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
 
         if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
-        if (!row.expiry_date) { errors.push(`행 ${rowNum}: expiry_date 누락`); continue; }
 
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
@@ -48,7 +47,7 @@ export class ExcelService {
           customer_phone: String(row.customer_phone || '').trim(),
           customer_manager: String(row.customer_manager || '').trim(),
           purchase_date: this.normalizeDate(row.purchase_date) || new Date().toISOString().slice(0, 10),
-          expiry_date: this.normalizeDate(row.expiry_date)!,
+          expiry_date: this.normalizeDate(row.expiry_date) || '',
           engine_build: String(row.engine_build || '').trim(),
           version: String(row.version || '').trim(),
           add_ons: addOns,
@@ -79,7 +78,6 @@ export class ExcelService {
         if (row.serial_number === '시리얼 넘버 (필수)') continue; // Skip descriptive template header
 
         if (!row.serial_number) { errors.push(`행 ${rowNum}: serial_number 누락`); continue; }
-        if (!row.expiry_date) { errors.push(`행 ${rowNum}: expiry_date 누락`); continue; }
         let addOns: { name: string; added_date: string }[] = [];
         if (row.add_ons) {
           try {
@@ -96,7 +94,7 @@ export class ExcelService {
           customer_phone: String(row.customer_phone || '').trim(),
           customer_manager: String(row.customer_manager || '').trim(),
           purchase_date: this.normalizeDate(row.purchase_date) || new Date().toISOString().slice(0, 10),
-          expiry_date: this.normalizeDate(row.expiry_date)!,
+          expiry_date: this.normalizeDate(row.expiry_date) || '',
           engine_build: String(row.engine_build || '').trim(),
           version: String(row.version || '').trim(),
           add_ons: addOns,
