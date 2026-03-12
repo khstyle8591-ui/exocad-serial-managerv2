@@ -79,7 +79,7 @@ export const translations = {
     label_addon_name: 'Add-on 이름',
     btn_add_addon: '+ Add-on 추가',
     btn_remove: '제거',
-    required_fields: '시리얼 넘버와 만료일은 필수입니다.',
+    required_fields: '시리얼 넘버는 필수입니다.',
     btn_register: '등록',
 
     // Detail modal
@@ -393,7 +393,7 @@ export const translations = {
     label_addon_name: 'Add-on Name',
     btn_add_addon: '+ Add Add-on',
     btn_remove: 'Remove',
-    required_fields: 'Serial number and expiry date are required.',
+    required_fields: 'Serial number is required.',
     btn_register: 'Register',
 
     // Detail modal
@@ -707,7 +707,7 @@ export const translations = {
     label_addon_name: 'アドオン名',
     btn_add_addon: '+ アドオン追加',
     btn_remove: '削除',
-    required_fields: 'シリアル番号と有効期限は必須です。',
+    required_fields: 'シリアル番号は必須です。',
     btn_register: '登録',
 
     // Detail modal

@@ -58,8 +58,7 @@ export default function SerialForm({ serial, onSave, onClose }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const isNotActivated = form.status === 'not-activated';
-    if (!form.serial_number || (!isNotActivated && !form.expiry_date)) {
+    if (!form.serial_number) {
       alert(t(lang, 'required_fields'));
       return;
     }
@@ -98,8 +97,8 @@ export default function SerialForm({ serial, onSave, onClose }: Props) {
               <input name="purchase_date" type="date" value={form.purchase_date} onChange={handleChange} />
             </div>
             <div className="form-group">
-              <label>{t(lang, 'label_expiry_date')} {form.status !== 'not-activated' && <span style={{ color: '#ef4444' }}>*</span>}</label>
-              <input name="expiry_date" type="date" value={form.expiry_date} onChange={handleChange} required={form.status !== 'not-activated'} />
+              <label>{t(lang, 'label_expiry_date')}</label>
+              <input name="expiry_date" type="date" value={form.expiry_date} onChange={handleChange} />
             </div>
           </div>
 

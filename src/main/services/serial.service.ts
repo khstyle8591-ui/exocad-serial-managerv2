@@ -85,8 +85,8 @@ export class SerialService {
     if (input.customer_address !== undefined) { updates.push('customer_address = ?'); values.push(input.customer_address); }
     if (input.customer_phone !== undefined) { updates.push('customer_phone = ?'); values.push(input.customer_phone); }
     if (input.customer_manager !== undefined) { updates.push('customer_manager = ?'); values.push(input.customer_manager); }
-    if (input.purchase_date !== undefined) { updates.push('purchase_date = ?'); values.push(input.purchase_date); }
-    if (input.expiry_date !== undefined) { updates.push('expiry_date = ?'); values.push(input.expiry_date); }
+    if (input.purchase_date !== undefined) { updates.push('purchase_date = ?'); values.push(input.purchase_date || null); }
+    if (input.expiry_date !== undefined) { updates.push('expiry_date = ?'); values.push(input.expiry_date || null); }
     if (input.engine_build !== undefined) { updates.push('engine_build = ?'); values.push(input.engine_build); }
     if (input.version !== undefined) { updates.push('version = ?'); values.push(input.version); }
     if (input.add_ons !== undefined) { updates.push('add_ons = ?'); values.push(JSON.stringify(input.add_ons)); }

@@ -130,6 +130,46 @@ function migrateDatabase(): void {
       db.exec(`ALTER TABLE pending_orders ADD COLUMN ${col.name} ${col.definition}`);
     }
   }
+
+  // Remove NOT NULL from purchase_date, expiry_date if still present
+  const info = db.pragma('table_info(serials)') as any[];
+  const expiryCol = info.find(c => c.name === 'expiry_date');
+  if (expiryCol && expiryCol.notnull === 1) {
+    console.log('Migrating serials table to allow NULL dates...');
+    db.pragma('foreign_keys = OFF');
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE serials_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          serial_number TEXT UNIQUE NOT NULL,
+          customer_name TEXT NOT NULL DEFAULT '',
+          customer_email TEXT NOT NULL DEFAULT '',
+          customer_address TEXT NOT NULL DEFAULT '',
+          customer_phone TEXT NOT NULL DEFAULT '',
+          customer_manager TEXT NOT NULL DEFAULT '',
+          purchase_date TEXT,
+          expiry_date TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired', 'not-activated')),
+          engine_build TEXT NOT NULL DEFAULT '',
+          version TEXT NOT NULL DEFAULT '',
+          add_ons TEXT NOT NULL DEFAULT '[]',
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        INSERT INTO serials_new (id, serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
+        SELECT id, serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at FROM serials;
+        
+        DROP TABLE serials;
+        ALTER TABLE serials_new RENAME TO serials;
+        
+        CREATE INDEX IF NOT EXISTS idx_serials_expiry ON serials(expiry_date);
+        CREATE INDEX IF NOT EXISTS idx_serials_status ON serials(status);
+        CREATE INDEX IF NOT EXISTS idx_serials_serial_number ON serials(serial_number);
+      `);
+    })();
+    db.pragma('foreign_keys = ON');
+  }
 }
 
 export function getDb(): Database.Database {
