@@ -75,6 +75,9 @@ export class EmailMonitorService {
         user: settings.pop3_user,
         password: settings.pop3_password,
         tls: settings.pop3_tls,
+        timeout: 10000,
+        tlsOptions: { rejectUnauthorized: false },
+        servername: settings.pop3_host,
       });
       const list = await pop3.UIDL();
       const count = Array.isArray(list) ? list.length : 0;
@@ -137,6 +140,9 @@ export class EmailMonitorService {
         user: settings.pop3_user,
         password: settings.pop3_password,
         tls: settings.pop3_tls,
+        timeout: 10000,
+        tlsOptions: { rejectUnauthorized: false },
+        servername: settings.pop3_host,
       });
 
       const list = await pop3.UIDL();
@@ -327,6 +333,9 @@ export class EmailMonitorService {
         user: settings.pop3_user,
         password: settings.pop3_password,
         tls: settings.pop3_tls,
+        timeout: 10000,
+        tlsOptions: { rejectUnauthorized: false },
+        servername: settings.pop3_host,
       });
 
       const list = await pop3.UIDL();
@@ -365,11 +374,15 @@ export class EmailMonitorService {
             notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product);
           }
 
-          // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨)
-          try {
-            await pop3.DELE(msgNum);
-          } catch (deleErr: any) {
-            logger.warn(`POP3 DELE 실패 (msgNum=${msgNum}): ${deleErr.message}`);
+          // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨) - 설정에 따라 유지 가능
+          if (!settings.pop3_keep_copy) {
+            try {
+              await pop3.DELE(msgNum);
+            } catch (deleErr: any) {
+              logger.warn(`POP3 DELE 실패 (msgNum=${msgNum}): ${deleErr.message}`);
+            }
+          } else {
+            logger.info(`POP3: 메일 서버 보관 설정에 의해 삭제 건너뜀 (msgNum=${msgNum})`);
           }
         } catch (err: any) {
           errors.push(`메일 처리 오류: ${err.message}`);

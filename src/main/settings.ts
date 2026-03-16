@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   pop3_user: '',
   pop3_password: '',
   pop3_tls: true,
+  pop3_keep_copy: false,                     // 기본값: 삭제 (기존 동작)
   imap_host: '',
   imap_port: 993,
   imap_user: '',

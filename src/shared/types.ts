@@ -236,6 +236,7 @@ export interface AppSettings {
   pop3_user: string;
   pop3_password: string;
   pop3_tls: boolean;
+  pop3_keep_copy: boolean; // Added this
 
   // IMAP Mail Settings
   imap_host: string;

@@ -95,6 +95,7 @@ export default function Settings() {
   const [appLanguage, setAppLanguage] = useState<Language>('ko');
   const [slackLanguage, setSlackLanguage] = useState<'ko' | 'en' | 'ja'>('ko');
   const [pop3Tls, setPop3Tls] = useState(true);
+  const [pop3KeepCopy, setPop3KeepCopy] = useState(false);
   const [imapTls, setImapTls] = useState(true);
   const [smtpTls, setSmtpTls] = useState(false);
   const [slackEnabled, setSlackEnabled] = useState(true);
@@ -142,6 +143,7 @@ export default function Settings() {
       setSlackLanguage(data.slack_language || 'ko');
       setSlackEnabled(data.slack_enabled ?? true);
       setPop3Tls(data.pop3_tls ?? true);
+      setPop3KeepCopy(data.pop3_keep_copy ?? false);
       setImapTls(data.imap_tls ?? true);
       setSmtpTls(data.smtp_tls ?? false);
       setRequireSerial(data.require_serial_format ?? true);
@@ -174,6 +176,7 @@ export default function Settings() {
         slack_language: slackLanguage,
         slack_enabled: slackEnabled,
         pop3_tls: pop3Tls,
+        pop3_keep_copy: pop3KeepCopy,
         imap_tls: imapTls,
         smtp_tls: smtpTls,
         poll_sources: pollSourcesRef.current,
@@ -556,10 +559,14 @@ export default function Settings() {
                 <input key={`pop3pw-${loadKey}`} type="password" defaultValue={formVals.current.pop3_password || ''} onChange={e => setVal('pop3_password', e.target.value)} />
               </div>
             </div>
-            <div className="form-group">
-              <label>
+            <div className="form-group" style={{ display: 'flex', gap: 20 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                 <input type="checkbox" checked={pop3Tls} onChange={e => setPop3Tls(e.target.checked)} />
-                {' '}{t(lang, 'label_tls')}
+                {t(lang, 'label_tls')}
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={pop3KeepCopy} onChange={e => setPop3KeepCopy(e.target.checked)} />
+                {t(lang, 'label_pop3_keep_copy')}
               </label>
             </div>
           </>
@@ -698,6 +705,7 @@ export default function Settings() {
                     pop3_host: f.pop3_host, pop3_port: f.pop3_port,
                     pop3_user: f.pop3_user, pop3_password: f.pop3_password,
                     pop3_tls: pop3Tls,
+                    pop3_keep_copy: pop3KeepCopy,
                     imap_host: f.imap_host, imap_port: f.imap_port,
                     imap_user: f.imap_user, imap_password: f.imap_password,
                     imap_tls: imapTls,

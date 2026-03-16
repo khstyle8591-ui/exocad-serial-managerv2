@@ -5,6 +5,9 @@ declare module 'node-pop3' {
     user: string;
     password: string;
     tls: boolean;
+    timeout?: number;
+    tlsOptions?: any;
+    servername?: string;
   }
 
   class Pop3Command {
