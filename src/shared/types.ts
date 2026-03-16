@@ -126,6 +126,7 @@ export interface PollSource {
   product_filter: string;  // 키워드 필터: 비어있으면 전체 수집, 설정 시 product 열에 키워드 포함된 행만 수집 (대소문자 무시)
   last_polled: string;     // 마지막 폴링 시각
   schedule_times: string[]; // 스케줄링 시간 (예: ['10:00', '17:00'])
+  interval_min?: number;   // 주기적 폴링 (분 단위, schedule_times가 없을 때 사용)
   register_directly?: boolean; // 수집 즉시 시리얼 목록에 등록 여부
 }
 

@@ -38,6 +38,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_total: '총 {n}건의 시리얼이 만료 예정입니다.',
     cancel_failures: '⚠️ *Cancel 실패:*',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 발신자: {from}\n• 제목: {subject}',
+    scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
   en: {
     test_ok: '✅ *Exocad Manager* — Slack webhook test successful!\nIf you see this message, the webhook is working. 🎉\nSent at: {time}',
@@ -66,6 +67,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_total: 'A total of {n} serials are scheduled to expire.',
     cancel_failures: '⚠️ *Cancel Failures:*',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• From: {from}\n• Subject: {subject}',
+    scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
   ja: {
     test_ok: '✅ *Exocad Manager* — Slack連携テスト成功！\nこのメッセージが見えれば、Webhookは正常に動作しています。🎉\n送信時刻: {time}',
@@ -359,6 +361,12 @@ export class NotificationService {
     }
 
     return this.sendSlack(lines.join('\n'));
+  }
+  
+  // === 스케줄러 시작 알림 ===
+  async sendSchedulerStartupSlack(details: string): Promise<boolean> {
+    const msg = sf('scheduler_start', { details });
+    return this.sendSlack(msg);
   }
 
   // === 관련 메일 수신 알림 (System Log 용도) ===

@@ -44,7 +44,7 @@ function timeToCron(timeStr: string): string {
 export function startScheduler(): void {
   logger.info('스케줄러 시작');
 
-  // 1. 메일 체크 — 매일 12:00, 17:00
+  // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
   startMailCheck();
 
    // [제거됨] 2. 매일 자정에 만료된 시리얼 cancel 처리 (새벽 리포트 폭풍의 원인)
@@ -183,6 +183,14 @@ export function startScheduler(): void {
       logger.error(`일일 요약 Slack 알림 오류: ${err.message}`);
     }
   }, { timezone: 'Asia/Seoul' });
+
+  // 7. 전체 스케줄링 요약 로그
+  const settings = getSettings();
+  const mailTimes = settings.mail_check_times || ['12:00', '17:00'];
+  const cancelTime = settings.auto_cancel_time || '09:00';
+  const summary = `메일체크(${mailTimes.join(', ')}), 자동취소(${cancelTime}), 일일리포트(23:59), 월간리포트(매월 10일 09:00), 일일요약(08:30)`;
+  logger.info(`[스케줄 요약] ${summary}`);
+  notificationService.sendSchedulerStartupSlack(summary).catch(() => {});
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
