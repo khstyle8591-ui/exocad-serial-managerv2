@@ -1080,11 +1080,8 @@ export function startPollingScheduler(): void {
   const sources = (settings.poll_sources || []).filter(s => s.enabled);
 
   for (const source of sources) {
-    // schedule_times(특정 시각) 또는 interval_min(주기) 기반 폴링 지원
-    const hasScheduleTimes = source.schedule_times && source.schedule_times.length > 0;
-    const hasInterval = !!source.interval_min && source.interval_min > 0;
-
-    if (hasScheduleTimes) {
+    // schedule_times(특정 시각) 기반 폴링만 지원 (UI의 '폴링 스케줄' 설정)
+    if (source.schedule_times && source.schedule_times.length > 0) {
       const tasks: cron.ScheduledTask[] = [];
       for (const time of source.schedule_times) {
         // AM/PM 지원을 위한 파싱
@@ -1110,19 +1107,10 @@ export function startPollingScheduler(): void {
         logger.info(`[스케줄] ${source.name} 등록 (예약시각: ${time})`);
       }
       cronTasks.set(source.id, tasks);
-    } else if (hasInterval) {
-      // 주기적 폴링 (분 단위)
-      const minutes = source.interval_min || 60;
-      const cronExpr = `*/${minutes} * * * *`;
-      const task = cron.schedule(cronExpr, async () => {
-        logger.info(`[스케줄] ${source.name} 폴링 시작 (주기: ${minutes}분마다)`);
-        await pollNow(source.id);
-      }, { timezone: 'Asia/Seoul' });
-      cronTasks.set(source.id, [task]);
-      logger.info(`[스케줄] ${source.name} 등록 (주기: ${minutes}분마다)`);
     } else {
-      logger.info(`[스케줄] ${source.name} - 활성화되어 있으나 예약 시각 또는 주기 설정이 없습니다.`);
+      logger.info(`[스케줄] ${source.name} - 활성 상태이나 '폴링 스케줄'이 설정되지 않아 중단되었습니다.`);
     }
+
 
   }
 }
