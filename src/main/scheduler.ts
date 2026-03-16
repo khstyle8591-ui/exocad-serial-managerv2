@@ -14,6 +14,7 @@ let preExpiryCancelTask: cron.ScheduledTask | null = null;
 let dailyReportTask: cron.ScheduledTask | null = null;
 let monthlyReportTask: cron.ScheduledTask | null = null;
 let dailySummaryTask: cron.ScheduledTask | null = null;
+let retryCancelTask: cron.ScheduledTask | null = null;
 
 // 하루 동안의 cancel 결과를 모아둠
 let dailyCancelResults: CancelResult[] = [];
@@ -46,8 +47,16 @@ export function startScheduler(): void {
   // 1. 메일 체크 — 매일 12:00, 17:00
   startMailCheck();
 
-  // 2. 매일 자정에 만료된 시리얼 cancel 처리
+   // [제거됨] 2. 매일 자정에 만료된 시리얼 cancel 처리 (새벽 리포트 폭풍의 원인)
+   // 대신 실패 건만 재시도하는 로직이 startPreExpiryTask 내에서 별도로 스케줄링됩니다.
+  /*
   dailyCancelTask = cron.schedule('0 0 * * *', async () => {
+    const settings = getSettings();
+    if (!settings.auto_cancel_enabled) {
+      logger.info('만료 시리얼 cancel 작업 비활성화 되어있음 (skip)');
+      return;
+    }
+
     logger.info('만료 시리얼 cancel 작업 시작');
     try {
       const results = await cancelService.processExpiredSerials();
@@ -62,6 +71,7 @@ export function startScheduler(): void {
       logger.error(`Cancel 작업 오류: ${err.message}`);
     }
   }, { timezone: 'Asia/Seoul' });
+  */
 
   // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 요청 없으면)
   startPreExpiryTask();
@@ -203,6 +213,75 @@ function startPreExpiryTask(): void {
       logger.error(`만료 전 자동 cancel 오류: ${err.message}`);
     }
   }, { timezone: 'Asia/Seoul' });
+
+  // 실패 건 재시도 스케줄링 (설정된 시각 2시간 후 실행)
+  if (retryCancelTask) {
+    retryCancelTask.stop();
+    retryCancelTask = null;
+  }
+
+  const [hStr, mStr] = (settings.auto_cancel_time || '09:00').split(':');
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const retryH = (h + 2) % 24; // 2시간 후
+  const retryCron = `${m} ${retryH} * * *`;
+
+  retryCancelTask = cron.schedule(retryCron, async () => {
+    await retryFailedCancellations();
+  }, { timezone: 'Asia/Seoul' });
+
+  logger.info(`실패 건 재시도 스케줄: ${retryCron} (자동 캔슬 2시간 후)`);
+}
+
+/**
+ * 당일 발생한 실패 건만 골라서 재시도하는 로직
+ */
+async function retryFailedCancellations() {
+  const failures = dailyCancelResults.filter(r => !r.success);
+  if (failures.length === 0) {
+    logger.info('[Retry] 재시도할 실패 건이 없습니다.');
+    return;
+  }
+
+  // 이미 성공한 기록이 나중에 추가되었을 수도 있으므로 (수동 처리 등) 최종 확인
+  const actualFailures = failures.filter(f => {
+    return !dailyCancelResults.some(r => r.serial_number === f.serial_number && r.success);
+  });
+
+  if (actualFailures.length === 0) {
+    logger.info('[Retry] 이미 모두 처리되었거나 재시도할 대상이 없습니다.');
+    return;
+  }
+
+  logger.info(`[Retry] 장애/타임아웃 실패 건 재시도 시작 (${actualFailures.length}건)`);
+  
+  for (const fail of actualFailures) {
+    logger.info(`[Retry] 재시도 실행: ${fail.serial_number}`);
+    try {
+      const result = await cancelService.cancelSubscription(fail.serial_number, true);
+      if (result.success) {
+        const serial = serialService.getBySerialNumber(fail.serial_number);
+        if (serial) serialService.cancelSubscription(serial.id);
+        
+        // 성공으로 상태 업데이트 (일일 리포트에서 실패 목록 제거됨)
+        fail.success = true;
+        fail.verified = result.verified;
+        fail.verified_status = result.verified_status;
+        fail.screenshot_path = result.screenshot_path;
+        fail.error = undefined;
+
+        logger.info(`[Retry] 재시도 성공: ${fail.serial_number}`);
+        await notificationService.sendCancelResultSlack(result).catch(() => {});
+      } else {
+        fail.error = `[재시도 실패] ${result.error}`;
+        logger.warn(`[Retry] 재시도 역시 실패: ${fail.serial_number} - ${result.error}`);
+      }
+    } catch (err: any) {
+      logger.error(`[Retry] 재시도 중 에러: ${err.message}`);
+    }
+    // 연속 요청 방지
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
 }
 
 // Settings 저장 후 호출하여 시각 변경을 즉시 반영
@@ -252,5 +331,6 @@ export function stopScheduler(): void {
   if (dailyReportTask) dailyReportTask.stop();
   if (monthlyReportTask) monthlyReportTask.stop();
   if (dailySummaryTask) dailySummaryTask.stop();
+  if (retryCancelTask) retryCancelTask.stop();
   logger.info('스케줄러 중지');
 }
