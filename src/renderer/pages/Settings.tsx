@@ -97,6 +97,7 @@ export default function Settings() {
   const [pop3Tls, setPop3Tls] = useState(true);
   const [imapTls, setImapTls] = useState(true);
   const [smtpTls, setSmtpTls] = useState(false);
+  const [slackEnabled, setSlackEnabled] = useState(true);
 
   // Cancel Dry-Run state
   const [cancelDryRunning, setCancelDryRunning] = useState(false);
@@ -139,6 +140,7 @@ export default function Settings() {
       setAutoCancelTime(data.auto_cancel_time || '09:00');
       setAppLanguage(data.app_language || 'ko');
       setSlackLanguage(data.slack_language || 'ko');
+      setSlackEnabled(data.slack_enabled ?? true);
       setPop3Tls(data.pop3_tls ?? true);
       setImapTls(data.imap_tls ?? true);
       setSmtpTls(data.smtp_tls ?? false);
@@ -170,6 +172,7 @@ export default function Settings() {
         auto_cancel_time: autoCancelTime,
         app_language: appLanguage,
         slack_language: slackLanguage,
+        slack_enabled: slackEnabled,
         pop3_tls: pop3Tls,
         imap_tls: imapTls,
         smtp_tls: smtpTls,
@@ -900,6 +903,21 @@ export default function Settings() {
       {/* ─── Slack ─────────────────────────────────────────────────────────────── */}
       <div className="settings-section">
         <SectionHeader title={t(lang, 'section_slack')} onManual={() => setManualOpen('slack')} />
+        
+        <div className="form-group" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0, fontWeight: 700 }}>
+            <input
+              type="checkbox"
+              checked={slackEnabled}
+              onChange={e => setSlackEnabled(e.target.checked)}
+            />
+            {t(lang, 'label_slack_enabled')}
+          </label>
+          <span style={{ fontSize: 12, color: slackEnabled ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
+            {slackEnabled ? 'ON' : 'OFF'}
+          </span>
+        </div>
+
         <div className="form-group">
           <label>기본 알림 Slack Webhook URL</label>
           <input key={`slack-${loadKey}`} defaultValue={formVals.current.slack_webhook_url || ''} onChange={e => setVal('slack_webhook_url', e.target.value)} placeholder="https://hooks.slack.com/services/..." />

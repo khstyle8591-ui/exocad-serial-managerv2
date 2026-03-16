@@ -117,6 +117,10 @@ export class NotificationService {
   // === Slack ===
   async sendSlack(message: string, urlOverride?: string): Promise<boolean> {
     const settings = getSettings();
+    if (!settings.slack_enabled) {
+      logger.info('Slack 알림이 비활성화되어 있습니다 (skip)');
+      return false;
+    }
     const targetUrl = urlOverride || settings.slack_webhook_url;
     if (!targetUrl) {
       logger.warn('Slack webhook URL이 설정되지 않았습니다');

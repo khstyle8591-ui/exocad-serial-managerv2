@@ -106,10 +106,18 @@ export class CancelService {
       };
 
     } catch (err: any) {
-      logger.error(`Cancel 실패 [${serialNumber}]: ${err.message}`);
-
-      // 로그인 관련 오류 시 세션 초기화 (다음 시도에서 재로그인)
-      if (err.message.includes('로그인') || err.message.includes('login')) {
+      // 로그인 세션 만료 또는 페이지 로드 실패 대응
+      const currentUrl = page ? page.url() : '';
+      logger.error(`Cancel 실패 [${serialNumber}]: ${err.message} (URL: ${currentUrl})`);
+      
+      // 타임아웃(search-input 미등장) 또는 명시적 로그인 오류 시 세션 초기화
+      if (
+        err.message.includes('Timeout') || 
+        err.message.includes('로그인') || 
+        err.message.includes('login') ||
+        (currentUrl && !currentUrl.includes('exocad.com'))
+      ) {
+        logger.warn(`세션 유효하지 않음 감지 → isLoggedIn = false 설정`);
         this.isLoggedIn = false;
       }
 
@@ -208,8 +216,18 @@ export class CancelService {
     // React SPA는 JS 실행 → 컴포넌트 마운트 → data fetch 완료 후 input이 렌더됨.
     // 페이지 로딩이 10초 이상 걸릴 수 있으므로 최대 40초까지 대기.
     const searchInput = page.locator('[data-testid="search-input"]').first();
-    await searchInput.waitFor({ state: 'visible', timeout: 40000 });
-    logger.info(`[searchSerial] search-input 감지 완료`);
+    try {
+      await searchInput.waitFor({ state: 'visible', timeout: 40000 });
+      logger.info(`[searchSerial] search-input 감지 완료`);
+    } catch (err: any) {
+      const url = page.url();
+      logger.error(`[searchSerial] search-input 대기 타임아웃 (현재 URL: ${url})`);
+      if (url.includes('login') || url.includes('aligntech.com')) {
+        this.isLoggedIn = false;
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인 절차가 필요합니다.');
+      }
+      throw err;
+    }
 
     // ── Step 2: React hydration 완료 보장 대기 ──────────────────────────────
     // element가 visible이 되어도 React의 synthetic event handler가
