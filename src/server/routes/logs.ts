@@ -74,4 +74,21 @@ router.get('/mail/:id', (req: Request, res: Response) => {
     }
 });
 
+// GET /api/logs/screenshot/:filename  — Cancel 스크린샷 이미지 조회
+router.get('/screenshot/:filename', (req: Request, res: Response) => {
+    try {
+        const filename = path.basename(req.params.filename); // path traversal 방지
+        const screenshotDir = path.join(process.cwd(), 'data', 'screenshots');
+        const filepath = path.join(screenshotDir, filename);
+
+        if (!fs.existsSync(filepath)) {
+            return res.status(404).send('스크린샷을 찾을 수 없습니다.');
+        }
+        res.setHeader('Content-Type', 'image/png');
+        res.sendFile(filepath);
+    } catch (err: any) {
+        res.status(500).send(err.message);
+    }
+});
+
 export default router;

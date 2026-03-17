@@ -132,7 +132,7 @@ export class NotificationService {
     return new Promise((resolve) => {
       const url = new URL(targetUrl);
       const data = JSON.stringify({ text: message });
-      const protocol = url.protocol === 'https:' ? https : http;
+      const protocol = (url.protocol === 'https:' ? https : http) as typeof https;
 
       const req = protocol.request(
         {
@@ -144,12 +144,12 @@ export class NotificationService {
             'Content-Length': Buffer.byteLength(data),
           },
         },
-        (res) => {
+        (res: import('http').IncomingMessage) => {
           resolve(res.statusCode === 200);
         }
       );
 
-      req.on('error', (err) => {
+      req.on('error', (err: Error) => {
         logger.error(`Slack 전송 실패: ${err.message}`);
         resolve(false);
       });
@@ -174,7 +174,7 @@ export class NotificationService {
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
-      const protocol = url.protocol === 'https:' ? https : http;
+      const protocol = (url.protocol === 'https:' ? https : http) as typeof https;
 
       return new Promise((resolve) => {
         const req = protocol.request(
@@ -188,7 +188,7 @@ export class NotificationService {
             },
             timeout: 10000,
           },
-          (res) => {
+          (res: import('http').IncomingMessage) => {
             if (res.statusCode === 200) {
               logger.info('Slack Webhook 테스트 성공');
               resolve({ success: true, message: 'Slack 전송 성공! 채널을 확인하세요.' });
@@ -199,7 +199,7 @@ export class NotificationService {
           }
         );
 
-        req.on('error', (err) => {
+        req.on('error', (err: Error) => {
           logger.error(`Slack Webhook 테스트 오류: ${err.message}`);
           resolve({ success: false, message: `연결 실패: ${err.message}` });
         });
@@ -232,7 +232,7 @@ export class NotificationService {
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
-      const protocol = url.protocol === 'https:' ? https : http;
+      const protocol = (url.protocol === 'https:' ? https : http) as typeof https;
 
       return new Promise((resolve) => {
         const req = protocol.request(
@@ -246,7 +246,7 @@ export class NotificationService {
             },
             timeout: 10000,
           },
-          (res) => {
+          (res: import('http').IncomingMessage) => {
             if (res.statusCode === 200) {
               logger.info('Related Slack Webhook 테스트 성공');
               resolve({ success: true, message: 'Related Slack 전송 성공! 채널을 확인하세요.' });
@@ -257,7 +257,7 @@ export class NotificationService {
           }
         );
 
-        req.on('error', (err) => {
+        req.on('error', (err: Error) => {
           logger.error(`Related Slack Webhook 테스트 오류: ${err.message}`);
           resolve({ success: false, message: `연결 실패: ${err.message}` });
         });
@@ -310,8 +310,14 @@ export class NotificationService {
     ].join('\n');
 
     if (result.screenshot_path) {
-      const msgWithShot = message + '\n' + sf('screenshot', { file: path.basename(result.screenshot_path) });
-      return this.sendSlackWithScreenshot(msgWithShot, result.screenshot_path);
+      const filename = path.basename(result.screenshot_path);
+      // 외부에서 접근 가능한 스크린샷 URL 생성
+      const baseUrl = process.env.CERT_DOMAIN
+        ? `https://${process.env.CERT_DOMAIN}`
+        : 'http://localhost:3000';
+      const screenshotUrl = `${baseUrl}/api/logs/screenshot/${encodeURIComponent(filename)}`;
+      const msgWithShot = message + '\n' + sf('screenshot', { file: screenshotUrl });
+      return this.sendSlack(msgWithShot);
     }
     return this.sendSlack(message);
   }
