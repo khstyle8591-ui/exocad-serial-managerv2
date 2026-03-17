@@ -80,6 +80,7 @@ export const translations = {
     btn_add_addon: '+ Add-on 추가',
     btn_remove: '제거',
     required_fields: '시리얼 넘버는 필수입니다.',
+    hint_serial_change_allowed: '이미 등록된 시리얼 번호를 수정할 수 있습니다.',
     btn_register: '등록',
 
     // Detail modal
@@ -90,6 +91,7 @@ export const translations = {
     btn_save_settings: '설정 저장',
     settings_saved: '설정이 저장되었습니다.',
     settings_save_fail: '저장 실패: ',
+    related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
     section_mail_recv: '메일 수신 설정 (갱신 요청 감지)',
     section_smtp: 'SMTP 메일 설정 (리포트 발신)',
     section_slack: 'Slack 설정',
@@ -396,6 +398,7 @@ export const translations = {
     btn_add_addon: '+ Add Add-on',
     btn_remove: 'Remove',
     required_fields: 'Serial number is required.',
+    hint_serial_change_allowed: 'Now you can modify the registered serial number.',
     btn_register: 'Register',
 
     // Detail modal
@@ -599,6 +602,7 @@ export const translations = {
     conn_test_btn: '🔌 Connection Test',
     conn_testing: '🔌 Testing connection...',
     conn_mail_count: '({n} emails)',
+    related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
     keyword_hint: 'Comma-separated — emails with these keywords in subject/body will be detected as renewal requests',
     detect_headers: 'Detected headers:',
     renewal_dryrun_running: '🔍 Renewal Dry-Run running...',
@@ -712,6 +716,7 @@ export const translations = {
     btn_add_addon: '+ アドオン追加',
     btn_remove: '削除',
     required_fields: 'シリアル番号は必須です。',
+    hint_serial_change_allowed: '登録済みのシリアル番号を変更できます。',
     btn_register: '登録',
 
     // Detail modal
@@ -915,6 +920,7 @@ export const translations = {
     conn_test_btn: '🔌 接続テスト',
     conn_testing: '🔌 接続テスト中...',
     conn_mail_count: '(メール {n}件)',
+    related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
     keyword_hint: 'カンマ区切りで複数入力 — 件名・本文にキーワードが含まれるメールを更新リクエストとして検出します',
     detect_headers: '検出ヘッダー:',
     renewal_dryrun_running: '🔍 更新ドライラン実行中...',

@@ -92,6 +92,14 @@ function createTables(): void {
       created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS captured_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mail_from TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      received_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_serials_expiry ON serials(expiry_date);
     CREATE INDEX IF NOT EXISTS idx_serials_status ON serials(status);
     CREATE INDEX IF NOT EXISTS idx_serials_serial_number ON serials(serial_number);

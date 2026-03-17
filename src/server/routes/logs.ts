@@ -61,4 +61,17 @@ router.post('/renewal-dry-run', async (_req: Request, res: Response) => {
     }
 });
 
+// GET /api/logs/mail/:id
+router.get('/mail/:id', (req: Request, res: Response) => {
+    try {
+        const { getDb } = require('../../main/database');
+        const db = getDb();
+        const row = db.prepare('SELECT body FROM captured_emails WHERE id = ?').get(req.params.id) as { body: string } | undefined;
+        if (!row) return res.status(404).send('메일을 찾을 수 없습니다.');
+        res.send(row.body);
+    } catch (err: any) {
+        res.status(500).send(err.message);
+    }
+});
+
 export default router;

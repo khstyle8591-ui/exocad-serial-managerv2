@@ -37,7 +37,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *만료 예정 리포트* — {month}',
     monthly_total: '총 {n}건의 시리얼이 만료 예정입니다.',
     cancel_failures: '⚠️ *Cancel 실패:*',
-    related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 발신자: {from}\n• 제목: {subject}',
+    related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
     scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
   en: {
@@ -66,7 +66,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *Expiry Forecast Report* — {month}',
     monthly_total: 'A total of {n} serials are scheduled to expire.',
     cancel_failures: '⚠️ *Cancel Failures:*',
-    related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• From: {from}\n• Subject: {subject}',
+    related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
     scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
   ja: {
@@ -95,7 +95,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *失効予定レポート* — {month}',
     monthly_total: '合計 {n} 件のシリアルが期限切れになる予定です。',
     cancel_failures: '⚠️ *Cancel 失敗:*',
-    related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 送信者: {from}\n• 件名: {subject}',
+    related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
   },
 };
 
@@ -370,9 +370,12 @@ export class NotificationService {
   }
 
   // === 관련 메일 수신 알림 (System Log 용도) ===
-  async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[]): Promise<boolean> {
+  async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[], mailId?: number): Promise<boolean> {
     const kwsStr = matchedKeywords.join(', ');
-    const msg = sf('related_mail', { kws: kwsStr, from, subject });
+    const baseUrl = process.env.CERT_DOMAIN ? `https://${process.env.CERT_DOMAIN}` : 'http://localhost:3000';
+    const link = mailId ? `${baseUrl}/system-logs?mailId=${mailId}` : '(시스템 로그 확인)';
+    
+    const msg = sf('related_mail', { kws: kwsStr, from, subject, link });
     const settings = getSettings();
     if (settings.slack_webhook_url_related) {
       return this.sendSlack(msg, settings.slack_webhook_url_related);

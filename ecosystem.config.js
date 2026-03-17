@@ -6,7 +6,8 @@ module.exports = {
             cwd: __dirname,
             env: {
                 NODE_ENV: 'production',
-                PORT: 3000,
+                HTTP_PORT: 80,
+                HTTPS_PORT: 443,
             },
             watch: false,
             autorestart: true,

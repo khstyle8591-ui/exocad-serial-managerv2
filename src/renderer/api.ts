@@ -84,6 +84,7 @@ export const api = {
     getLogs: (limit = 100, offset = 0) => get(`/logs?limit=${limit}&offset=${offset}`),
     getTodayLogs: () => get('/logs/today'),
     getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
+    getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
 
     // ── Webhook (stub) ────────────────────────────────────────────────────────
     getWebhookStatus: () => Promise.resolve({ running: false, port: 3000 }),

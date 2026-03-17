@@ -89,6 +89,11 @@ export default function SerialForm({ serial, onSave, onClose }: Props) {
               placeholder="EXO-2024-001"
               required
             />
+            {serial && (
+              <div style={{ fontSize: 11, color: '#6366f1', marginTop: 4 }}>
+                💡 {t(lang, 'hint_serial_change_allowed')}
+              </div>
+            )}
           </div>
 
           <div className="form-row">

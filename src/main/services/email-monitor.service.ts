@@ -161,7 +161,7 @@ export class EmailMonitorService {
           const msgNum = Array.isArray(list[i]) ? (list[i] as any)[0] : String(i + 1);
           const rawMessage = await pop3.RETR(msgNum);
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
-          const email = this.parseEmailRaw(rawStr);
+          const email = await this.parseEmail(rawStr);
           // 1일 이내 메일만 dry-run 스캔
           if (!this.isWithin1Day(email.date)) {
             // 날짜를 파싱할 수 있으면 더 오래된 메일이라 조기 종료
@@ -354,7 +354,7 @@ export class EmailMonitorService {
           const msgNum = Array.isArray(list[i]) ? (list[i] as any)[0] : String(i + 1);
           const rawMessage = await pop3.RETR(msgNum);
           const rawStr = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
-          const email = this.parseEmailRaw(rawStr);
+          const email = await this.parseEmail(rawStr);
 
           // 1일 이내 메일만 처리 — 날짜 파싱이 되면 오래된 메일에서 조기 종료
           if (!this.isWithin1Day(email.date)) {
@@ -370,8 +370,9 @@ export class EmailMonitorService {
             const count = await this.processRenewalEmail(email, errors);
             processed += count;
           } else if (analysis.isRelated) {
-            logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject}`);
-            notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product);
+            const mailId = this.saveCapturedEmail(email);
+            logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
+            notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId);
           }
 
           // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨) - 설정에 따라 유지 가능
@@ -463,55 +464,16 @@ export class EmailMonitorService {
 
                 msg.once('end', async () => {
                   try {
-                    const parsed = await simpleParser(rawBuffer);
-
-                    // 헤더 섹션만 분리 (빈 줄 전까지)
-                    const rawHeaders = rawBuffer.split(/\r?\n\r?\n/)[0] || '';
-
-                    // raw에서 특정 헤더 추출 헬퍼
-                    const getHeader = (name: string): string => {
-                      const regex = new RegExp(`^${name}:\\s*(.+)`, 'im');
-                      const m = rawHeaders.match(regex);
-                      return m ? m[1].trim() : '';
-                    };
-
-                    // To 필드: mailparser 결과 → 문자열 변환
-                    const toText = (() => {
-                      if (!parsed.to) return '';
-                      if (Array.isArray(parsed.to)) return parsed.to.map((a: any) => a.text || '').join(', ');
-                      return (parsed.to as any).text || '';
-                    })();
-
-                    const ccText = (() => {
-                      if (!parsed.cc) return '';
-                      if (Array.isArray(parsed.cc)) return parsed.cc.map((a: any) => a.text || '').join(', ');
-                      return (parsed.cc as any).text || '';
-                    })();
-
-                    const email: ParsedEmail = {
-                      from: parsed.from?.text || '',
-                      to: toText,
-                      cc: ccText,
-                      subject: parsed.subject || '',
-                      body: parsed.text || (typeof parsed.html === 'string' ? parsed.html : '') || '',
-                      date: parsed.date?.toISOString() || '',
-                      // forward 관련 헤더 — mailparser headerLines 우선, fallback은 raw 파싱
-                      deliveredTo: this.getMailparserHeader(parsed, 'delivered-to') || getHeader('Delivered-To'),
-                      xForwardedTo: this.getMailparserHeader(parsed, 'x-forwarded-to') || getHeader('X-Forwarded-To'),
-                      xOriginalTo: this.getMailparserHeader(parsed, 'x-original-to') || getHeader('X-Original-To'),
-                      xForwardedFor: this.getMailparserHeader(parsed, 'x-forwarded-for') || getHeader('X-Forwarded-For'),
-                      resent_to: this.getMailparserHeader(parsed, 'resent-to') || getHeader('Resent-To'),
-                      xForwardedFrom: this.getMailparserHeader(parsed, 'x-forwarded-from') || getHeader('X-Forwarded-From'),
-                      rawHeaders,
-                    };
+                    const email = await this.parseEmail(rawBuffer);
 
                     const analysis = this.analyzeEmail(email);
                     if (analysis.isRenewal) {
                       const count = await this.processRenewalEmail(email, errors);
                       processed += count;
                     } else if (analysis.isRelated) {
-                      logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject}`);
-                      notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product);
+                      const mailId = this.saveCapturedEmail(email);
+                      logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
+                      notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId);
                     }
                   } catch (parseErr: any) {
                     errors.push(`메일 파싱 오류: ${parseErr.message}`);
@@ -737,64 +699,51 @@ export class EmailMonitorService {
     return null;
   }
 
-  // ─── POP3용 raw 메일 파서 ────────────────────────────────────────────────────
-  private parseEmailRaw(raw: string): ParsedEmail {
-    const headers: Record<string, string> = {};
-    const lines = raw.split(/\r?\n/);
-    let bodyStart = 0;
-    let currentHeader = '';
+  // ─── 공통: 파싱/저장 헬퍼 ───────────────────────────────────────────────────
+  private async parseEmail(raw: string): Promise<ParsedEmail> {
+    const parsed = await simpleParser(raw);
+    const rawHeaders = raw.split(/\r?\n\r?\n/)[0] || '';
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === '') { bodyStart = i + 1; break; }
-      if (line.startsWith(' ') || line.startsWith('\t')) {
-        // 멀티라인 헤더 이어붙이기
-        if (currentHeader) headers[currentHeader] += ' ' + line.trim();
-      } else {
-        const colonIdx = line.indexOf(':');
-        if (colonIdx > 0) {
-          currentHeader = line.substring(0, colonIdx).toLowerCase();
-          headers[currentHeader] = line.substring(colonIdx + 1).trim();
-        }
-      }
-    }
+    // raw에서 특정 헤더 추출 헬퍼 (단순 추출)
+    const getHeaderRaw = (name: string): string => {
+      const regex = new RegExp(`^${name}:\\s*(.+)`, 'im');
+      const m = rawHeaders.match(regex);
+      return m ? m[1].trim() : '';
+    };
 
-    const rawHeaders = lines.slice(0, bodyStart).join('\n');
-    const body = lines.slice(bodyStart).join('\n');
+    const toText = parsed.to ? (Array.isArray(parsed.to) ? parsed.to.map((a: any) => a.text || '').join(', ') : (parsed.to as any).text) : '';
+    const ccText = parsed.cc ? (Array.isArray(parsed.cc) ? parsed.cc.map((a: any) => a.text || '').join(', ') : (parsed.cc as any).text) : '';
 
     return {
-      from: headers['from'] || '',
-      to: headers['to'] || '',
-      cc: headers['cc'] || '',
-      subject: headers['subject'] || '',
-      body: this.decodeBody(body, headers['content-transfer-encoding']),
-      date: headers['date'] || '',
-      deliveredTo: headers['delivered-to'] || '',
-      xForwardedTo: headers['x-forwarded-to'] || '',
-      xOriginalTo: headers['x-original-to'] || '',
-      xForwardedFor: headers['x-forwarded-for'] || '',
-      resent_to: headers['resent-to'] || '',
-      xForwardedFrom: headers['x-forwarded-from'] || '',
+      from: parsed.from?.text || '',
+      to: toText,
+      cc: ccText,
+      subject: parsed.subject || '',
+      body: parsed.text || (typeof parsed.html === 'string' ? parsed.html : '') || '',
+      date: parsed.date?.toISOString() || '',
+      deliveredTo: this.getMailparserHeader(parsed, 'delivered-to') || getHeaderRaw('Delivered-To'),
+      xForwardedTo: this.getMailparserHeader(parsed, 'x-forwarded-to') || getHeaderRaw('X-Forwarded-To'),
+      xOriginalTo: this.getMailparserHeader(parsed, 'x-original-to') || getHeaderRaw('X-Original-To'),
+      xForwardedFor: this.getMailparserHeader(parsed, 'x-forwarded-for') || getHeaderRaw('X-Forwarded-For'),
+      resent_to: this.getMailparserHeader(parsed, 'resent-to') || getHeaderRaw('Resent-To'),
+      xForwardedFrom: this.getMailparserHeader(parsed, 'x-forwarded-from') || getHeaderRaw('X-Forwarded-From'),
       rawHeaders,
     };
   }
 
-  // ─── Base64/QP 디코딩 ────────────────────────────────────────────────────────
-  private decodeBody(body: string, encoding?: string): string {
-    if (!encoding) return body;
-    const enc = encoding.toLowerCase().trim();
-
-    if (enc === 'base64') {
-      try { return Buffer.from(body.replace(/\s/g, ''), 'base64').toString('utf-8'); } catch { return body; }
-    }
-
-    if (enc === 'quoted-printable') {
-      return body
-        .replace(/=\r?\n/g, '')
-        .replace(/=([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    }
-
-    return body;
+  private saveCapturedEmail(email: ParsedEmail): number {
+    const { getDb } = require('../database');
+    const db = getDb();
+    const result = db.prepare(`
+      INSERT INTO captured_emails (mail_from, subject, body, received_at)
+      VALUES (?, ?, ?, ?)
+    `).run(
+      email.from,
+      email.subject,
+      email.body,
+      email.date || new Date().toISOString()
+    );
+    return result.lastInsertRowid as number;
   }
 }
 
