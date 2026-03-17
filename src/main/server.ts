@@ -64,6 +64,11 @@ let httpsServer: https.Server | null = null;
 
 // HTTP 서버 (항상 실행)
 httpServer = http.createServer(app);
+// Playwright(Chromium)가 실행 중일 때 CPU/메모리 부하로 응답이 지연될 수 있음.
+// keepAliveTimeout을 길게 설정하여 클라이언트가 연결을 유지할 수 있게 함.
+httpServer.keepAliveTimeout = 65000;       // 65초 (nginx 기본값 60초보다 길게)
+httpServer.headersTimeout = 70000;         // 70초
+httpServer.timeout = 120000;               // 요청 자체 타임아웃 2분
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   logger.info(`HTTP  서버 실행 중: http://0.0.0.0:${HTTP_PORT}`);
 });
@@ -75,6 +80,9 @@ if (hasCerts) {
     cert: fs.readFileSync(`${certDir}/fullchain.pem`),
   };
   httpsServer = https.createServer(sslOptions, app);
+  httpsServer.keepAliveTimeout = 65000;
+  httpsServer.headersTimeout = 70000;
+  httpsServer.timeout = 120000;
   httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
     logger.info(`HTTPS 서버 실행 중: https://0.0.0.0:${HTTPS_PORT}`);
   });
