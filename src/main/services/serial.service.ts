@@ -79,7 +79,16 @@ export class SerialService {
     const updates: string[] = [];
     const values: any[] = [];
 
-    if (input.serial_number !== undefined) { updates.push('serial_number = ?'); values.push(input.serial_number); }
+    // serial_number: 기존 값과 다를 때만 업데이트 (동일하면 UNIQUE 충돌 방지를 위해 스킵)
+    if (input.serial_number !== undefined && input.serial_number !== existing.serial_number) {
+      // 다른 레코드가 동일 serial_number를 이미 사용하는지 확인
+      const conflict = db.prepare('SELECT id FROM serials WHERE serial_number = ? AND id != ?').get(input.serial_number, id);
+      if (conflict) {
+        throw new Error(`시리얼 번호 '${input.serial_number}'는 이미 다른 레코드에서 사용 중입니다.`);
+      }
+      updates.push('serial_number = ?');
+      values.push(input.serial_number);
+    }
     if (input.customer_name !== undefined) { updates.push('customer_name = ?'); values.push(input.customer_name); }
     if (input.customer_email !== undefined) { updates.push('customer_email = ?'); values.push(input.customer_email); }
     if (input.customer_address !== undefined) { updates.push('customer_address = ?'); values.push(input.customer_address); }
