@@ -164,8 +164,14 @@ export class SerialService {
     db.prepare('UPDATE serials SET expiry_date = ?, status = ?, updated_at = ? WHERE id = ?')
       .run(newExpiryStr, 'active', now, id);
 
+    // 기존 미처리 갱신 요청을 모두 '처리 완료'로 마킹 → 아침 레포트에서 제외
     db.prepare(
-      'INSERT INTO renewal_requests (serial_id, request_date, request_source) VALUES (?, ?, ?)'
+      'UPDATE renewal_requests SET processed = 1 WHERE serial_id = ? AND processed = 0'
+    ).run(id);
+
+    // 새 갱신 이력 INSERT (processed=1: 이미 처리 완료 상태로 저장)
+    db.prepare(
+      'INSERT INTO renewal_requests (serial_id, request_date, request_source, processed) VALUES (?, ?, ?, 1)'
     ).run(id, now, source);
 
     this.logActivity(id, 'renewed', `만료일 갱신: ${existing.expiry_date} → ${newExpiryStr} (${source})`);
