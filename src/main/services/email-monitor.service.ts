@@ -372,7 +372,7 @@ export class EmailMonitorService {
           } else if (analysis.isRelated) {
             const mailId = this.saveCapturedEmail(email);
             logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
-            notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId);
+            notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId, email.date);
           }
 
           // 처리한 메일은 서버에서 삭제 (QUIT 시 실제 삭제됨) - 설정에 따라 유지 가능
@@ -473,7 +473,7 @@ export class EmailMonitorService {
                     } else if (analysis.isRelated) {
                       const mailId = this.saveCapturedEmail(email);
                       logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
-                      notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId);
+                      notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId, email.date);
                     }
                   } catch (parseErr: any) {
                     errors.push(`메일 파싱 오류: ${parseErr.message}`);
