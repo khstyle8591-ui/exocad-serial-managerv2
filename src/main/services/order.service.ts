@@ -199,6 +199,38 @@ function buildRowMemo(
 }
 
 // ────────────────────────────────────────────────────────────
+// 정규식을 사용해 시리얼 번호(シリアル番号, LOT, SN) 추출 
+// 패턴: xxxxxxxx-xxxx-xxxxxxxx (대소문자 무관 8-4-8자 또는 그 이상)
+// ────────────────────────────────────────────────────────────
+function extractValidSerial(row: Record<string, string>): string {
+  let rawObj: Record<string, string> = {};
+  if (row._raw) {
+    try { rawObj = JSON.parse(row._raw); } catch { /* ignore */ }
+  }
+
+  // 검색할 컬럼명: 시리얼, LOT, SN
+  const candidates = [
+    rawObj['シリアル番号'], row.serial,
+    rawObj['LOT'], row.lot, row.serial_alt,
+    rawObj['SN'], rawObj['sn']
+  ];
+
+  const regex = /[A-Za-z0-9]{8}-[A-Za-z0-9]{4}-[A-Za-z0-9]{8,12}/;
+
+  for (const cand of candidates) {
+    if (!cand) continue;
+    const cstr = String(cand).trim();
+    const match = cstr.match(regex);
+    if (match) {
+      return match[0];
+    }
+  }
+
+  // 엄격한 패턴이 없으면 빈 문자열 반환
+  return '';
+}
+
+// ────────────────────────────────────────────────────────────
 export function getPendingOrders(): PendingOrder[] {
   const db = getDb();
   return db.prepare(
@@ -654,7 +686,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         if (group === 'ignore') continue;
         const productVal = getProductFallback(row);
         if (!matchesProductFilter(productVal, filterKeyword)) continue;
-        const serial = (row.serial || '').trim();
+        const serial = extractValidSerial(row) || (row.serial || '').trim();
         const sourceId = `${source.id}::${serial || row._raw?.slice(0, 40) || code}`;
         if (isAlreadyFetched(sourceId)) continue;
         insertPendingOrder({
@@ -681,10 +713,10 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         continue;
       }
 
-      const serial = (row.serial || '').trim();
+      const serial = extractValidSerial(row);
       if (!serial) {
         _skipSerial++;
-        logger.warn(`[폴링] serial 비어있음 skip (code=${code}, group=${group}, raw=${row._raw?.slice(0, 80)})`);
+        logger.warn(`[폴링] 정규식 매칭 serial 못찾음 skip (code=${code}, group=${group}, raw=${row._raw?.slice(0, 150)})`);
         continue; // 시리얼 없으면 처리 불가
       }
 
