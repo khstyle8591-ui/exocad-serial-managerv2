@@ -362,10 +362,11 @@ export function deletePendingOrder(id: number): void {
 // ────────────────────────────────────────────────────────────
 // source_id 중복 체크
 // ────────────────────────────────────────────────────────────
+// 'pending' 상태인 항목만 체크 — approved/rejected된 항목은 다시 수집 가능처리
 function isAlreadyFetched(sourceId: string): boolean {
   const db = getDb();
   const row = db.prepare(
-    'SELECT COUNT(*) as cnt FROM pending_orders WHERE source_id = ?'
+    "SELECT COUNT(*) as cnt FROM pending_orders WHERE source_id = ? AND status = 'pending'"
   ).get(sourceId) as { cnt: number };
   return row.cnt > 0;
 }
@@ -640,6 +641,9 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
     const today = new Date().toISOString().slice(0, 10);
 
     const filterKeyword = (source.product_filter || '').trim().toLowerCase();
+    logger.info(`[폴링] ${source.name}: 필드맵 serial="${FIELD_MAP.serial}", purchase="${FIELD_MAP.purchase}", item_code="${FIELD_MAP.item_code}", filterKeyword="${filterKeyword}"`);
+
+    let _skipSerial = 0, _skipFilter = 0, _skipAlready = 0, _skipMemo = 0;
 
     for (const row of tableData) {
       const code = (row.item_code || '').trim();
@@ -678,14 +682,28 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       }
 
       const serial = (row.serial || '').trim();
-      if (!serial) continue; // 시리얼 없으면 처리 불가
+      if (!serial) {
+        _skipSerial++;
+        logger.warn(`[폴링] serial 비어있음 skip (code=${code}, group=${group}, raw=${row._raw?.slice(0, 80)})`);
+        continue; // 시리얼 없으면 처리 불가
+      }
 
       // ── 카테고리 A (main) : 신규 등록 → pending
       if (group === 'main') {
         const productName = getProductNameByCode(code) || getProductFallback(row);
-        if (filterKeyword && !matchesProductFilter(productName, filterKeyword)) continue;
-        const sourceId = `${source.id}::${serial}`;
-        if (isAlreadyFetched(sourceId)) continue;
+        if (filterKeyword && !matchesProductFilter(productName, filterKeyword)) {
+          _skipFilter++;
+          logger.warn(`[폴링] 카테고리A filter skip: serial=${serial}, code=${code}, productName="${productName}", filter="${filterKeyword}"`);
+          continue;
+        }
+        // 날짜를 포함한 sourceId — 같은 상품코드라도 다른 출고일의 주문은 분리 수집
+        const purchaseDateKey = normalizeDate(row.purchase) || today;
+        const sourceId = `${source.id}::${serial}::${code}::${purchaseDateKey}`;
+        if (isAlreadyFetched(sourceId)) {
+          _skipAlready++;
+          logger.info(`[폴링] 카테고리A 이미 pending 중: serial=${serial}, code=${code}`);
+          continue;
+        }
         const existingSerial = serialService.getBySerialNumber(serial);
         insertPendingOrder({
           source_id: sourceId,
@@ -707,7 +725,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
           product_code: code,
           flag_duplicate: existingSerial ? 1 : 0,
         });
-        logger.info(`[폴링] 카테고리A 신규 pending: ${serial} (${productName})`);
+        logger.info(`[폴링] 카테고리A 신규 pending: ${serial} (${productName}) / 출고일=${purchaseDateKey}`);
         found++;
         continue;
       }
@@ -715,8 +733,13 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       // ── 카테고리 B (addon) : 기존 시리얼에 add-on 추가 → pending
       if (group === 'addon') {
         const productName = getProductNameByCode(code) || getProductFallback(row);
-        const sourceId = `${source.id}::${serial}::${code}`;
-        if (isAlreadyFetched(sourceId)) continue;
+        const purchaseDateKey = normalizeDate(row.purchase) || today;
+        const sourceId = `${source.id}::${serial}::${code}::${purchaseDateKey}`;
+        if (isAlreadyFetched(sourceId)) {
+          _skipAlready++;
+          logger.info(`[폴링] 카테고리B 이미 pending 중: serial=${serial}, code=${code}`);
+          continue;
+        }
         insertPendingOrder({
           source_id: sourceId,
           source_url: source.url,
@@ -745,8 +768,13 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       // ── 카테고리 C (renewal) : 갱신 → pending (expiry +1년은 승인 시 처리)
       if (group === 'renewal') {
         const productName = getProductNameByCode(code) || getProductFallback(row);
-        const sourceId = `${source.id}::${serial}::renewal::${code}`;
-        if (isAlreadyFetched(sourceId)) continue;
+        const purchaseDateKey = normalizeDate(row.purchase) || today;
+        const sourceId = `${source.id}::${serial}::renewal::${code}::${purchaseDateKey}`;
+        if (isAlreadyFetched(sourceId)) {
+          _skipAlready++;
+          logger.info(`[폴링] 카테고리C 이미 pending 중: serial=${serial}, code=${code}`);
+          continue;
+        }
         insertPendingOrder({
           source_id: sourceId,
           source_url: source.url,
@@ -782,6 +810,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
           serialService.update(existing.id, { notes: newNotes });
           logger.info(`[폴링] 카테고리D 메모 추가: ${serial}`);
         } else {
+          _skipMemo++;
           logger.info(`[폴링] 카테고리D 메모 대상 시리얼 없음 (skip): ${serial}`);
         }
         found++;
@@ -789,7 +818,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       }
     }
 
-    logger.info(`[폴링] ${source.name}: ${found}건 수집 완료`);
+    logger.info(`[폴링] ${source.name}: 수집 완료 found=${found} / skip(serial빈값=${_skipSerial}, filter=${_skipFilter}, 이미pending=${_skipAlready}, memo시리얼없음=${_skipMemo})`);
   } catch (err: any) {
     const msg = `[폴링] ${source.name} 오류: ${err.message}`;
     logger.error(msg);
