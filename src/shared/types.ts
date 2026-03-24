@@ -10,7 +10,7 @@ export interface Serial {
   customer_manager: string;
   purchase_date: string | null;
   expiry_date: string | null;
-  status: 'active' | 'cancelled' | 'expired' | 'not-activated';
+  status: 'active' | 'cancelled' | 'expired' | 'not-activated' | 'broken';
   engine_build: string;
   version: string;
   add_ons: string; // JSON string of AddOn[]
@@ -72,6 +72,14 @@ export interface PendingOrder {
   created_at: string;
   product_code: string;    // 상품코드 (商品コード) — 그룹 분류 기준
   flag_duplicate: number;  // 1 = DB에 동일 serial 이미 존재 (구 UI 빨간색 표시)
+  
+  // JOIN 등으로 붙어오는 보조 필드들
+  existing_status?: string;
+  existing_expiry?: string;
+  existing_customer_name?: string;
+  
+  // UI 폼 수정용 가상 필드
+  serial_status?: 'active' | 'cancelled' | 'expired' | 'not-activated' | 'broken';
 }
 
 // === Service Types ===

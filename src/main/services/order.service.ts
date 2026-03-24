@@ -233,16 +233,29 @@ function extractValidSerial(row: Record<string, string>): string {
 // ────────────────────────────────────────────────────────────
 export function getPendingOrders(): PendingOrder[] {
   const db = getDb();
-  return db.prepare(
-    "SELECT * FROM pending_orders WHERE status = 'pending' ORDER BY created_at DESC"
-  ).all() as PendingOrder[];
+  return db.prepare(`
+    SELECT p.*,
+           s.status AS existing_status,
+           s.expiry_date AS existing_expiry,
+           s.customer_name AS existing_customer_name
+    FROM pending_orders p
+    LEFT JOIN serials s ON p.serial_number = s.serial_number
+    WHERE p.status = 'pending'
+    ORDER BY p.created_at DESC
+  `).all() as PendingOrder[];
 }
 
 export function getAllOrders(): PendingOrder[] {
   const db = getDb();
-  return db.prepare(
-    'SELECT * FROM pending_orders ORDER BY created_at DESC'
-  ).all() as PendingOrder[];
+  return db.prepare(`
+    SELECT p.*,
+           s.status AS existing_status,
+           s.expiry_date AS existing_expiry,
+           s.customer_name AS existing_customer_name
+    FROM pending_orders p
+    LEFT JOIN serials s ON p.serial_number = s.serial_number
+    ORDER BY p.created_at DESC
+  `).all() as PendingOrder[];
 }
 
 export function updatePendingOrder(id: number, data: Partial<PendingOrder>): PendingOrder | undefined {
@@ -269,12 +282,13 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
-export function approvePendingOrder(id: number): { success: boolean; error?: string } {
+export function approvePendingOrder(id: number, options?: { serial_status?: string }): { success: boolean; error?: string } {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
 
   try {
+    const targetStatus = options?.serial_status || 'active';
     const today = new Date().toISOString().slice(0, 10);
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -283,11 +297,12 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
     if (order.order_type === 'new') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
-        // 이미 존재 → 품명(product)만 업데이트 (중복 플래그 코드가 있어도 신규로 인식)
-        if (order.version && !existing.version) {
-          serialService.update(existing.id, { version: order.version });
-        }
-        logger.info(`신규 승인 (중복 serial, 품명만 업데이트): ${order.serial_number}`);
+        // 이미 존재 → 품명(product) 등 업데이트
+        const updates: any = { status: targetStatus };
+        if (order.version) updates.version = order.version;
+        if (targetStatus === 'broken') updates.expiry_date = '';
+        serialService.update(existing.id, updates);
+        logger.info(`신규 승인 (기존건 상태/품명 등 업데이트): ${order.serial_number}`);
       } else {
         const input: SerialInput = {
           serial_number: order.serial_number || `IMPORT-${Date.now()}`,
@@ -301,7 +316,11 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
           engine_build: order.engine_build,
           version: order.version,
           notes: order.notes,
+          status: targetStatus as any,
         };
+        // broken이면 만료일 무효화
+        if (targetStatus === 'broken') input.expiry_date = '';
+        
         serialService.create(input);
       }
 
@@ -326,9 +345,12 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
       const renewNote = `[${today}] 갱신: ${renewalProductName}`;
       const updatedNotes = serial.notes ? `${serial.notes}\n${renewNote}` : renewNote;
 
-      db.prepare("UPDATE serials SET expiry_date = ?, status = 'active', notes = ?, updated_at = ? WHERE id = ?")
-        .run(newExpiry, updatedNotes, now, serial.id);
-      logger.info(`갱신 승인: ${order.serial_number} expiry ${serial.expiry_date} → ${newExpiry}`);
+      // broken이면 만료일 갱신 무효화
+      const finalExpiry = targetStatus === 'broken' ? '' : newExpiry;
+
+      db.prepare("UPDATE serials SET expiry_date = ?, status = ?, notes = ?, updated_at = ? WHERE id = ?")
+        .run(finalExpiry, targetStatus, updatedNotes, now, serial.id);
+      logger.info(`갱신 승인: ${order.serial_number} expiry ${serial.expiry_date} → ${finalExpiry}`);
 
     // ── 카테고리 B: Add-on 추가
     } else if (order.order_type === 'addon') {
@@ -350,7 +372,10 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
         const alreadyAdded = existingAddOns.some((a: any) => a.name === addonProductName);
         if (!alreadyAdded) {
           existingAddOns.push({ name: addonProductName, added_date: today });
-          serialService.update(serial.id, { add_ons: JSON.stringify(existingAddOns) } as any);
+          const updateData: any = { add_ons: JSON.stringify(existingAddOns) };
+          updateData.status = targetStatus;
+          if (targetStatus === 'broken') updateData.expiry_date = '';
+          serialService.update(serial.id, updateData);
           logger.info(`Add-on 승인: ${order.serial_number} + ${addonProductName}`);
         } else {
           logger.info(`Add-on 이미 존재 (skip): ${order.serial_number} / ${addonProductName}`);
@@ -358,7 +383,7 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
       } else {
         // 시리얼 없으면 신규 생성 + add-on
         const newAddOns = [{ name: addonProductName, added_date: today }];
-        serialService.create({
+        const input: SerialInput = {
           serial_number: order.serial_number,
           customer_name: order.customer_name,
           customer_email: order.customer_email || '',
@@ -367,7 +392,10 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
           expiry_date: '',
           notes: order.notes,
           add_ons: newAddOns,
-        });
+          status: targetStatus as any,
+        };
+        if (targetStatus === 'broken') input.expiry_date = '';
+        serialService.create(input);
         logger.info(`Add-on 신규 등록: ${order.serial_number} + ${addonProductName}`);
       }
     }
@@ -403,9 +431,13 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
     if (form.purchase_date) updates.purchase_date = form.purchase_date;
     if (form.version) updates.version = form.version;
     if (form.notes) updates.notes = form.notes;
+    if (form.serial_status) updates.status = form.serial_status;
     
     // expiry_date는 전달된 값이 비어있지 않은 경우에만 업데이트
-    if (form.expiry_date && form.expiry_date.trim() !== '') {
+    // 상태가 broken이면 만료일 무효화
+    if (form.serial_status === 'broken') {
+      updates.expiry_date = '';
+    } else if (form.expiry_date && form.expiry_date.trim() !== '') {
       updates.expiry_date = form.expiry_date;
     }
 

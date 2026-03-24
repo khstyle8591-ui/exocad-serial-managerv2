@@ -51,7 +51,7 @@ export const api = {
         post('/orders/poll-dry-run', { sourceId, sourceOverrides: overrides }),
     restartOrderScheduler: () => post('/orders/restart-scheduler'),
     updateOrder: (id: number, data: unknown) => put(`/orders/${id}`, data),
-    approveOrder: (id: number) => post(`/orders/${id}/approve`),
+    approveOrder: (id: number, data?: unknown) => post(`/orders/${id}/approve`, data),
     updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
     rejectOrder: (id: number) => post(`/orders/${id}/reject`),
     deleteOrder: (id: number) => del(`/orders/${id}`),

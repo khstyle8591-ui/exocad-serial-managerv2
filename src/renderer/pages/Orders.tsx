@@ -4,28 +4,7 @@ import { t } from '../i18n';
 import type { Language } from '../i18n';
 import { api } from '../api';
 
-interface PendingOrder {
-  id: number;
-  source_id: string;
-  source_url: string;
-  serial_number: string;
-  customer_name: string;
-  customer_email: string;
-  customer_address: string;
-  customer_phone: string;
-  customer_manager: string;
-  purchase_date: string;
-  expiry_date: string;
-  engine_build: string;
-  version: string;
-  notes: string;
-  order_type: 'new' | 'renewal' | 'addon';
-  raw_data: string;
-  status: 'pending' | 'approved' | 'rejected';
-  created_at: string;
-  product_code: string;
-  flag_duplicate: number; // 1 = DB에 동일 serial 이미 존재
-}
+import type { PendingOrder } from '../../shared/types';
 
 type FilterType = 'pending' | 'approved' | 'rejected' | 'all';
 
@@ -81,7 +60,7 @@ export default function Orders() {
     try {
       if (mode === 'register') {
         await api.updateOrder(updated.id, updated);
-        const res = await api.approveOrder(updated.id) as any;
+        const res = await api.approveOrder(updated.id, { serial_status: updated.serial_status }) as any;
         if (res.success) {
           alert(t(lang, 'orders_approve_success'));
         } else {
@@ -208,13 +187,17 @@ export default function Orders() {
                   </span>
                 )}
                 {!!order.flag_duplicate && (
-                  <span style={{
-                    background: '#dc2626', color: '#fff', borderRadius: 6,
-                    padding: '2px 10px', fontSize: 12, fontWeight: 700,
-                    animation: 'pulse 1.5s infinite',
-                  }}>
-                    🔴 중복 Serial 경고
-                  </span>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#fee2e2', border: '1px solid #fecaca', padding: '4px 8px', borderRadius: 6 }}>
+                    <span style={{
+                      color: '#dc2626', fontSize: 12, fontWeight: 700,
+                      animation: 'pulse 1.5s infinite',
+                    }}>
+                      🔴 중복 (DB 상태: {order.existing_status || '알수없음'})
+                    </span>
+                    <span style={{ fontSize: 11, color: '#991b1b' }}>
+                      | 만료: {order.existing_expiry || '없음'} | 고객: {order.existing_customer_name || '없음'}
+                    </span>
+                  </div>
                 )}
                 <span style={{ fontSize: 12, color: '#9ca3af', marginLeft: 'auto' }}>
                   {t(lang, 'orders_collected_at')}{order.created_at?.slice(0, 16).replace('T', ' ')}
@@ -353,11 +336,13 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label>{t(lang, 'orders_label_order_type')}</label>
-              <select value={form.order_type} onChange={e => set('order_type', e.target.value)}>
-                <option value="new">{t(lang, 'orders_type_new_opt')}</option>
-                <option value="renewal">{t(lang, 'orders_type_renewal_opt')}</option>
-                <option value="addon">{t(lang, 'orders_type_addon')}</option>
+              <label>Status</label>
+              <select value={form.serial_status || order.existing_status || 'active'} onChange={e => set('serial_status', e.target.value)}>
+                <option value="active">Active</option>
+                <option value="expired">Expired</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="not-activated">Not Activated</option>
+                <option value="broken">Broken</option>
               </select>
             </div>
             <div className="form-group">

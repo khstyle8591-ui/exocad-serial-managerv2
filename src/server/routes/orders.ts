@@ -49,8 +49,8 @@ router.put('/:id', (req: Request, res: Response) => {
 });
 
 // POST /api/orders/:id/approve
-router.post('/:id/approve', async (_req: Request, res: Response) => {
-    const result = await approvePendingOrder(Number(_req.params.id));
+router.post('/:id/approve', async (req: Request, res: Response) => {
+    const result = await approvePendingOrder(Number(req.params.id), req.body);
     res.json(result);
 });
 
