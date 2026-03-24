@@ -108,17 +108,22 @@ export class CancelService {
     } catch (err: any) {
       // 로그인 세션 만료 또는 페이지 로드 실패 대응
       const currentUrl = page ? page.url() : '';
-      logger.error(`Cancel 실패 [${serialNumber}]: ${err.message} (URL: ${currentUrl})`);
-      
-      // 타임아웃(search-input 미등장) 또는 명시적 로그인 오류 시 세션 초기화
+      logger.error(`Cancel 실패 [${serialNumber}]: ${err.message}`);
+      logger.warn(`\n (URL: ${currentUrl})`);
+
+      // 명시적으로 로그인 페이지에 있는 경우만 세션 초기화
+      // (Opt out upgrade 타임아웃 등 단순 또는 원소 미감지 오류는 세션 무효가 아님)
       if (
-        err.message.includes('Timeout') || 
-        err.message.includes('로그인') || 
-        err.message.includes('login') ||
+        currentUrl.includes('login') ||
+        currentUrl.includes('aligntech.com') ||
+        currentUrl.includes('signin') ||
         (currentUrl && !currentUrl.includes('exocad.com'))
       ) {
         logger.warn(`세션 유효하지 않음 감지 → isLoggedIn = false 설정`);
         this.isLoggedIn = false;
+        // 브라우저도 재생성하여 섹츠 콜리띠 방지
+        if (this.context) { await this.context.close().catch(() => {}); this.context = null; }
+        if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
       }
 
       return { serial_number: serialNumber, success: false, error: err.message };
@@ -147,10 +152,10 @@ export class CancelService {
     const username = settings.exocad_username || 'pm@geomedi.co.jp';
     const emailInput = page.locator(
       'input[type="email"], input[type="text"][name="username"], input[type="text"][name="email"], ' +
-      'input[name="username"], input[name="email"], ' +
-      'input[id="username"], input[id="email"]'
+      'input[name="username"], input[name="email"], input[name="identifier"], ' +
+      'input[id="username"], input[id="email"], input[id="identifier"]'
     ).first();
-    await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    await emailInput.waitFor({ state: 'visible', timeout: 15000 });
     await emailInput.fill(username);
 
     // "Continue" 혹은 "Next" 버튼 클릭 (2단계 SSO 대응)
@@ -448,24 +453,24 @@ export class CancelService {
     const cancelLabel = this.resolveCancelButtonLabel(productName, settings);
     logger.info(`드롭다운에서 "${cancelLabel}" 클릭 (제품: ${productName || 'unknown'})`);
 
+    // ── TrustArc 쿠키 배너를 waitFor 이전에 제거 ────────────────────────────
+    // partner.exocad.com에서 consent_blackbar (TrustArc GDPR 배너)가
+    // fixed bottom-0 z-50으로 화면 하단을 덮어 버튼 감지 및 클릭을 차단하는 문제.
+    // waitFor 호출 전에 먼저 제거하여 가시성 감지 자체를 방해하지 않도록 한다.
+    await page.evaluate(() => {
+      const banner = document.getElementById('consent_blackbar');
+      if (banner) banner.remove();
+      document.querySelectorAll('[id*="truste"], [class*="truste"], #teconsent').forEach(el => el.remove());
+    }).catch(() => { /* 배너가 없으면 무시 */ });
+
     // Exact selector: button with confirmed class pattern + exact text
     const cancelItem = page.locator(
       `button.cursor-pointer:has-text("${cancelLabel}"), ` +
       `button:has-text("${cancelLabel}")`
     ).first();
 
-    await cancelItem.waitFor({ state: 'visible', timeout: 5000 });
-
-    // ── TrustArc 쿠키 배너 제거 ─────────────────────────────────────────────
-    // partner.exocad.com에서 consent_blackbar (TrustArc GDPR 배너)가
-    // fixed bottom-0 z-50으로 화면 하단을 덮어 버튼 클릭을 차단하는 문제 수정.
-    // 클릭 전에 JS로 배너 요소를 DOM에서 제거하여 포인터 이벤트 차단을 해소한다.
-    await page.evaluate(() => {
-      const banner = document.getElementById('consent_blackbar');
-      if (banner) banner.remove();
-      // TrustArc가 동적으로 추가하는 다른 오버레이도 함께 제거
-      document.querySelectorAll('[id*="truste"], [class*="truste"], #teconsent').forEach(el => el.remove());
-    }).catch(() => { /* 배너가 없으면 무시 */ });
+    // 타임아웃을 10초로 늘려 드롭다운 애니메이션 대기 여유 확보
+    await cancelItem.waitFor({ state: 'visible', timeout: 10000 });
 
     // force: true로 포인터 이벤트 차단 요소 무시하여 확실히 클릭
     await cancelItem.click({ force: true });

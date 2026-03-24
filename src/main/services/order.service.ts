@@ -26,35 +26,114 @@ let cronTasks: Map<string, cron.ScheduledTask[]> = new Map();
 // ────────────────────────────────────────────────────────────
 // Product Code 그룹 상수
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// 품목 코드 → 카테고리 매핑
+//   카테고리 A : 신규 (new) — order_type='new'
+//   카테고리 B : Add-on — 기존 시리얼에 add-ons 추가
+//   카테고리 C : 갱신 (renewal) — expiry +1년
+//   카테고리 D : 메모만 — memo 기입 후 변경 없음
+// ────────────────────────────────────────────────────────────
 const BUILT_IN_CODES: Record<ProductCodeGroup, string[]> = {
+  // 카테고리 A — 신규 등록 (新規)
+  main: [
+    '006-001001', '006-001010', '006-001032', '006-001034', '006-001020',
+    '006-005080', '006-005082', '006-005083', '006-005098', '006-005099',
+    '006-006100', '006-006101', '006-006102',
+  ],
+  // 카테고리 B — Add-on 추가
+  addon: [
+    '006-001002', '006-001003', '006-001004', '006-001005', '006-001006', '006-001007',
+    '006-001008', '006-001009', '006-001012', '006-001013',
+    '006-001014', '006-001015', '006-001016', '006-001037', '006-001036', '006-001039',
+    '006-005100', '006-005101', '006-005102', '006-005103', '006-005104', '006-005105',
+    '006-005106', '006-005107', '006-005108', '006-005109', '006-005110',
+    '006-006103',
+  ],
+  // 카테고리 C — 갱신 (Renewal, expiry +1년)
   renewal: [
     '006-001017', '006-001035',
     '006-005200', '006-005201', '006-005212', '006-005213', '006-005214', '006-005215',
+    '006-006104', '006-006105', '006-006106',
   ],
-  addon: [
-    '006-001002', '006-001003', '006-001004', '006-001005', '006-001006', '006-001007',
-    '006-001008', '006-001009', '006-001010', '006-001011', '006-001012', '006-001013',
-    '006-001014', '006-001015', '006-001016', '006-001037', '006-001039',
-    '006-005100', '006-005101', '006-005102', '006-005103', '006-005104', '006-005105',
-    '006-005106', '006-005107', '006-005108', '006-005109', '006-005110',
-  ],
-  main: [
-    '006-001001', '006-001034', '006-001020',
-    '006-005082', '006-005083', '006-005098', '006-005099',
-  ],
+  // 카테고리 D — 메모 기입만
   memo: [
-    '006-001031', '006-001033', '006-001036', '006-001040', '006-001041',
-    '006-005080', '006-005081', '006-006100', '006-006104',
-  ],
-  version_update: ['006-001032'],
-  ignore: [
+    '006-001011', '006-001033', '006-001040', '006-001041',
     '006-001018', '006-001019', '006-001021', '006-001022', '006-001023', '006-001024',
     '006-001025', '006-001026', '006-001027', '006-001028', '006-001029', '006-001030',
-    '006-001038',
+    '006-001038', '006-001031',
+    '006-005081',
     '006-005198', '006-005199', '006-005202', '006-005203', '006-005204', '006-005205',
     '006-005206', '006-005207', '006-005208', '006-005209', '006-005210', '006-005211',
+    '006-006107',
   ],
+  // 하위 호환 (직접 사용하지 않음 — 커스텀 룰에서만 사용 가능)
+  version_update: [],
+  ignore: [],
 };
+
+// 품목코드 → 품명 매핑 테이블
+const CODE_TO_PRODUCT_NAME: Record<string, string> = {
+  // ── 카테고리 A ──
+  '006-001001': 'exocad DentalCAD Core',
+  '006-001010': 'exocad DentalCAD (Standard)',
+  '006-001032': 'exocad DentalCAD (Version Update)',
+  '006-001034': 'exocad DentalCAD Core Version',
+  '006-001020': 'exocad DentalCAD 2in1',
+  '006-005080': 'exocad ChairsideCAD',
+  '006-005082': 'exocad ChairsideCAD SE',
+  '006-005083': 'exocad ChairsideCAD Standard',
+  '006-005098': 'exocad ChairsideCAD Pro',
+  '006-005099': 'exocad ChairsideCAD Premium',
+  '006-006100': 'exocad exoplan Core',
+  '006-006101': 'exocad exoplan Standard',
+  '006-006102': 'exocad exoplan Pro',
+  // ── 카테고리 B ──
+  '006-001002': 'Model Creator',
+  '006-001003': 'Virtual Articulator',
+  '006-001004': 'TruSmile',
+  '006-001005': 'Smile Creator',
+  '006-001006': 'Implant Module',
+  '006-001007': 'CAD-CAM Module',
+  '006-001008': 'Surgical Guide Module',
+  '006-001009': 'Partial Framework Module',
+  '006-001012': 'Full Denture Module',
+  '006-001013': 'Orthodontics Module',
+  '006-001014': 'Quick Model Creator',
+  '006-001015': 'Model Creator Pro',
+  '006-001016': 'Digital Bite Registration',
+  '006-001037': 'Flexible Partial Denture',
+  '006-001036': 'Smile Composer',
+  '006-001039': 'Partner Cloud Module',
+  '006-005100': 'ChairsideCAD Add-on 1',
+  '006-005101': 'ChairsideCAD Add-on 2',
+  '006-005102': 'ChairsideCAD Add-on 3',
+  '006-005103': 'ChairsideCAD Add-on 4',
+  '006-005104': 'ChairsideCAD Add-on 5',
+  '006-005105': 'ChairsideCAD Add-on 6',
+  '006-005106': 'ChairsideCAD Add-on 7',
+  '006-005107': 'ChairsideCAD Add-on 8',
+  '006-005108': 'ChairsideCAD Add-on 9',
+  '006-005109': 'ChairsideCAD Add-on 10',
+  '006-005110': 'ChairsideCAD Add-on 11',
+  '006-006103': 'exoplan Add-on',
+  // ── 카테고리 C ──
+  '006-001017': 'Maintenance/Renewal',
+  '006-001035': 'DentalCAD Renewal',
+  '006-005200': 'ChairsideCAD Renewal',
+  '006-005201': 'ChairsideCAD SE Renewal',
+  '006-005212': 'ChairsideCAD Renewal (2yr)',
+  '006-005213': 'ChairsideCAD Renewal (3yr)',
+  '006-005214': 'ChairsideCAD Renewal (4yr)',
+  '006-005215': 'ChairsideCAD Renewal (5yr)',
+  '006-006104': 'exoplan Renewal',
+  '006-006105': 'exoplan Renewal (2yr)',
+  '006-006106': 'exoplan Renewal (3yr)',
+};
+
+// 품목코드로 품명 조회 (없으면 빈 문자열)
+function getProductNameByCode(code: string): string {
+  return CODE_TO_PRODUCT_NAME[code.trim()] || '';
+}
 
 // resolveGroup: 코드 → 그룹 결정 (내장 횤옜 커스텀 순서)
 function resolveGroup(code: string, customRules: ProductCodeRule[]): ProductCodeGroup | null {
@@ -96,8 +175,29 @@ function matchesProductFilter(productVal: string, filterKeyword: string): boolea
   return keywords.some(k => lc.includes(k.toLowerCase()));
 }
 
-// ────────────────────────────────────────────────────────────
-// 대기 주문 DB 헬퍼
+// 폴링 행의 LOT + 納品先(납품처) 정보를 memo 형식으로 구성
+function buildDeliveryMemo(row: Record<string, string>): string {
+  const parts: string[] = [];
+  if (row.lot) parts.push(`LOT: ${row.lot}`);
+  if (row.delivery_to) parts.push(`納品先: ${row.delivery_to}`);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+// 폴링 행에서 메모 문자열 생성 (납품처 + LOT 포함)
+function buildRowMemo(
+  row: Record<string, string>,
+  sourceName: string,
+  code: string,
+  today: string,
+): string {
+  const parts: string[] = [`자동수집: ${sourceName}`];
+  if (code) parts.push(`상품코드: ${code}`);
+  if (row.invoice_no) parts.push(`출고번호: ${row.invoice_no}`);
+  if (row.lot) parts.push(`LOT: ${row.lot}`);
+  if (row.delivery_to) parts.push(`納品先: ${row.delivery_to}`);
+  return parts.join(' / ');
+}
+
 // ────────────────────────────────────────────────────────────
 export function getPendingOrders(): PendingOrder[] {
   const db = getDb();
@@ -147,11 +247,15 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
 
+    // ── 카테고리 A: 신규 등록
     if (order.order_type === 'new') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
-        // 이미 존재 → 갱신
-        serialService.renewSerial(existing.id, 'manual');
+        // 이미 존재 → 품명(product)만 업데이트 (중복 플래그 코드가 있어도 신규로 인식)
+        if (order.version && !existing.version) {
+          serialService.update(existing.id, { version: order.version });
+        }
+        logger.info(`신규 승인 (중복 serial, 품명만 업데이트): ${order.serial_number}`);
       } else {
         const input: SerialInput = {
           serial_number: order.serial_number || `IMPORT-${Date.now()}`,
@@ -168,10 +272,72 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
         };
         serialService.create(input);
       }
+
+    // ── 카테고리 C: 갱신 — 기존 Expiry Date +1년
     } else if (order.order_type === 'renewal') {
       const serial = serialService.getBySerialNumber(order.serial_number);
       if (!serial) return { success: false, error: `시리얼 ${order.serial_number}을 찾을 수 없습니다.` };
-      serialService.renewSerial(serial.id, 'manual');
+
+      // Expiry Date: 이미 등록된 시리얼의 expiry_date + 1년
+      const baseExpiry = serial.expiry_date ? new Date(serial.expiry_date) : new Date();
+      baseExpiry.setFullYear(baseExpiry.getFullYear() + 1);
+      const newExpiry = baseExpiry.toISOString().slice(0, 10);
+
+      const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      // note 란에 갱신 품명 + 날짜 기록
+      const renewalProductName = (() => {
+        try {
+          const raw = JSON.parse(order.raw_data || '{}');
+          return raw._renewal_product || order.product_code || '';
+        } catch { return order.product_code || ''; }
+      })();
+      const renewNote = `[${today}] 갱신: ${renewalProductName}`;
+      const updatedNotes = serial.notes ? `${serial.notes}\n${renewNote}` : renewNote;
+
+      db.prepare("UPDATE serials SET expiry_date = ?, status = 'active', notes = ?, updated_at = ? WHERE id = ?")
+        .run(newExpiry, updatedNotes, now, serial.id);
+      logger.info(`갱신 승인: ${order.serial_number} expiry ${serial.expiry_date} → ${newExpiry}`);
+
+    // ── 카테고리 B: Add-on 추가
+    } else if (order.order_type === 'addon') {
+      const serial = serialService.getBySerialNumber(order.serial_number);
+
+      // add-on 품명 추출
+      const addonProductName = (() => {
+        try {
+          const raw = JSON.parse(order.raw_data || '{}');
+          return raw._addon_name || order.product_code || '';
+        } catch { return order.product_code || ''; }
+      })();
+
+      if (serial) {
+        // 기존 시리얼에 add-on 추가 (expiry 변경 없음)
+        const existingAddOns: any[] = (() => {
+          try { return JSON.parse(serial.add_ons || '[]'); } catch { return []; }
+        })();
+        const alreadyAdded = existingAddOns.some((a: any) => a.name === addonProductName);
+        if (!alreadyAdded) {
+          existingAddOns.push({ name: addonProductName, added_date: today });
+          serialService.update(serial.id, { add_ons: JSON.stringify(existingAddOns) } as any);
+          logger.info(`Add-on 승인: ${order.serial_number} + ${addonProductName}`);
+        } else {
+          logger.info(`Add-on 이미 존재 (skip): ${order.serial_number} / ${addonProductName}`);
+        }
+      } else {
+        // 시리얼 없으면 신규 생성 + add-on
+        const newAddOns = [{ name: addonProductName, added_date: today }];
+        serialService.create({
+          serial_number: order.serial_number,
+          customer_name: order.customer_name,
+          customer_email: order.customer_email || '',
+          customer_phone: order.customer_phone || '',
+          purchase_date: order.purchase_date || today,
+          expiry_date: '',
+          notes: order.notes,
+          add_ons: newAddOns,
+        });
+        logger.info(`Add-on 신규 등록: ${order.serial_number} + ${addonProductName}`);
+      }
     }
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
@@ -337,16 +503,25 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
     // ── 전체 페이지 수집 (페이지네이션 루프) ─────────────
     const MIN_DATA_COLS = 5;
     const FIELD_MAP = {
-      serial: source.field_serial || 'LOT',
-      serial_alt: 'シリアル番号',
+      // 시리얼 번号 (シリアル番号) 기준
+      serial: source.field_serial || 'シリアル番号',
+      serial_alt: 'LOT',
+      // 고객명 (注文先 = Customer Name)
       customer: source.field_customer || '注文先',
       phone: source.field_phone || '',
-      purchase: source.field_purchase || '入荷日',
-      expiry: source.field_expiry || '出荷日',
-      product: source.field_product || '品名',
+      // 구매일 = 出荷日 (출고일 = purchase date)
+      purchase: source.field_purchase || '出荷日',
+      // 입하일 (入荷日) — 보조 날짜
+      incoming: '入荷日',
+      // 납품처 (納品先) — memo 용도
       delivery_to: '納品先',
+      // LOT — memo 용도
+      lot: 'LOT',
       invoice_no: '出荷伝票',
+      // 商品コード — 카테고리 분류 기준
       item_code: '商品コード',
+      // 品名 — fallback 품명
+      product: source.field_product || '品名',
     };
 
     // 현재 페이지 테이블 파싱 함수 (page.evaluate 래퍼)
@@ -464,21 +639,15 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
     const customRules: ProductCodeRule[] = settings.custom_product_code_rules || [];
     const today = new Date().toISOString().slice(0, 10);
 
-    // serial 기준으로 행 그룹키록
-    const serialGroups = new Map<string, Array<{ row: Record<string, string>; group: ProductCodeGroup; code: string }>>();
-    const standaloneRows: Array<{ row: Record<string, string>; group: ProductCodeGroup; code: string }> = [];
-
     const filterKeyword = (source.product_filter || '').trim().toLowerCase();
 
     for (const row of tableData) {
       const code = (row.item_code || '').trim();
       const group = resolveGroup(code, customRules);
 
-      // GROUP F: 완전 무시
-      if (group === 'ignore') continue;
-
-      // group === null: 상품코드 없거나 미등록 코드 → product_filter 적용 후 기존 방식으로 pending 저장 (폴백)
-      if (group === null) {
+      // 미등록 코드 (group === null 및 ignore) — 기존 방식 폴백
+      if (group === null || group === 'ignore') {
+        if (group === 'ignore') continue;
         const productVal = getProductFallback(row);
         if (!matchesProductFilter(productVal, filterKeyword)) continue;
         const serial = (row.serial || '').trim();
@@ -494,10 +663,10 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
           customer_phone: row.phone || '',
           customer_manager: '',
           purchase_date: normalizeDate(row.purchase) || '',
-          expiry_date: normalizeDate(row.expiry) || '',
+          expiry_date: '',
           engine_build: '',
           version: productVal,
-          notes: `자동수집: ${source.name}${row.invoice_no ? ` / 출고번호: ${row.invoice_no}` : ''}${code ? ` / 상품코드: ${code}` : ''}`,
+          notes: buildRowMemo(row, source.name, code, today),
           order_type: 'new',
           raw_data: row._raw || '',
           status: 'pending',
@@ -509,192 +678,115 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       }
 
       const serial = (row.serial || '').trim();
+      if (!serial) continue; // 시리얼 없으면 처리 불가
 
-      // GROUP A: Renewal — 즉시 자동 처리 (폴링 expiry + 1년)
+      // ── 카테고리 A (main) : 신규 등록 → pending
+      if (group === 'main') {
+        const productName = getProductNameByCode(code) || getProductFallback(row);
+        if (filterKeyword && !matchesProductFilter(productName, filterKeyword)) continue;
+        const sourceId = `${source.id}::${serial}`;
+        if (isAlreadyFetched(sourceId)) continue;
+        const existingSerial = serialService.getBySerialNumber(serial);
+        insertPendingOrder({
+          source_id: sourceId,
+          source_url: source.url,
+          serial_number: serial,
+          customer_name: row.customer || '',
+          customer_email: '',
+          customer_address: '',
+          customer_phone: row.phone || '',
+          customer_manager: '',
+          purchase_date: normalizeDate(row.purchase) || '',
+          expiry_date: '',
+          engine_build: '',
+          version: productName,
+          notes: buildRowMemo(row, source.name, code, today),
+          order_type: 'new',
+          raw_data: row._raw || '',
+          status: 'pending',
+          product_code: code,
+          flag_duplicate: existingSerial ? 1 : 0,
+        });
+        logger.info(`[폴링] 카테고리A 신규 pending: ${serial} (${productName})`);
+        found++;
+        continue;
+      }
+
+      // ── 카테고리 B (addon) : 기존 시리얼에 add-on 추가 → pending
+      if (group === 'addon') {
+        const productName = getProductNameByCode(code) || getProductFallback(row);
+        const sourceId = `${source.id}::${serial}::${code}`;
+        if (isAlreadyFetched(sourceId)) continue;
+        insertPendingOrder({
+          source_id: sourceId,
+          source_url: source.url,
+          serial_number: serial,
+          customer_name: row.customer || '',
+          customer_email: '',
+          customer_address: '',
+          customer_phone: row.phone || '',
+          customer_manager: '',
+          purchase_date: normalizeDate(row.purchase) || '',
+          expiry_date: '', // add-on은 expiry 변경 없음
+          engine_build: '',
+          version: '',
+          notes: buildRowMemo(row, source.name, code, today),
+          order_type: 'addon',
+          raw_data: JSON.stringify({ ...(JSON.parse(row._raw || '{}')), _addon_name: productName, _addon_code: code }),
+          status: 'pending',
+          product_code: code,
+          flag_duplicate: 0,
+        });
+        logger.info(`[폴링] 카테고리B Add-on pending: ${serial} / ${productName}`);
+        found++;
+        continue;
+      }
+
+      // ── 카테고리 C (renewal) : 갱신 → pending (expiry +1년은 승인 시 처리)
       if (group === 'renewal') {
-        if (!serial) continue;
+        const productName = getProductNameByCode(code) || getProductFallback(row);
+        const sourceId = `${source.id}::${serial}::renewal::${code}`;
+        if (isAlreadyFetched(sourceId)) continue;
+        insertPendingOrder({
+          source_id: sourceId,
+          source_url: source.url,
+          serial_number: serial,
+          customer_name: row.customer || '',
+          customer_email: '',
+          customer_address: '',
+          customer_phone: row.phone || '',
+          customer_manager: '',
+          purchase_date: normalizeDate(row.purchase) || '',
+          expiry_date: '', // 승인 시 기존 expiry +1년으로 계산
+          engine_build: '',
+          version: '',
+          notes: buildRowMemo(row, source.name, code, today),
+          order_type: 'renewal',
+          raw_data: JSON.stringify({ ...(JSON.parse(row._raw || '{}')), _renewal_product: productName }),
+          status: 'pending',
+          product_code: code,
+          flag_duplicate: 0,
+        });
+        logger.info(`[폴링] 카테고리C 갱신 pending: ${serial} (${productName})`);
+        found++;
+        continue;
+      }
+
+      // ── 카테고리 D (memo) : DB 메모란에 기입만, 변경 없음 (즉시 처리)
+      if (group === 'memo') {
+        const productName = getProductNameByCode(code) || getProductFallback(row);
+        const memoText = `[${today}] ${productName || code}${buildDeliveryMemo(row)}`;
         const existing = serialService.getBySerialNumber(serial);
         if (existing) {
-          const pollExpiry = normalizeDate(row.expiry);
-          let newExpiry: string;
-          if (pollExpiry) {
-            const d = new Date(pollExpiry);
-            d.setFullYear(d.getFullYear() + 1);
-            newExpiry = d.toISOString().slice(0, 10);
-          } else {
-            const d = new Date(existing.expiry_date || new Date());
-            d.setFullYear(d.getFullYear() + 1);
-            newExpiry = d.toISOString().slice(0, 10);
-          }
-          const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-          const db = getDb();
-          db.prepare("UPDATE serials SET expiry_date = ?, status = 'active', updated_at = ? WHERE id = ?")
-            .run(newExpiry, now, existing.id);
-          logger.info(`[폴링] Renewal 처리: ${serial} expiry ${existing.expiry_date} → ${newExpiry}`);
-          found++;
-        }
-        continue;
-      }
-
-      // GROUP D: Memo — 즉시 자동 처리
-      if (group === 'memo') {
-        if (!serial) continue;
-        const memoText = `[${today}] ${row.product || code}`;
-        const existing = serialService.getBySerialNumber(serial);
-        if (!existing) {
-          // 신규 등록 + notes
-          serialService.create({
-            serial_number: serial,
-            customer_name: row.customer || '',
-            customer_email: '',
-            customer_phone: row.phone || '',
-            purchase_date: normalizeDate(row.purchase) || today,
-            expiry_date: normalizeDate(row.expiry) || today,
-            notes: memoText,
-          });
-          logger.info(`[폴링] Memo 신규 등록: ${serial}`);
-        } else {
-          // notes에 내용 추가
           const newNotes = existing.notes ? `${existing.notes}\n${memoText}` : memoText;
           serialService.update(existing.id, { notes: newNotes });
-          logger.info(`[폴링] Memo 추가: ${serial}`);
-        }
-        found++;
-        continue;
-      }
-
-      // GROUP E: Version Update — 즉시 자동 처리
-      if (group === 'version_update') {
-        if (!serial) continue;
-        const existing = serialService.getBySerialNumber(serial);
-        if (!existing) {
-          serialService.create({
-            serial_number: serial,
-            customer_name: row.customer || '',
-            customer_email: '',
-            customer_phone: row.phone || '',
-            purchase_date: normalizeDate(row.purchase) || today,
-            expiry_date: normalizeDate(row.expiry) || today,
-            version: row.product || '',
-            notes: `자동수집: ${source.name}`,
-          });
-          logger.info(`[폴링] Version_Update 신규: ${serial}`);
+          logger.info(`[폴링] 카테고리D 메모 추가: ${serial}`);
         } else {
-          serialService.update(existing.id, { version: row.product || '' });
-          logger.info(`[폴링] Version_Update 갱신: ${serial} version=${row.product}`);
+          logger.info(`[폴링] 카테고리D 메모 대상 시리얼 없음 (skip): ${serial}`);
         }
         found++;
         continue;
       }
-
-      // GROUP B + C (main / addon): serial로 그룹키록
-      if (serial) {
-        if (!serialGroups.has(serial)) serialGroups.set(serial, []);
-        serialGroups.get(serial)!.push({ row, group, code });
-      } else {
-        standaloneRows.push({ row, group, code });
-      }
-    }
-
-    // ── GROUP B + C: serial 그룹별 처리
-    for (const [serial, entries] of serialGroups) {
-      const sourceId = `${source.id}::${serial}`;
-      if (isAlreadyFetched(sourceId)) continue;
-
-      // Product filter 체크 (코마 구분 다중 키워드)
-      if (filterKeyword) {
-        const anyMatch = entries.some(e => matchesProductFilter(getProductFallback(e.row), filterKeyword));
-        if (!anyMatch) continue;
-      }
-
-      const mainEntry = entries.find(e => e.group === 'main');
-      const addonEntries = entries.filter(e => e.group === 'addon');
-
-      // main row 또는 첫 번째 항목
-      const baseRow = mainEntry ? mainEntry.row : entries[0].row;
-      const mainCode = mainEntry ? mainEntry.code : entries[0].code;
-      const mainProduct = mainEntry ? (mainEntry.row.product || '') : '';
-
-      // add_ons 리스트
-      const addOns = addonEntries.map(e => ({
-        name: e.row.product || e.code,
-        added_date: today,
-      }));
-
-      const existingSerial = serialService.getBySerialNumber(serial);
-      const isDuplicate = existingSerial ? 1 : 0;
-
-      if (isDuplicate) {
-        logger.info(`[폴링] 중복 serial 감지 (flag): ${serial}`);
-      }
-
-      const pendingData: Omit<PendingOrder, 'id' | 'created_at'> = {
-        source_id: sourceId,
-        source_url: source.url,
-        serial_number: serial,
-        customer_name: baseRow.customer || '',
-        customer_email: '',
-        customer_address: '',
-        customer_phone: baseRow.phone || '',
-        customer_manager: '',
-        purchase_date: normalizeDate(baseRow.purchase) || '',
-        expiry_date: normalizeDate(baseRow.expiry) || '',
-        engine_build: '',
-        version: mainProduct,
-        notes: [
-          `자동수집: ${source.name}`,
-          baseRow.invoice_no ? `출고번호: ${baseRow.invoice_no}` : '',
-          addonEntries.length > 0
-            ? `Add-ons: ${addonEntries.map(e => e.row.product || e.code).join(', ')}`
-            : '',
-        ].filter(Boolean).join(' / '),
-        order_type: mainEntry ? 'new' : 'addon',
-        raw_data: baseRow._raw || '',
-        status: 'pending',
-        product_code: mainCode,
-        flag_duplicate: isDuplicate,
-      };
-
-      // add_ons를 pending_orders의 raw_data에도 포함 (승인 시 사용)
-      try {
-        const rawObj = JSON.parse(pendingData.raw_data);
-        rawObj._add_ons = addOns;
-        pendingData.raw_data = JSON.stringify(rawObj);
-      } catch { /* ignore */ }
-
-      insertPendingOrder(pendingData);
-      found++;
-    }
-
-    // standalone (serial 없는 경우) — 상품코드만 pending으로 남김
-    for (const { row, group, code } of standaloneRows) {
-      const sourceId = `${source.id}::${row._raw?.slice(0, 40) || code}`;
-      if (isAlreadyFetched(sourceId)) continue;
-
-      const filterKeyword = (source.product_filter || '').trim().toLowerCase();
-      if (filterKeyword && !(row.product || '').toLowerCase().includes(filterKeyword)) continue;
-
-      insertPendingOrder({
-        source_id: sourceId,
-        source_url: source.url,
-        serial_number: '',
-        customer_name: row.customer || '',
-        customer_email: '',
-        customer_address: '',
-        customer_phone: row.phone || '',
-        customer_manager: '',
-        purchase_date: normalizeDate(row.purchase) || '',
-        expiry_date: normalizeDate(row.expiry) || '',
-        engine_build: '',
-        version: row.product || '',
-        notes: `자동수집: ${source.name}`,
-        order_type: group === 'main' ? 'new' : 'addon',
-        raw_data: row._raw || '',
-        status: 'pending',
-        product_code: code,
-        flag_duplicate: 0,
-      });
-      found++;
     }
 
     logger.info(`[폴링] ${source.name}: ${found}건 수집 완료`);

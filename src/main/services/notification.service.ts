@@ -312,10 +312,10 @@ export class NotificationService {
     if (result.screenshot_path) {
       const filename = path.basename(result.screenshot_path);
       // 외부에서 접근 가능한 스크린샷 URL 생성
-      const baseUrl = process.env.CERT_DOMAIN
-        ? `https://${process.env.CERT_DOMAIN}`
-        : 'http://localhost:3000';
-      const screenshotUrl = `${baseUrl}/api/logs/screenshot/${encodeURIComponent(filename)}`;
+      // CERT_DOMAIN 환경변수 없으면 settings의 fallback 도메인을 사용
+      const fallbackDomain = 'geomedi-exocad.duckdns.org';
+      const domain = process.env.CERT_DOMAIN || fallbackDomain;
+      const screenshotUrl = `https://${domain}/api/logs/screenshot/${encodeURIComponent(filename)}`;
       const msgWithShot = message + '\n' + sf('screenshot', { file: screenshotUrl });
       return this.sendSlack(msgWithShot);
     }
