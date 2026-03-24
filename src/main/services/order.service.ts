@@ -381,6 +381,53 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
   }
 }
 
+export async function updateDataFromPendingOrder(id: number, form: Partial<PendingOrder>): Promise<{ success: boolean; data?: any; error?: string }> {
+  const db = getDb();
+  const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
+  if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
+
+  try {
+    const targetSerialName = form.serial_number || order.serial_number;
+    const existing = serialService.getBySerialNumber(targetSerialName);
+
+    if (!existing) {
+      return { success: false, error: `DB에 시리얼 ${targetSerialName}이(가) 존재하지 않습니다.` };
+    }
+
+    const updates: any = {};
+    if (form.customer_name) updates.customer_name = form.customer_name;
+    if (form.customer_email) updates.customer_email = form.customer_email;
+    if (form.customer_phone) updates.customer_phone = form.customer_phone;
+    if (form.customer_address) updates.customer_address = form.customer_address;
+    if (form.customer_manager) updates.customer_manager = form.customer_manager;
+    if (form.purchase_date) updates.purchase_date = form.purchase_date;
+    if (form.version) updates.version = form.version;
+    if (form.notes) updates.notes = form.notes;
+    
+    // expiry_date는 전달된 값이 비어있지 않은 경우에만 업데이트
+    if (form.expiry_date && form.expiry_date.trim() !== '') {
+      updates.expiry_date = form.expiry_date;
+    }
+
+    // `update`를 통해 DB 갱신
+    if (Object.keys(updates).length > 0) {
+      serialService.update(existing.id, updates);
+    }
+    
+    // 상태를 approved로 변경
+    db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
+    
+    // 업데이트된 시리얼 정보를 반환
+    const updatedSerial = serialService.getBySerialNumber(targetSerialName);
+    logger.info(`Data Update 완료: pending_order #${id} → DB_Serial #${updatedSerial?.id} (${targetSerialName})`);
+    
+    return { success: true, data: updatedSerial };
+  } catch (err: any) {
+    logger.error(`Data Update 오류: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
 export function rejectPendingOrder(id: number): void {
   const db = getDb();
   db.prepare("UPDATE pending_orders SET status = 'rejected' WHERE id = ?").run(id);

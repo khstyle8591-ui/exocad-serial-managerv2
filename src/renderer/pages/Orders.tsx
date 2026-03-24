@@ -35,7 +35,7 @@ export default function Orders() {
   const [filter, setFilter] = useState<FilterType>('pending');
   const [loading, setLoading] = useState(true);
   const [polling, setPolling] = useState(false);
-  const [editOrder, setEditOrder] = useState<PendingOrder | null>(null);
+  const [editOrder, setEditOrder] = useState<{ order: PendingOrder, mode: 'register' | 'update' } | null>(null);
   const [rawModal, setRawModal] = useState<PendingOrder | null>(null);
   const [pollMsg, setPollMsg] = useState('');
 
@@ -64,16 +64,7 @@ export default function Orders() {
     }
   };
 
-  const handleApprove = async (id: number) => {
-    const result = await api.approveOrder(id) as any;
-    if (result.success) {
-      alert(t(lang, 'orders_approve_success'));
-    } else {
-      alert(`${t(lang, 'orders_approve_fail')}${result.error}`);
-    }
-    loadOrders();
-  };
-
+  // register 기능을 edit & register로 강제하여 기존 직접 승인 제거
   const handleReject = async (id: number) => {
     if (!confirm(t(lang, 'orders_confirm_reject'))) return;
     await api.rejectOrder(id);
@@ -86,8 +77,28 @@ export default function Orders() {
     loadOrders();
   };
 
-  const handleEditSave = async (updated: PendingOrder) => {
-    await api.updateOrder(updated.id, updated);
+  const handleEditSave = async (updated: PendingOrder, mode: 'register' | 'update') => {
+    try {
+      if (mode === 'register') {
+        await api.updateOrder(updated.id, updated);
+        const res = await api.approveOrder(updated.id) as any;
+        if (res.success) {
+          alert(t(lang, 'orders_approve_success'));
+        } else {
+          alert(`${t(lang, 'orders_approve_fail')}${res.error}`);
+        }
+      } else if (mode === 'update') {
+        const res = await api.updateDataOrder(updated.id, updated) as any;
+        if (res.success) {
+          const d = res.data;
+          alert(`데이터 업데이트 완료!\n\n시리얼: ${d.serial_number}\n고객명: ${d.customer_name}\n품명: ${d.version}\n만료일: ${d.expiry_date}`);
+        } else {
+          alert(`데이터 업데이트 실패: ${res.error}`);
+        }
+      }
+    } catch (e: any) {
+      alert(e.message);
+    }
     setEditOrder(null);
     loadOrders();
   };
@@ -234,12 +245,12 @@ export default function Orders() {
                   <>
                     <button
                       className="btn btn-primary btn-sm"
-                      onClick={() => handleApprove(order.id)}
-                    >{t(lang, 'orders_btn_approve')}</button>
+                      onClick={() => setEditOrder({ order: { ...order }, mode: 'register' })}
+                    >Edit & Register</button>
                     <button
                       className="btn btn-secondary btn-sm"
-                      onClick={() => setEditOrder({ ...order })}
-                    >{t(lang, 'orders_btn_edit_approve')}</button>
+                      onClick={() => setEditOrder({ order: { ...order }, mode: 'update' })}
+                    >Data Update</button>
                     <button
                       className="btn btn-sm"
                       style={{ background: '#fee2e2', color: '#dc2626' }}
@@ -267,9 +278,10 @@ export default function Orders() {
       {/* ── Edit Modal ── */}
       {editOrder && (
         <EditOrderModal
-          order={editOrder}
+          order={editOrder.order}
+          mode={editOrder.mode}
           lang={lang}
-          onSave={handleEditSave}
+          onSave={(o) => handleEditSave(o, editOrder.mode)}
           onClose={() => setEditOrder(null)}
         />
       )}
@@ -308,8 +320,9 @@ function Field({ label, value, highlight }: { label: string; value: string; high
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
-function EditOrderModal({ order, lang, onSave, onClose }: {
+function EditOrderModal({ order, mode, lang, onSave, onClose }: {
   order: PendingOrder;
+  mode: 'register' | 'update';
   lang: Language;
   onSave: (o: PendingOrder) => void;
   onClose: () => void;
@@ -318,7 +331,9 @@ function EditOrderModal({ order, lang, onSave, onClose }: {
   const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }));
 
   const handleApprove = () => {
-    if (!form.expiry_date) { alert(t(lang, 'orders_required_expiry')); return; }
+    if (mode === 'register' && !form.expiry_date && form.order_type !== 'addon') {
+      alert(t(lang, 'orders_required_expiry')); return;
+    }
     onSave(form);
   };
 
@@ -326,7 +341,7 @@ function EditOrderModal({ order, lang, onSave, onClose }: {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>{t(lang, 'orders_modal_title')}</h3>
+          <h3>{mode === 'update' ? 'Data Update' : t(lang, 'orders_modal_title')}</h3>
           <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
         </div>
 
@@ -356,7 +371,7 @@ function EditOrderModal({ order, lang, onSave, onClose }: {
               <input type="date" value={form.purchase_date} onChange={e => set('purchase_date', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>{t(lang, 'label_expiry_date')} <span style={{ color: '#ef4444' }}>*</span></label>
+              <label>{t(lang, 'label_expiry_date')} {mode === 'update' ? <span style={{fontSize: 10, fontWeight: 'normal'}}>(수정안함)</span> : <span style={{ color: '#ef4444' }}>*</span>}</label>
               <input type="date" value={form.expiry_date} onChange={e => set('expiry_date', e.target.value)} />
             </div>
           </div>
@@ -394,7 +409,7 @@ function EditOrderModal({ order, lang, onSave, onClose }: {
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>{t(lang, 'cancel')}</button>
-          <button className="btn btn-primary" onClick={handleApprove}>{t(lang, 'orders_btn_edit_approve')}</button>
+          <button className="btn btn-primary" onClick={handleApprove}>{mode === 'update' ? 'Update' : t(lang, 'orders_btn_edit_approve')}</button>
         </div>
       </div>
     </div>

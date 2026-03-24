@@ -52,6 +52,7 @@ export const api = {
     restartOrderScheduler: () => post('/orders/restart-scheduler'),
     updateOrder: (id: number, data: unknown) => put(`/orders/${id}`, data),
     approveOrder: (id: number) => post(`/orders/${id}/approve`),
+    updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
     rejectOrder: (id: number) => post(`/orders/${id}/reject`),
     deleteOrder: (id: number) => del(`/orders/${id}`),
 

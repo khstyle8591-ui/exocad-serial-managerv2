@@ -3,6 +3,7 @@ import {
     getAllOrders,
     updatePendingOrder,
     approvePendingOrder,
+    updateDataFromPendingOrder,
     rejectPendingOrder,
     deletePendingOrder,
     pollNow,
@@ -50,6 +51,12 @@ router.put('/:id', (req: Request, res: Response) => {
 // POST /api/orders/:id/approve
 router.post('/:id/approve', async (_req: Request, res: Response) => {
     const result = await approvePendingOrder(Number(_req.params.id));
+    res.json(result);
+});
+
+// POST /api/orders/:id/update-data
+router.post('/:id/update-data', async (req: Request, res: Response) => {
+    const result = await updateDataFromPendingOrder(Number(req.params.id), req.body);
     res.json(result);
 });
 
