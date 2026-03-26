@@ -322,6 +322,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
   let found = 0;
   let browser: Browser | null = null;
   try {
+    logger.info(`[Crawling] 시작: ${source.name} (${source.url})`);
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' });
     const page = await context.newPage();
@@ -344,7 +345,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       });
       await page.waitForTimeout(2000);
       const today = getTodayDateString();
-      await page.evaluate((d) => {
+      await page.evaluate((d: string) => {
         const el = document.getElementById('s_date1') as HTMLInputElement;
         if (el) { el.readOnly = false; el.value = d; el.dispatchEvent(new Event('change', { bubbles: true })); }
       }, today);
@@ -393,6 +394,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
   } finally {
     if (browser) await browser.close();
   }
+  logger.info(`[Crawling] 종료: ${source.name} (수집: ${found}건, 에러: ${errors.length}건)`);
   return { found, errors };
 }
 
@@ -407,6 +409,7 @@ function normalizeDate(value: string | undefined): string {
 }
 
 export async function pollNow(sourceId?: string): Promise<{ found: number; errors: string[] }> {
+  logger.info(`[Polling] 폴링 작업 시작 (Source: ${sourceId || '전체'})`);
   const settings = getSettings();
   const sources = settings.poll_sources.filter(s => s.enabled && (sourceId ? s.id === sourceId : true));
   let totalFound = 0;
@@ -421,6 +424,7 @@ export async function pollNow(sourceId?: string): Promise<{ found: number; error
   pollStatus.running = false;
   pollStatus.lastRun = new Date().toISOString();
   pollStatus.message = `마지막 폴링: ${totalFound}건 수집`;
+  logger.info(`[Polling] 폴링 작업 완료 (대상: ${sources.length}개 소스, 총 수집: ${totalFound}건)`);
   return { found: totalFound, errors: allErrors };
 }
 
@@ -433,14 +437,31 @@ export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<Po
 export function startPollingScheduler(): void {
   stopPollingScheduler();
   const settings = getSettings();
-  settings.poll_sources.filter(s => s.enabled).forEach(source => {
+  const enabledSources = settings.poll_sources.filter(s => s.enabled);
+  
+  logger.info(`[Scheduler] 주문 폴링 스케줄 등록 시작 (대상 소스: ${enabledSources.length}개)`);
+  
+  enabledSources.forEach(source => {
     (source.schedule_times || []).forEach(time => {
-      const parts = time.split(':');
-      const cronExpr = `${parseInt(parts[1])} ${parseInt(parts[0])} * * *`;
-      const task = cron.schedule(cronExpr, () => pollNow(source.id), { timezone: 'Asia/Seoul' });
-      const tasks = cronTasks.get(source.id) || [];
-      tasks.push(task);
-      cronTasks.set(source.id, tasks);
+      try {
+        const parts = time.split(':');
+        if (parts.length !== 2) throw new Error(`Invalid time format: ${time}`);
+        const cronExpr = `${parseInt(parts[1], 10)} ${parseInt(parts[0], 10)} * * *`;
+        
+        const task = cron.schedule(cronExpr, () => {
+          logger.info(`[Scheduler] 예약된 폴링 시작: ${source.name} (${time})`);
+          pollNow(source.id).catch(err => {
+            logger.error(`[Scheduler] 예약 폴링 실패 (${source.name}): ${err.message}`);
+          });
+        }, { timezone: 'Asia/Seoul' });
+
+        const tasks = cronTasks.get(source.id) || [];
+        tasks.push(task);
+        cronTasks.set(source.id, tasks);
+        logger.info(`[Scheduler] 스케줄 등록 완료: ${source.name} -> ${cronExpr} (KST)`);
+      } catch (err: any) {
+        logger.error(`[Scheduler] 스케줄 등록 오류 (${source.name}, ${time}): ${err.message}`);
+      }
     });
   });
 }
