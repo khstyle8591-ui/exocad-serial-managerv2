@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getSettings, saveSettings } from '../../main/settings';
 import { restartPreExpiryTask, startMailCheck } from '../../main/scheduler';
+import { startPollingScheduler } from '../../main/services/order.service';
 import { notificationService } from '../../main/services/notification.service';
 import { emailMonitorService } from '../../main/services/email-monitor.service';
 import type { AppSettings } from '../../shared/types';
@@ -17,6 +18,7 @@ router.post('/', (req: Request, res: Response) => {
     saveSettings(req.body as Partial<AppSettings>);
     restartPreExpiryTask();
     startMailCheck();
+    startPollingScheduler();
     res.json(getSettings());
 });
 

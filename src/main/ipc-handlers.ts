@@ -10,7 +10,7 @@ import {
   updatePendingOrder, approvePendingOrder, rejectPendingOrder, deletePendingOrder,
   pollNow, pollDryRun, getPollStatus, startPollingScheduler, stopPollingScheduler,
 } from './services/order.service';
-import { restartPreExpiryTask } from './scheduler';
+import { restartPreExpiryTask, startMailCheck } from './scheduler';
 import { getSettings, saveSettings } from './settings';
 import { logger } from './utils/logger';
 import type { SerialInput, AddOn, AppSettings } from '../shared/types';
@@ -194,6 +194,17 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SAVE, (_event, settings: Partial<AppSettings>) => {
     saveSettings(settings);
+    
+    // 설정 변경 후 관련 스케줄러들 즉시 재시작
+    try {
+      startMailCheck();         // 메일 체크 스케줄 갱신
+      restartPreExpiryTask();   // 자동 Cancel 스케줄 갱신
+      startPollingScheduler();  // 주문 폴링 스케줄 갱신
+      logger.info('설정 저장 후 모든 스케줄러 재시작 완료');
+    } catch (err: any) {
+      logger.error(`스케줄러 재시작 중 오류 발생: ${err.message}`);
+    }
+
     return getSettings();
   });
 
