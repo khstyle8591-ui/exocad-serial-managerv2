@@ -46,7 +46,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   custom_product_code_rules: [],
 };
 
-export function getSettings(): AppSettings {
+let cachedSettings: AppSettings | null = null;
+
+export function getSettings(forceRefresh = false): AppSettings {
+  if (cachedSettings && !forceRefresh) return cachedSettings;
+
   const db = getDb();
   const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
 
@@ -70,7 +74,8 @@ export function getSettings(): AppSettings {
     }
   }
 
-  return settings as AppSettings;
+  cachedSettings = settings as AppSettings;
+  return cachedSettings;
 }
 
 export function saveSettings(settings: Partial<AppSettings>): void {
@@ -87,4 +92,5 @@ export function saveSettings(settings: Partial<AppSettings>): void {
   });
 
   transaction();
+  cachedSettings = null; // 캐시 무효화
 }

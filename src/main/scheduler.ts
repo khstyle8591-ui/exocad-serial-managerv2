@@ -6,6 +6,7 @@ import { notificationService } from './services/notification.service';
 import { getSettings } from './settings';
 import { getDb } from './database';
 import { logger } from './utils/logger';
+import { getTodayDateString, getYesterdayDateString } from './utils/date-utils';
 import type { DailyReport, CancelResult } from '../shared/types';
 
 let mailCheckTasks: cron.ScheduledTask[] = [];
@@ -84,10 +85,7 @@ export function startScheduler(): void {
   dailyReportTask = cron.schedule('0 10 * * *', async () => {
     logger.info('일일 리포트 생성 시작 (어제 데이터 기준)');
     try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const targetDateStr = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-      
+      const targetDateStr = getYesterdayDateString();
       const yesterdayLogs = serialService.getLogsForDate(targetDateStr);
 
       const report: DailyReport = {
@@ -172,9 +170,7 @@ export function startScheduler(): void {
       }));
 
       // 전일 작업 요약
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayDateStr = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      const yesterdayDateStr = getYesterdayDateString();
       const yesterdayLogs = serialService.getLogsForDate(yesterdayDateStr);
       
       const yesterdayStats = {

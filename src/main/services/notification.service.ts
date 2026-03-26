@@ -170,7 +170,7 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
@@ -228,7 +228,7 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
       const data = JSON.stringify({
         text: sf('test_ok', { time: now }),
       });
@@ -332,7 +332,7 @@ export class NotificationService {
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
     yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
     const lines: string[] = [
       sf('daily_summary', { date: today }),
       sf('divider'),
@@ -385,7 +385,7 @@ export class NotificationService {
     
     let timeStr = '(알 수 없음)';
     if (mailDate) {
-      timeStr = new Date(mailDate).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      timeStr = new Date(mailDate).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
     }
 
     const msg = sf('related_mail', { kws: kwsStr, time: timeStr, from, subject, link });

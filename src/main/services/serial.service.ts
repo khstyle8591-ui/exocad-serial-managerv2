@@ -1,4 +1,5 @@
 import { getDb } from '../database';
+import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
 import type { Serial, SerialInput, AddOn, ActivityLog } from '../../shared/types';
 
 export class SerialService {
@@ -10,8 +11,8 @@ export class SerialService {
 
   private syncExpiredStatus(): void {
     const db = getDb();
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const today = getTodayDateString();
+    const now = getNowTimestampString();
     db.prepare(
       "UPDATE serials SET status = 'expired', updated_at = ? " +
       "WHERE expiry_date < ? AND status = 'active'"
@@ -44,7 +45,7 @@ export class SerialService {
   create(input: SerialInput): Serial {
     const db = getDb();
     const addOnsJson = JSON.stringify(input.add_ons || []);
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
 
     const result = db.prepare(
       `INSERT INTO serials (serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
@@ -104,7 +105,7 @@ export class SerialService {
 
     if (updates.length === 0) return existing;
 
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
     updates.push('updated_at = ?');
     values.push(now);
     values.push(id);
@@ -127,7 +128,7 @@ export class SerialService {
     const addOns: AddOn[] = JSON.parse(existing.add_ons);
     addOns.push(addon);
 
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
     db.prepare('UPDATE serials SET add_ons = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(addOns), now, id);
 
@@ -158,9 +159,9 @@ export class SerialService {
     const currentExpiry = existing.expiry_date ? new Date(existing.expiry_date) : new Date();
     const newExpiry = new Date(currentExpiry);
     newExpiry.setFullYear(newExpiry.getFullYear() + 1);
-    const newExpiryStr = new Date(newExpiry).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const newExpiryStr = new Date(newExpiry).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
     db.prepare('UPDATE serials SET expiry_date = ?, status = ?, updated_at = ? WHERE id = ?')
       .run(newExpiryStr, 'active', now, id);
 
@@ -183,7 +184,7 @@ export class SerialService {
     const existing = this.getById(id);
     if (!existing) return undefined;
 
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
     db.prepare('UPDATE serials SET status = ?, updated_at = ? WHERE id = ?')
       .run('cancelled', now, id);
 
@@ -252,7 +253,7 @@ export class SerialService {
     );
 
     const transaction = db.transaction(() => {
-      const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      const now = getNowTimestampString();
       for (const s of serials) {
         try {
           upsertStmt.run(
@@ -290,7 +291,7 @@ export class SerialService {
 
   private logActivity(serialId: number, action: string, details: string): void {
     const db = getDb();
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const now = getNowTimestampString();
     db.prepare(
       'INSERT INTO activity_logs (serial_id, action, details, created_at) VALUES (?, ?, ?, ?)'
     ).run(serialId, action, details, now);
@@ -305,7 +306,7 @@ export class SerialService {
 
   getTodayLogs(): ActivityLog[] {
     const db = getDb();
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const today = getTodayDateString();
     return this.getLogsForDate(today);
   }
 
@@ -326,8 +327,8 @@ export class SerialService {
     const notActivated = (db.prepare("SELECT COUNT(*) as cnt FROM serials WHERE status = 'not-activated'").get() as any).cnt;
 
     const now = new Date();
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    const today = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const today = getTodayDateString();
     const expiringThisMonth = (db.prepare(
       "SELECT COUNT(*) as cnt FROM serials WHERE expiry_date >= ? AND expiry_date <= ? AND status = 'active'"
     ).get(today, endOfMonth) as any).cnt;

@@ -4,6 +4,7 @@ import { simpleParser } from 'mailparser';
 import { getSettings } from '../settings';
 import { serialService } from './serial.service';
 import { logger } from '../utils/logger';
+import { getTimestampDaysAgo } from '../utils/date-utils';
 import { notificationService } from './notification.service';
 import type { RenewalDryRunResult, RenewalDryRunEmail, MailConnectionResult } from '../../shared/types';
 
@@ -211,7 +212,7 @@ export class EmailMonitorService {
           if (err) { return done(); }
 
           // Dry-run: check ALL mails since 1 day ago (not just UNSEEN), no markSeen
-          const since1Day = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+          const since1Day = new Date(getTimestampDaysAgo(1));
           imap.search(['ALL', ['SINCE', since1Day]], (err, uids) => {
             if (err || !uids || uids.length === 0) { return done(); }
 
@@ -312,7 +313,7 @@ export class EmailMonitorService {
     try {
       const mailDate = new Date(dateStr).getTime();
       if (isNaN(mailDate)) return false;
-      const cutoff = Date.now() - 1 * 24 * 60 * 60 * 1000; // 1일 전 timestamp
+      const cutoff = getTimestampDaysAgo(1); // 1일 전 timestamp
       return mailDate >= cutoff;
     } catch {
       return false;
@@ -436,7 +437,7 @@ export class EmailMonitorService {
           }
 
           // UNSEEN 미독 + 최근 1일 이내 메일만 검색 (서버사이드 필터)
-          const since1Day = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+          const since1Day = new Date(getTimestampDaysAgo(1));
           imap.search(['UNSEEN', ['SINCE', since1Day]], (err, uids) => {
             if (err) {
               errors.push(`메일 검색 오류: ${err.message}`);

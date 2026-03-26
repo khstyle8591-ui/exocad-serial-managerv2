@@ -4,6 +4,7 @@ import fs from 'fs';
 import { serialService } from './serial.service';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
+import { getTodayDateString } from '../utils/date-utils';
 import type { CancelResult, CancelDryRunResult } from '../../shared/types';
 
 // 스크린샷 저장 디렉토리
@@ -149,7 +150,8 @@ export class CancelService {
 
     // ── Step 1: 이메일/username 입력 ──────────────────────────────────────────
     // Align Tech SSO는 username → Continue → password 의 2단계 로그인일 수 있음
-    const username = settings.exocad_username || 'pm@geomedi.co.jp';
+    const username = settings.exocad_username;
+    if (!username) throw new Error('Exocad 사용자 이름이 설정되지 않았습니다.');
     const emailInput = page.locator(
       'input[type="email"], input[type="text"][name="username"], input[type="text"][name="email"], ' +
       'input[name="username"], input[name="email"], input[name="identifier"], ' +
@@ -169,7 +171,8 @@ export class CancelService {
     }
 
     // ── Step 2: 비밀번호 입력 ────────────────────────────────────────────────
-    const password = settings.exocad_password || 'Geomedi2012!';
+    const password = settings.exocad_password;
+    if (!password) throw new Error('Exocad 비밀번호가 설정되지 않았습니다.');
     const passwordInput = page.locator(
       'input[type="password"]'
     ).first();
@@ -616,7 +619,7 @@ export class CancelService {
   // - 한 번의 로그인으로 여러 시리얼을 순차 처리 (세션 재사용)
   // ============================================================
   async processExpiredSerials(): Promise<CancelResult[]> {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayDateString();
     const expiringSerials = serialService.getExpiringSerials(today);
     const results: CancelResult[] = [];
 
@@ -698,6 +701,7 @@ export class CancelService {
     const settings = getSettings();
 
     const daysBefore = settings.auto_cancel_days_before ?? 1;
+    const today = getTodayDateString();
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
     const targetDateStr = targetDate.toISOString().slice(0, 10);
