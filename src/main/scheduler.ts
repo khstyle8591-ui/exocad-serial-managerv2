@@ -34,6 +34,10 @@ function timeToCron(timeStr: string): string {
 
   if (isPM && h < 12) h += 12;
   else if (isAM && h === 12) h = 0;
+  else if (!isAM && !isPM && h > 0 && h <= 6) {
+    // 24시간제 입력이 안된 경우 (1~6시 입력 시 13~18시로 간주)
+    h += 12;
+  }
 
   // 0-23 범위 보장
   h = h % 24;
@@ -76,24 +80,28 @@ export function startScheduler(): void {
   // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 요청 없으면)
   startPreExpiryTask();
 
-  // 4. 매일 23:59에 일일 리포트 전송
-  dailyReportTask = cron.schedule('59 23 * * *', async () => {
-    logger.info('일일 리포트 생성 시작');
+  // 4. 매일 아침 10:00에 전일 작업 일일 리포트 전송
+  dailyReportTask = cron.schedule('0 10 * * *', async () => {
+    logger.info('일일 리포트 생성 시작 (어제 데이터 기준)');
     try {
-      const todayLogs = serialService.getTodayLogs();
-      const today = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const targetDateStr = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      
+      const yesterdayLogs = serialService.getLogsForDate(targetDateStr);
 
       const report: DailyReport = {
-        date: today,
-        new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-        renewals: todayLogs.filter(l => l.action === 'renewed').length,
-        cancellations: todayLogs.filter(l => l.action === 'cancelled').length,
+        date: targetDateStr,
+        new_registrations: yesterdayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
+        renewals: yesterdayLogs.filter(l => l.action === 'renewed').length,
+        cancellations: yesterdayLogs.filter(l => l.action === 'cancelled').length,
         failed_cancellations: dailyCancelResults.filter(r => !r.success),
-        details: todayLogs,
+        details: yesterdayLogs,
       };
 
       await notificationService.sendDailyReport(report);
-      dailyCancelResults = []; // 리셋
+      // 리포트 발송 후 여전히 실패한 건은 남겨두거나 비워야 함. 여기서는 아침 리포트 이후 초기화
+      dailyCancelResults = dailyCancelResults.filter(r => !r.success); // 실패건 목록 리셋
       logger.info('일일 리포트 전송 완료');
     } catch (err: any) {
       logger.error(`일일 리포트 오류: ${err.message}`);
@@ -136,10 +144,10 @@ export function startScheduler(): void {
 
       // 오늘 cancel 예정 시리얼 (만료 N일 전)
       const daysBefore = settings.auto_cancel_days_before ?? 1;
-      const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() + daysBefore);
-      const targetDateStr = targetDate.toISOString().slice(0, 10);
-      const cancelCandidates = serialService.getExpiringSerialsOnDate(targetDateStr);
+      const cancelTargetDate = new Date();
+      cancelTargetDate.setDate(cancelTargetDate.getDate() + daysBefore);
+      const cancelTargetDateStr = cancelTargetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+      const cancelCandidates = serialService.getExpiringSerialsOnDate(cancelTargetDateStr);
       const cancelTargets = cancelCandidates.map(s => ({
         serial_number: s.serial_number,
         customer_name: s.customer_name,
@@ -164,7 +172,11 @@ export function startScheduler(): void {
       }));
 
       // 전일 작업 요약
-      const yesterdayLogs = serialService.getTodayLogs(); // 실제로는 오늘 날짜의 로그인데, 아침에 전송하므로 전일 로그 대용
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayDateStr = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      const yesterdayLogs = serialService.getLogsForDate(yesterdayDateStr);
+      
       const yesterdayStats = {
         registered: yesterdayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
         renewed: yesterdayLogs.filter(l => l.action === 'renewed').length,

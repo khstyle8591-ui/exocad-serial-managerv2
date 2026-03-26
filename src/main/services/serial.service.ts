@@ -306,9 +306,14 @@ export class SerialService {
   getTodayLogs(): ActivityLog[] {
     const db = getDb();
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    return this.getLogsForDate(today);
+  }
+
+  getLogsForDate(dateStr: string): ActivityLog[] {
+    const db = getDb();
     return db.prepare(
       "SELECT * FROM activity_logs WHERE date(created_at) = ? ORDER BY created_at DESC"
-    ).all(today) as ActivityLog[];
+    ).all(dateStr) as ActivityLog[];
   }
 
   getStats(): { total: number; active: number; cancelled: number; expired: number; notActivated: number; expiringThisMonth: number } {
