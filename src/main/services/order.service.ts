@@ -162,7 +162,7 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
           customer_phone: order.customer_phone,
           customer_manager: order.customer_manager,
           purchase_date: order.purchase_date || today,
-          expiry_date: order.expiry_date || oneYearLater.toISOString().slice(0, 10),
+          expiry_date: order.expiry_date || (targetStatus === 'active' ? oneYearLater.toISOString().slice(0, 10) : ''),
           engine_build: order.engine_build,
           version: order.version,
           notes: order.notes,

@@ -314,9 +314,6 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
   const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }));
 
   const handleApprove = () => {
-    if (mode === 'register' && !form.expiry_date && form.order_type !== 'addon') {
-      alert(t(lang, 'orders_required_expiry')); return;
-    }
     onSave(form);
   };
 
@@ -356,7 +353,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
               <input type="date" value={form.purchase_date} onChange={e => set('purchase_date', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>{t(lang, 'label_expiry_date')} {mode === 'update' ? <span style={{fontSize: 10, fontWeight: 'normal'}}>(수정안함)</span> : <span style={{ color: '#ef4444' }}>*</span>}</label>
+              <label>{t(lang, 'label_expiry_date')} {mode === 'update' && <span style={{fontSize: 10, fontWeight: 'normal'}}>(수정안함)</span>}</label>
               <input type="date" value={form.expiry_date} onChange={e => set('expiry_date', e.target.value)} />
             </div>
           </div>
