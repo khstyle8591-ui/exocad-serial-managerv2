@@ -137,12 +137,13 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
-export function approvePendingOrder(id: number): { success: boolean; error?: string } {
+export async function approvePendingOrder(id: number, options?: { serial_status?: string }): Promise<{ success: boolean; error?: string }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
 
   try {
+    const targetStatus = (options?.serial_status as any) || 'active';
     const today = new Date().toISOString().slice(0, 10);
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -175,10 +176,44 @@ export function approvePendingOrder(id: number): { success: boolean; error?: str
     }
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
-    logger.info(`주문 승인 완료: pending_order #${id} (${order.serial_number})`);
     return { success: true };
   } catch (err: any) {
-    logger.error(`주문 승인 오류: ${err.message}`);
+    logger.error(`승인 오류: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function updateDataFromPendingOrder(id: number, form: Partial<PendingOrder>): Promise<{ success: boolean; data?: any; error?: string }> {
+  const db = getDb();
+  const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
+  if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
+
+  try {
+    const targetSerialName = form.serial_number || order.serial_number;
+    const existing = serialService.getBySerialNumber(targetSerialName);
+    if (!existing) return { success: false, error: `DB에 시리얼 ${targetSerialName}이 존재하지 않습니다.` };
+
+    const updates: any = {};
+    const fields = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'customer_manager', 'purchase_date', 'version', 'notes'];
+    fields.forEach(f => {
+      if ((form as any)[f]) updates[f] = (form as any)[f];
+    });
+
+    if (form.serial_status) updates.status = form.serial_status;
+    if (form.serial_status === 'broken') {
+      updates.expiry_date = '';
+    } else if (form.expiry_date) {
+      updates.expiry_date = form.expiry_date;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      serialService.update(existing.id, updates);
+    }
+
+    db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
+    return { success: true, data: serialService.getBySerialNumber(targetSerialName) };
+  } catch (err: any) {
+    logger.error(`기존 데이터 업데이트 오류: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -523,7 +558,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
             d.setFullYear(d.getFullYear() + 1);
             newExpiry = d.toISOString().slice(0, 10);
           } else {
-            const d = new Date(existing.expiry_date);
+            const d = new Date(existing.expiry_date || '');
             d.setFullYear(d.getFullYear() + 1);
             newExpiry = d.toISOString().slice(0, 10);
           }
