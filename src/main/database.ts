@@ -38,7 +38,7 @@ function createTables(): void {
       customer_manager TEXT NOT NULL DEFAULT '',
       purchase_date TEXT,
       expiry_date TEXT,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired', 'not-activated')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired', 'not-activated', 'broken')),
       engine_build TEXT NOT NULL DEFAULT '',
       version TEXT NOT NULL DEFAULT '',
       add_ons TEXT NOT NULL DEFAULT '[]',
@@ -177,6 +177,44 @@ function migrateDatabase(): void {
       `);
     })();
     db.pragma('foreign_keys = ON');
+  }
+
+  // 'broken' status CHECK constraint 마이그레이션
+  const schemaRow = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='serials'").get() as { sql: string } | undefined;
+  if (schemaRow && !schemaRow.sql.includes("'broken'")) {
+    console.log("Migrating serials table to add 'broken' status...");
+    db.pragma('foreign_keys = OFF');
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE serials_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          serial_number TEXT UNIQUE NOT NULL,
+          customer_name TEXT NOT NULL DEFAULT '',
+          customer_email TEXT NOT NULL DEFAULT '',
+          customer_address TEXT NOT NULL DEFAULT '',
+          customer_phone TEXT NOT NULL DEFAULT '',
+          customer_manager TEXT NOT NULL DEFAULT '',
+          purchase_date TEXT,
+          expiry_date TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled', 'expired', 'not-activated', 'broken')),
+          engine_build TEXT NOT NULL DEFAULT '',
+          version TEXT NOT NULL DEFAULT '',
+          add_ons TEXT NOT NULL DEFAULT '[]',
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        INSERT INTO serials_new (id, serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at)
+        SELECT id, serial_number, customer_name, customer_email, customer_address, customer_phone, customer_manager, purchase_date, expiry_date, status, engine_build, version, add_ons, notes, created_at, updated_at FROM serials;
+        DROP TABLE serials;
+        ALTER TABLE serials_new RENAME TO serials;
+        CREATE INDEX IF NOT EXISTS idx_serials_expiry ON serials(expiry_date);
+        CREATE INDEX IF NOT EXISTS idx_serials_status ON serials(status);
+        CREATE INDEX IF NOT EXISTS idx_serials_serial_number ON serials(serial_number);
+      `);
+    })();
+    db.pragma('foreign_keys = ON');
+    console.log("'broken' status migration completed.");
   }
 }
 

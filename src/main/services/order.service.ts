@@ -134,7 +134,7 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
   if (fields.length === 0) return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 
   values.push(id);
-  db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(values);
+  db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
@@ -152,8 +152,21 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
     if (order.order_type === 'new') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
-        // 이미 존재 → 갱신
+        // 이미 존재 → 갱신 + 폼에서 수정된 고객 정보도 함께 업데이트
         serialService.renewSerial(existing.id, 'manual');
+        const customerUpdates: any = {};
+        if (order.customer_name) customerUpdates.customer_name = order.customer_name;
+        if (order.customer_email) customerUpdates.customer_email = order.customer_email;
+        if (order.customer_phone) customerUpdates.customer_phone = order.customer_phone;
+        if (order.customer_address) customerUpdates.customer_address = order.customer_address;
+        if (order.customer_manager) customerUpdates.customer_manager = order.customer_manager;
+        if (order.version) customerUpdates.version = order.version;
+        if (order.notes) customerUpdates.notes = order.notes;
+        if (order.purchase_date) customerUpdates.purchase_date = order.purchase_date;
+        if (order.expiry_date) customerUpdates.expiry_date = order.expiry_date;
+        if (Object.keys(customerUpdates).length > 0) {
+          serialService.update(existing.id, customerUpdates);
+        }
       } else {
         const input: SerialInput = {
           serial_number: order.serial_number || `IMPORT-${Date.now()}`,
@@ -167,6 +180,7 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
           engine_build: order.engine_build,
           version: order.version,
           notes: order.notes,
+          status: targetStatus,
         };
         serialService.create(input);
       }
@@ -174,6 +188,18 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
       const serial = serialService.getBySerialNumber(order.serial_number);
       if (!serial) return { success: false, error: `시리얼 ${order.serial_number}을 찾을 수 없습니다.` };
       serialService.renewSerial(serial.id, 'manual');
+    } else if (order.order_type === 'addon') {
+      // addon: serial DB에 add_ons 추가
+      const serial = serialService.getBySerialNumber(order.serial_number);
+      if (serial) {
+        try {
+          const rawObj = JSON.parse(order.raw_data || '{}');
+          const addOns: Array<{ name: string; added_date: string }> = rawObj._add_ons || [];
+          for (const addon of addOns) {
+            serialService.addAddon(serial.id, addon);
+          }
+        } catch { /* raw_data 파싱 실패 시 무시 */ }
+      }
     }
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
