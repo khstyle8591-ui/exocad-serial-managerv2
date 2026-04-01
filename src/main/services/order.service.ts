@@ -125,15 +125,16 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
   ] as const;
 
   for (const key of allowed) {
+    // undefined인 경우만 제외 (빈 문자열 포함 모든 값 허용)
     if (data[key] !== undefined) {
       fields.push(`${key} = ?`);
-      values.push(data[key]);
+      values.push(data[key] ?? '');
     }
   }
   if (fields.length === 0) return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 
   values.push(id);
-  db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(values);
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
@@ -196,13 +197,16 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
     const updates: any = {};
     const fields = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'customer_manager', 'purchase_date', 'version', 'notes'];
     fields.forEach(f => {
-      if ((form as any)[f]) updates[f] = (form as any)[f];
+      // undefined/null인 경우만 제외 — 빈 문자열도 업데이트 허용
+      if ((form as any)[f] !== undefined && (form as any)[f] !== null) {
+        updates[f] = (form as any)[f];
+      }
     });
 
     if (form.serial_status) updates.status = form.serial_status;
     if (form.serial_status === 'broken') {
       updates.expiry_date = '';
-    } else if (form.expiry_date) {
+    } else if (form.expiry_date !== undefined && form.expiry_date !== null) {
       updates.expiry_date = form.expiry_date;
     }
 
@@ -520,27 +524,32 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         const serial = (row.serial || '').trim();
         const sourceId = `${source.id}::${serial || row._raw?.slice(0, 40) || code}`;
         if (isAlreadyFetched(sourceId)) continue;
-        insertPendingOrder({
-          source_id: sourceId,
-          source_url: source.url,
-          serial_number: serial,
-          customer_name: row.customer || '',
-          customer_email: '',
-          customer_address: '',
-          customer_phone: row.phone || '',
-          customer_manager: '',
-          purchase_date: normalizeDate(row.purchase) || '',
-          expiry_date: normalizeDate(row.expiry) || '',
-          engine_build: '',
-          version: productVal,
-          notes: `자동수집: ${source.name}${row.invoice_no ? ` / 출고번호: ${row.invoice_no}` : ''}${code ? ` / 상품코드: ${code}` : ''}`,
-          order_type: 'new',
-          raw_data: row._raw || '',
-          status: 'pending',
-          product_code: code,
-          flag_duplicate: 0,
-        });
-        found++;
+        try {
+          insertPendingOrder({
+            source_id: sourceId,
+            source_url: source.url,
+            serial_number: serial,
+            customer_name: row.customer || '',
+            customer_email: '',
+            customer_address: '',
+            customer_phone: row.phone || '',
+            customer_manager: '',
+            purchase_date: normalizeDate(row.purchase) || '',
+            expiry_date: normalizeDate(row.expiry) || '',
+            engine_build: '',
+            version: productVal,
+            notes: `자동수집: ${source.name}${row.invoice_no ? ` / 출고번호: ${row.invoice_no}` : ''}${code ? ` / 상품코드: ${code}` : ''}`,
+            order_type: 'new',
+            raw_data: row._raw || '',
+            status: 'pending',
+            product_code: code,
+            flag_duplicate: 0,
+          });
+          found++;
+        } catch (insertErr: any) {
+          logger.error(`[폴링] DB 저장 실패 (null group) serial=${serial} source_id=${sourceId}: ${insertErr.message}`);
+          errors.push(`DB 저장 실패: ${insertErr.message}`);
+        }
         continue;
       }
 
@@ -698,8 +707,13 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         pendingData.raw_data = JSON.stringify(rawObj);
       } catch { /* ignore */ }
 
-      insertPendingOrder(pendingData);
-      found++;
+      try {
+        insertPendingOrder(pendingData);
+        found++;
+      } catch (insertErr: any) {
+        logger.error(`[폴링] DB 저장 실패 (group B/C) serial=${serial} source_id=${sourceId}: ${insertErr.message}`);
+        errors.push(`DB 저장 실패 (${serial}): ${insertErr.message}`);
+      }
     }
 
     // standalone (serial 없는 경우) — 상품코드만 pending으로 남김
@@ -707,33 +721,37 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       const sourceId = `${source.id}::${row._raw?.slice(0, 40) || code}`;
       if (isAlreadyFetched(sourceId)) continue;
 
-      const filterKeyword = (source.product_filter || '').trim().toLowerCase();
-      if (filterKeyword && !(row.product || '').toLowerCase().includes(filterKeyword)) continue;
+      const standaloneFilterKeyword = (source.product_filter || '').trim().toLowerCase();
+      if (standaloneFilterKeyword && !(row.product || '').toLowerCase().includes(standaloneFilterKeyword)) continue;
 
-      insertPendingOrder({
-        source_id: sourceId,
-        source_url: source.url,
-        serial_number: '',
-        customer_name: row.customer || '',
-        customer_email: '',
-        customer_address: '',
-        customer_phone: row.phone || '',
-        customer_manager: '',
-        purchase_date: normalizeDate(row.purchase) || '',
-        expiry_date: normalizeDate(row.expiry) || '',
-        engine_build: '',
-        version: row.product || '',
-        notes: `자동수집: ${source.name}`,
-        order_type: group === 'main' ? 'new' : 'addon',
-        raw_data: row._raw || '',
-        status: 'pending',
-        product_code: code,
-        flag_duplicate: 0,
-      });
-      found++;
+      try {
+        insertPendingOrder({
+          source_id: sourceId,
+          source_url: source.url,
+          serial_number: '',
+          customer_name: row.customer || '',
+          customer_email: '',
+          customer_address: '',
+          customer_phone: row.phone || '',
+          customer_manager: '',
+          purchase_date: normalizeDate(row.purchase) || '',
+          expiry_date: normalizeDate(row.expiry) || '',
+          engine_build: '',
+          version: row.product || '',
+          notes: `자동수집: ${source.name}`,
+          order_type: group === 'main' ? 'new' : 'addon',
+          raw_data: row._raw || '',
+          status: 'pending',
+          product_code: code,
+          flag_duplicate: 0,
+        });
+        found++;
+      } catch (insertErr: any) {
+        logger.error(`[폴링] DB 저장 실패 (standalone) code=${code} source_id=${sourceId}: ${insertErr.message}`);
+        errors.push(`DB 저장 실패 (standalone): ${insertErr.message}`);
+      }
     }
 
-    found++;
     logger.info(`[Crawling] 종료: ${source.name} (수집: ${found}건, 에러: ${errors.length}건)`);
   } catch (err: any) {
     const msg = `[Crawling] ${source.name} 오류: ${err.message}`;
