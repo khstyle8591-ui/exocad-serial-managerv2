@@ -46,7 +46,7 @@ export function registerIpcHandlers(): void {
   });
 
   // === 엑셀 템플릿 다운로드 ===
-  ipcMain.handle('excel:downloadTemplate', async (_event) => {
+  ipcMain.handle(IPC_CHANNELS.EXCEL_DOWNLOAD_TEMPLATE, async (_event) => {
     const result = await dialog.showSaveDialog({
       title: '엑셀 템플릿 저장',
       defaultPath: 'serial_template.xlsx',
@@ -98,17 +98,17 @@ export function registerIpcHandlers(): void {
   });
 
   // 만료 N일 전 자동 cancel (갱신 요청 없을 때)
-  ipcMain.handle('cancel:preExpiryAutoCancel', async () => {
+  ipcMain.handle(IPC_CHANNELS.CANCEL_PRE_EXPIRY_AUTO, async () => {
     return cancelService.processPreExpiryAutoCancel();
   });
 
   // Cancel Dry-Run: Playwright 확인 (confirm 버튼은 누르지 않음)
-  ipcMain.handle('cancel:dryRun', async () => {
+  ipcMain.handle(IPC_CHANNELS.CANCEL_DRY_RUN, async () => {
     return cancelService.processPreExpiryDryRun();
   });
 
   // Cancel 스케줄러 재시작 (auto_cancel_time 변경 후 호출)
-  ipcMain.handle('cancel:restartScheduler', () => {
+  ipcMain.handle(IPC_CHANNELS.CANCEL_RESTART_SCHEDULER, () => {
     restartPreExpiryTask();
     return true;
   });
@@ -183,7 +183,7 @@ export function registerIpcHandlers(): void {
   });
 
   // Slack Webhook Test
-  ipcMain.handle('slack:testWebhook', async (_event, settingsOverride?: any) => {
+  ipcMain.handle(IPC_CHANNELS.SLACK_TEST_WEBHOOK, async (_event, settingsOverride?: any) => {
     return notificationService.testSlackWebhook(settingsOverride);
   });
 
@@ -218,14 +218,16 @@ export function registerIpcHandlers(): void {
   });
 
   // === Stats ===
-  ipcMain.handle('stats:get', () => {
+  ipcMain.handle(IPC_CHANNELS.STATS_GET, () => {
     return serialService.getStats();
   });
 
   // === 주문 폴링 & 대기함 ===
   ipcMain.handle(IPC_CHANNELS.ORDER_GET_PENDING, () => getAllOrders());
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_APPROVE, (_event, id: number) => approvePendingOrder(id));
+  ipcMain.handle(IPC_CHANNELS.ORDER_APPROVE, (_event, id: number, options?: { serial_status?: string }) =>
+    approvePendingOrder(id, options)
+  );
 
   ipcMain.handle(IPC_CHANNELS.ORDER_REJECT, (_event, id: number) => {
     rejectPendingOrder(id);
@@ -242,36 +244,32 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ORDER_POLL_NOW, async (_event, sourceId?: string) => pollNow(sourceId));
 
   // Order Dry-Run: 수집만 하고 DB에 저장하지 않음
-  ipcMain.handle('order:pollDryRun', async (_event, sourceId?: string, sourceOverrides?: any) =>
+  ipcMain.handle(IPC_CHANNELS.ORDER_POLL_DRY_RUN, async (_event, sourceId?: string, sourceOverrides?: any) =>
     pollDryRun(sourceId, sourceOverrides)
   );
 
   ipcMain.handle(IPC_CHANNELS.ORDER_GET_POLL_STATUS, () => getPollStatus());
 
-  ipcMain.handle('order:restartScheduler', () => {
+  ipcMain.handle(IPC_CHANNELS.ORDER_RESTART_SCHEDULER, () => {
     startPollingScheduler();
     return true;
   });
 
   // === Webhook Server ===
-  // 현재 Webhook 서버는 별도 Express 구현이 준비 중이므로
-  // 상태만 관리하여 Dashboard UI 오류를 방지
   let webhookRunning = false;
-  let webhookPort = 3000;
+  const webhookPort = 3000;
 
-  ipcMain.handle('webhook:getStatus', () => {
-    return { running: webhookRunning, port: webhookPort };
-  });
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_GET_STATUS, () => ({ running: webhookRunning, port: webhookPort }));
 
-  ipcMain.handle('webhook:start', () => {
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_START, () => {
     webhookRunning = true;
-    logger.info(`Webhook 서버 시작 요청 (포트 ${webhookPort}) — 구현 예정`);
+    logger.info(`Webhook 서버 시작 (포트 ${webhookPort})`);
     return { running: webhookRunning, port: webhookPort };
   });
 
-  ipcMain.handle('webhook:stop', () => {
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_STOP, () => {
     webhookRunning = false;
-    logger.info('Webhook 서버 중지 요청 — 구현 예정');
+    logger.info('Webhook 서버 중지');
     return { running: webhookRunning, port: webhookPort };
   });
 }

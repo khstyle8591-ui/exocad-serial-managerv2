@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Vite Renderer",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:renderer"],
+      "port": 5173
+    },
+    {
+      "name": "TypeScript Watch (Main)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:main"]
+    },
+    {
+      "name": "Electron App",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:electron"]
+    },
+    {
+      "name": "Express Server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/main/server.js"],
+      "port": 80
+    }
+  ]
+}

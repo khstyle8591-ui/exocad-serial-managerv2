@@ -17,6 +17,7 @@ import ordersRouter from '../server/routes/orders';
 import cancelRouter from '../server/routes/cancel';
 import logsRouter from '../server/routes/logs';
 import reportsRouter from '../server/routes/reports';
+import webhookRouter from '../server/routes/webhook';
 
 // ── 초기화 ───────────────────────────────────────────────────────────────────
 logger.init();
@@ -41,6 +42,7 @@ app.use('/api/orders', ordersRouter);
 app.use('/api/cancel', cancelRouter);
 app.use('/api/logs', logsRouter);
 app.use('/api/reports', reportsRouter);
+app.use('/api/webhook', webhookRouter);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

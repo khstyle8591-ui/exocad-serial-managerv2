@@ -87,10 +87,10 @@ export const api = {
     getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
     getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
 
-    // ── Webhook (stub) ────────────────────────────────────────────────────────
-    getWebhookStatus: () => Promise.resolve({ running: false, port: 3000 }),
-    startWebhook: () => Promise.resolve({ running: false, port: 3000 }),
-    stopWebhook: () => Promise.resolve({ running: false, port: 3000 }),
+    // ── Webhook ───────────────────────────────────────────────────────────────
+    getWebhookStatus: () => get<{ running: boolean; port: number }>('/webhook/status'),
+    startWebhook: () => post<{ running: boolean; port: number }>('/webhook/start'),
+    stopWebhook: () => post<{ running: boolean; port: number }>('/webhook/stop'),
 };
 
 export type Api = typeof api;

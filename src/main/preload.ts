@@ -42,12 +42,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 주문 폴링 & 대기함
   getOrders: () => ipcRenderer.invoke('order:getPending'),
-  approveOrder: (id: number) => ipcRenderer.invoke('order:approve', id),
+  approveOrder: (id: number, options?: any) => ipcRenderer.invoke('order:approve', id, options),
   rejectOrder: (id: number) => ipcRenderer.invoke('order:reject', id),
   updateOrder: (id: number, data: any) => ipcRenderer.invoke('order:update', id, data),
   deleteOrder: (id: number) => ipcRenderer.invoke('order:delete', id),
   pollNow: (sourceId?: string) => ipcRenderer.invoke('order:pollNow', sourceId),
-  pollDryRun: (sourceId?: string) => ipcRenderer.invoke('order:pollDryRun', sourceId),
+  pollDryRun: (sourceId?: string, sourceOverrides?: any) => ipcRenderer.invoke('order:pollDryRun', sourceId, sourceOverrides),
   getPollStatus: () => ipcRenderer.invoke('order:getPollStatus'),
   restartScheduler: () => ipcRenderer.invoke('order:restartScheduler'),
 

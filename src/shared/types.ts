@@ -320,9 +320,15 @@ export const IPC_CHANNELS = {
   SERIAL_ADD_ADDON: 'serial:addAddon',
   SERIAL_BULK_IMPORT: 'serial:bulkImport',
 
+  // Excel
+  EXCEL_DOWNLOAD_TEMPLATE: 'excel:downloadTemplate',
+
   // Cancel
   CANCEL_SUBSCRIPTION: 'cancel:subscription',
   CANCEL_CHECK_EXPIRING: 'cancel:checkExpiring',
+  CANCEL_PRE_EXPIRY_AUTO: 'cancel:preExpiryAutoCancel',
+  CANCEL_DRY_RUN: 'cancel:dryRun',
+  CANCEL_RESTART_SCHEDULER: 'cancel:restartScheduler',
 
   // Renewal
   RENEWAL_CHECK_EMAILS: 'renewal:checkEmails',
@@ -330,10 +336,17 @@ export const IPC_CHANNELS = {
   RENEWAL_DRY_RUN: 'renewal:dryRun',
   RENEWAL_TEST_CONNECTION: 'renewal:testConnection',
 
+  // Reports
   REPORT_DAILY: 'report:daily',
   REPORT_MONTHLY_EXPIRY: 'report:monthlyExpiry',
   REPORT_SEND: 'report:send',
   SMTP_TEST_EMAIL: 'smtp:testEmail',
+
+  // Slack
+  SLACK_TEST_WEBHOOK: 'slack:testWebhook',
+
+  // Stats
+  STATS_GET: 'stats:get',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -351,4 +364,11 @@ export const IPC_CHANNELS = {
   ORDER_DELETE: 'order:delete',
   ORDER_POLL_NOW: 'order:pollNow',
   ORDER_GET_POLL_STATUS: 'order:getPollStatus',
+  ORDER_POLL_DRY_RUN: 'order:pollDryRun',
+  ORDER_RESTART_SCHEDULER: 'order:restartScheduler',
+
+  // Webhook
+  WEBHOOK_GET_STATUS: 'webhook:getStatus',
+  WEBHOOK_START: 'webhook:start',
+  WEBHOOK_STOP: 'webhook:stop',
 } as const;

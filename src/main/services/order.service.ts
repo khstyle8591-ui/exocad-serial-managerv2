@@ -261,7 +261,7 @@ export function deletePendingOrder(id: number): void {
 // ────────────────────────────────────────────────────────────
 // source_id 중복 체크
 // ────────────────────────────────────────────────────────────
-function isAlreadyFetched(sourceId: string): boolean {
+export function isAlreadyFetched(sourceId: string): boolean {
   const db = getDb();
   const row = db.prepare(
     'SELECT COUNT(*) as cnt FROM pending_orders WHERE source_id = ?'
@@ -269,7 +269,7 @@ function isAlreadyFetched(sourceId: string): boolean {
   return row.cnt > 0;
 }
 
-function insertPendingOrder(
+export function insertPendingOrder(
   data: Omit<PendingOrder, 'id' | 'created_at'>,
 ): void {
   const db = getDb();

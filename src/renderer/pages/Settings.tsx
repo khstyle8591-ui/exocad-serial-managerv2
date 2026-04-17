@@ -385,8 +385,8 @@ export default function Settings() {
       {/* ─── 자동 Cancel 설정 ──────────────────────────────────────────────── */}
       <div className="settings-section">
         <SectionHeader title={t(lang, 'section_auto_cancel')} onManual={() => setManualOpen('autoCancel')} />
-        <div className="form-group">
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label className="checkbox-row">
             <input
               type="checkbox"
               checked={autoCancelEnabled}
@@ -559,12 +559,12 @@ export default function Settings() {
                 <input key={`pop3pw-${loadKey}`} type="password" defaultValue={formVals.current.pop3_password || ''} onChange={e => setVal('pop3_password', e.target.value)} />
               </div>
             </div>
-            <div className="form-group" style={{ display: 'flex', gap: 20 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <div className="form-group" style={{ display: 'flex', gap: 24, marginBottom: 8 }}>
+              <label className="checkbox-row">
                 <input type="checkbox" checked={pop3Tls} onChange={e => setPop3Tls(e.target.checked)} />
                 {t(lang, 'label_tls')}
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <label className="checkbox-row">
                 <input type="checkbox" checked={pop3KeepCopy} onChange={e => setPop3KeepCopy(e.target.checked)} />
                 {t(lang, 'label_pop3_keep_copy')}
               </label>
@@ -594,10 +594,10 @@ export default function Settings() {
                 <input key={`imappw-${loadKey}`} type="password" defaultValue={formVals.current.imap_password || ''} onChange={e => setVal('imap_password', e.target.value)} />
               </div>
             </div>
-            <div className="form-group">
-              <label>
+            <div className="form-group" style={{ marginBottom: 8 }}>
+              <label className="checkbox-row">
                 <input type="checkbox" checked={imapTls} onChange={e => setImapTls(e.target.checked)} />
-                {' '}{t(lang, 'label_tls')}
+                {t(lang, 'label_tls')}
               </label>
             </div>
             <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'imap_note')}</small>
@@ -673,8 +673,8 @@ export default function Settings() {
               ⚠️ 이 키워드 중 하나라도 메일 제목/본문에 포함되면, 나머지 조건과 무관하게 <strong>완전히 제외</strong>됩니다. (갱신 및 관련 메일 알림 모두 건너뜀)
             </small>
           </div>
-          <div className="form-group">
-            <label style={{ fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 6 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="checkbox-row" style={{ fontWeight: 600 }}>
               <input
                 type="checkbox"
                 checked={requireSerial}
@@ -682,7 +682,7 @@ export default function Settings() {
               />
               검색 필터: 메일 본문 내 시리얼 번호(ex: xxxxx-xxxx) 필수 여부
             </label>
-            <small style={{ color: '#6b7280', fontSize: 12, marginLeft: 22, display: 'block' }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
+            <small style={{ color: '#6b7280', fontSize: 12, marginLeft: 22, display: 'block', marginTop: 4 }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
           </div>
         </div>
 
@@ -857,10 +857,10 @@ export default function Settings() {
           <label>{t(lang, 'label_report_email')}</label>
           <input key={`rmail-${loadKey}`} defaultValue={formVals.current.report_email_to || ''} onChange={e => setVal('report_email_to', e.target.value)} placeholder="admin@example.com" />
         </div>
-        <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <label style={{ display: 'flex', alignItems: 'center', margin: 0 }}>
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <label className="checkbox-row">
             <input type="checkbox" checked={smtpTls} onChange={e => setSmtpTls(e.target.checked)} />
-            {' '}{t(lang, 'label_tls')}
+            {t(lang, 'label_tls')}
           </label>
         </div>
 
@@ -913,7 +913,7 @@ export default function Settings() {
         <SectionHeader title={t(lang, 'section_slack')} onManual={() => setManualOpen('slack')} />
         
         <div className="form-group" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0, fontWeight: 700 }}>
+          <label className="checkbox-row" style={{ fontWeight: 700 }}>
             <input
               type="checkbox"
               checked={slackEnabled}
@@ -1094,7 +1094,7 @@ export default function Settings() {
             <input key={`epw-${loadKey}`} type="password" defaultValue={formVals.current.exocad_password || ''} onChange={e => setVal('exocad_password', e.target.value)} />
           </div>
         </div>
-        <div className="form-row">
+        <div className="form-row-3">
           <div className="form-group">
             <label>{t(lang, 'label_cancel_btn_text')}</label>
             <input key={`cbtn-${loadKey}`} defaultValue={formVals.current.cancel_button_text || ''} onChange={e => setVal('cancel_button_text', e.target.value)} placeholder="opt out upgrade" />

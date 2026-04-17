@@ -216,6 +216,16 @@ table tr:hover {
   font-size: 14px;
 }
 
+/* Checkboxes and radios must not inherit full-width — resets the above rule */
+.form-group input[type="checkbox"],
+.form-group input[type="radio"] {
+  width: auto;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+}
+
 .form-group textarea {
   min-height: 80px;
   resize: vertical;
@@ -308,6 +318,24 @@ table tr:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.form-row-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+/* Checkbox/radio label rows — no bottom margin between label and sibling small text */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 0;
 }
 
 /* Addon tags */

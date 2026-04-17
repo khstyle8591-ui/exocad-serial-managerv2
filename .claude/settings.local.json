@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -lah /c/Users/pf-5y/OneDrive/Desktop/Project/exocad-manager/.env*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(grep -rn \"disabled\\\\|//\" src/renderer/pages/ --include=\"*.tsx\")"
+    ]
+  }
+}

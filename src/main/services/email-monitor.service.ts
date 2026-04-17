@@ -7,6 +7,7 @@ import { logger } from '../utils/logger';
 import { getTimestampDaysAgo } from '../utils/date-utils';
 import { notificationService } from './notification.service';
 import type { RenewalDryRunResult, RenewalDryRunEmail, MailConnectionResult } from '../../shared/types';
+import { insertPendingOrder, isAlreadyFetched } from './order.service';
 
 // ── 파싱된 이메일 구조 ────────────────────────────────────────────────────────
 // forward 감지를 위해 수신 관련 헤더를 모두 포함
@@ -501,7 +502,7 @@ export class EmailMonitorService {
     });
   }
 
-  // ─── 공통: 갱신 메일 처리 ────────────────────────────────────────────────────
+  // ─── 공통: 갱신 메일 처리 → 대기 주문으로 등록 ─────────────────────────────
   private async processRenewalEmail(
     email: ParsedEmail,
     errors: string[]
@@ -511,19 +512,43 @@ export class EmailMonitorService {
 
     const serialNumber = this.extractSerialNumber(email);
 
-    if (serialNumber) {
-      const serial = serialService.getBySerialNumber(serialNumber);
-      if (serial) {
-        serialService.renewSerial(serial.id, 'email');
-        logger.info(`갱신 처리: ${serialNumber} (from: ${email.from}${note})`);
-        return 1;
-      } else {
-        errors.push(`시리얼 ${serialNumber}을 찾을 수 없습니다 (from: ${email.from}${note})`);
-      }
-    } else {
+    if (!serialNumber) {
       errors.push(`갱신 요청 메일에서 시리얼 넘버를 추출할 수 없습니다 (from: ${email.from}${note})`);
+      return 0;
     }
-    return 0;
+
+    const sourceId = `email::${email.from}::${serialNumber}::${email.date}`;
+    if (isAlreadyFetched(sourceId)) {
+      logger.info(`이메일 갱신 중복 스킵: ${serialNumber} (from: ${email.from})`);
+      return 0;
+    }
+
+    const serial = serialService.getBySerialNumber(serialNumber);
+    const notFoundNote = serial ? '' : ' [DB에 시리얼 없음 — 수동 확인 필요]';
+
+    insertPendingOrder({
+      source_id: sourceId,
+      source_url: '',
+      serial_number: serialNumber,
+      customer_name: serial?.customer_name || '',
+      customer_email: email.from,
+      customer_address: serial?.customer_address || '',
+      customer_phone: serial?.customer_phone || '',
+      customer_manager: serial?.customer_manager || '',
+      purchase_date: serial?.purchase_date || '',
+      expiry_date: '',
+      engine_build: serial?.engine_build || '',
+      version: serial?.version || '',
+      notes: `이메일 갱신 요청: ${email.from} / 제목: ${email.subject}${note}${notFoundNote}`,
+      order_type: 'renewal',
+      raw_data: JSON.stringify({ from: email.from, subject: email.subject, date: email.date }),
+      status: 'pending',
+      product_code: '',
+      flag_duplicate: 0,
+    });
+
+    logger.info(`이메일 갱신 요청 → 대기 주문 등록: ${serialNumber} (from: ${email.from}${note}${notFoundNote})`);
+    return 1;
   }
 
   // ─── 이메일 다중 조건 분석 (Product, Action, Serial) ──────────────────────────
