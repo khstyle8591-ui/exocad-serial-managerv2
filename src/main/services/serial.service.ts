@@ -221,10 +221,20 @@ export class SerialService {
 
   hasPendingRenewal(serialId: number): boolean {
     const db = getDb();
+    // Check legacy renewal_requests table
     const row = db.prepare(
       'SELECT COUNT(*) as cnt FROM renewal_requests WHERE serial_id = ? AND processed = 0'
     ).get(serialId) as { cnt: number };
-    return row.cnt > 0;
+    if (row.cnt > 0) return true;
+
+    // Also check pending_orders: email-sourced renewal requests now land here
+    const serial = db.prepare('SELECT serial_number FROM serials WHERE id = ?').get(serialId) as { serial_number: string } | undefined;
+    if (!serial) return false;
+
+    const pendingRow = db.prepare(
+      "SELECT COUNT(*) as cnt FROM pending_orders WHERE serial_number = ? AND order_type = 'renewal' AND status = 'pending'"
+    ).get(serial.serial_number) as { cnt: number };
+    return pendingRow.cnt > 0;
   }
 
   bulkImport(serials: SerialInput[]): { imported: number; errors: string[] } {

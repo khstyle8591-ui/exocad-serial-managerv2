@@ -663,7 +663,8 @@ export class CancelService {
     const daysBefore = settings.auto_cancel_days_before ?? 1;
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
-    const targetDateStr = targetDate.toISOString().slice(0, 10);
+    // toISOString()은 UTC 기준이라 KST 09:00 실행 시 날짜가 어긋남 → KST 기준으로 변환
+    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 
     logger.info(`자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
 
@@ -704,7 +705,7 @@ export class CancelService {
     const today = getTodayDateString();
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
-    const targetDateStr = targetDate.toISOString().slice(0, 10);
+    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 
     logger.info(`[Dry-Run] 자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
 

@@ -35,10 +35,7 @@ function timeToCron(timeStr: string): string {
 
   if (isPM && h < 12) h += 12;
   else if (isAM && h === 12) h = 0;
-  else if (!isAM && !isPM && h > 0 && h <= 6) {
-    // 24시간제 입력이 안된 경우 (1~6시 입력 시 13~18시로 간주)
-    h += 12;
-  }
+  // No special case for 1-6: treat all inputs without AM/PM as 24-hour format
 
   // 0-23 범위 보장
   h = h % 24;
