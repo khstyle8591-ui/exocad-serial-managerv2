@@ -17,28 +17,56 @@ interface WebhookStatus {
   port: number;
 }
 
+// ── Inline SVG icons ────────────────────────────────────────────────────────────
+const AlertIcon = () => (
+  <svg width={13} height={13} viewBox="0 0 16 16" fill="none">
+    <path d="M8 2L14 13H2L8 2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+    <path d="M8 7v3M8 11.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+  </svg>
+);
+
+const RefreshIcon = () => (
+  <svg width={13} height={13} viewBox="0 0 16 16" fill="none">
+    <path d="M13.5 8A5.5 5.5 0 118 2.5a5.5 5.5 0 013.89 1.61L13.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M10 2.5h3.5V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
 export default function Dashboard() {
   const { lang } = useLang();
   const { setPage } = useNav();
-  const [stats, setStats] = useState<Stats>({ total: 0, active: 0, cancelled: 0, expired: 0, notActivated: 0, expiringThisMonth: 0 });
-  const [todayLogs, setTodayLogs] = useState<any[]>([]);
-  const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ running: false, port: 3000 });
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [stats, setStats] = useState<Stats>({
+    total: 0, active: 0, cancelled: 0, expired: 0, notActivated: 0, expiringThisMonth: 0,
+  });
+  const [todayLogs, setTodayLogs]       = useState<any[]>([]);
+  const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ running: false, port: 3000 });
+  const [expiringSerials, setExpiringSerials] = useState<any[]>([]);
+  const [loading, setLoading]           = useState(true);
+
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     try {
-      const [statsData, logs, whStatus] = await Promise.all([
+      const [statsData, logs, whStatus, allSerials] = await Promise.all([
         api.getStats(),
         api.getTodayLogs(),
         api.getWebhookStatus(),
+        api.getSerials(),
       ]);
       setStats(statsData as Stats);
       setTodayLogs(logs as any[]);
       setWebhookStatus(whStatus as WebhookStatus);
+
+      // Serials expiring within 60 days
+      const today = new Date();
+      const soon = (allSerials as any[]).filter(s => {
+        if (s.status !== 'active') return false;
+        const exp  = new Date(s.expiry_date);
+        const diff = (exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+        return diff >= 0 && diff <= 60;
+      }).sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
+      setExpiringSerials(soon);
     } catch (err) {
       console.error('Dashboard load error:', err);
     } finally {
@@ -61,7 +89,7 @@ export default function Dashboard() {
     try {
       const results = await api.checkExpiring() as any[];
       const success = results.filter((r: any) => r.success).length;
-      const failed = results.filter((r: any) => !r.success).length;
+      const failed  = results.filter((r: any) => !r.success).length;
       alert(t(lang, 'dash_cancel_result').replace('{success}', String(success)).replace('{failed}', String(failed)));
       loadData();
     } catch (err: any) {
@@ -80,11 +108,8 @@ export default function Dashboard() {
 
   const handleToggleWebhook = async () => {
     try {
-      if (webhookStatus.running) {
-        await api.stopWebhook();
-      } else {
-        await api.startWebhook();
-      }
+      if (webhookStatus.running) await api.stopWebhook();
+      else await api.startWebhook();
       const whStatus = await api.getWebhookStatus() as WebhookStatus;
       setWebhookStatus(whStatus);
     } catch (err: any) {
@@ -92,96 +117,208 @@ export default function Dashboard() {
     }
   };
 
-  const navigateToSerials = (filter: string) => {
-    setPage('serials', { filter });
-  };
+  if (loading) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>
+        {t(lang, 'loading')}
+      </div>
+    );
+  }
 
-  if (loading) return <div>{t(lang, 'loading')}</div>;
+  const total = stats.total || 1; // avoid division by zero for bar widths
+
+  const statusBreakdown = [
+    { key: 'active',        label: t(lang, 'dash_stat_active'),    count: stats.active,          color: 'var(--green)' },
+    { key: 'cancelled',     label: t(lang, 'dash_stat_cancelled'),  count: stats.cancelled,       color: 'var(--red)' },
+    { key: 'expired',       label: t(lang, 'dash_stat_expired'),    count: stats.expired,         color: 'var(--text3)' },
+    { key: 'not-activated', label: t(lang, 'status_not_activated'), count: stats.notActivated,    color: 'var(--yellow)' },
+  ];
 
   return (
-    <div>
+    <div className="page-wrapper">
+      {/* ── Header ── */}
       <div className="page-header">
-        <h1 className="page-title">Dashboard</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary" onClick={handleCheckEmails}>{t(lang, 'dash_btn_mail_check')}</button>
-          <button className="btn btn-danger" onClick={handleProcessExpiring}>{t(lang, 'dash_btn_expiry_cancel')}</button>
-          <button className="btn btn-secondary" onClick={handleSendDailyReport}>{t(lang, 'dash_btn_send_report')}</button>
+        <div>
+          <div className="page-title">{t(lang, 'nav_dashboard')}</div>
+          <div className="page-subtitle">시리얼 라이선스 현황 개요</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary btn-sm" onClick={loadData}>
+            <RefreshIcon /> 새로고침
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={handleCheckEmails}>{t(lang, 'dash_btn_mail_check')}</button>
+          <button className="btn btn-danger btn-sm"    onClick={handleProcessExpiring}>{t(lang, 'dash_btn_expiry_cancel')}</button>
+          <button className="btn btn-ghost btn-sm"     onClick={handleSendDailyReport}>{t(lang, 'dash_btn_send_report')}</button>
         </div>
       </div>
 
-      {/* Webhook 서버 상태 배지 */}
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* ── Webhook badge ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
         <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 14px',
-          borderRadius: 20,
-          fontSize: 13,
-          fontWeight: 500,
-          background: webhookStatus.running ? '#e6f4ea' : '#f5f5f5',
-          color: webhookStatus.running ? '#1e7e34' : '#888',
-          border: `1px solid ${webhookStatus.running ? '#a8d5b5' : '#ddd'}`,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '5px 12px', borderRadius: 20, fontSize: 12,
+          background: webhookStatus.running ? 'var(--green-dim)' : 'var(--bg4)',
+          color: webhookStatus.running ? 'var(--green)' : 'var(--text3)',
+          border: `1px solid ${webhookStatus.running ? 'rgba(74,222,128,0.3)' : 'var(--border2)'}`,
         }}>
           <span style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: webhookStatus.running ? '#28a745' : '#ccc',
-            display: 'inline-block',
+            width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+            background: webhookStatus.running ? 'var(--green)' : 'var(--text3)',
           }} />
           {t(lang, 'dash_webhook_label')}: {webhookStatus.running
             ? t(lang, 'dash_webhook_running').replace('{port}', String(webhookStatus.port))
             : t(lang, 'dash_webhook_stopped')}
         </div>
         <button
-          className={webhookStatus.running ? 'btn btn-secondary' : 'btn btn-primary'}
-          style={{ fontSize: 12, padding: '4px 12px' }}
+          className={webhookStatus.running ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
           onClick={handleToggleWebhook}
         >
           {webhookStatus.running ? t(lang, 'dash_btn_stop_server') : t(lang, 'dash_btn_start_server')}
         </button>
       </div>
 
+      {/* ── Stat cards ── */}
       <div className="stats-grid">
-        <div className="stat-card blue" onClick={() => navigateToSerials('all')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card total" onClick={() => setPage('serials', { filter: 'all' })}>
           <div className="label">{t(lang, 'dash_stat_total')}</div>
           <div className="value">{stats.total}</div>
+          <div className="sub">{stats.active}개 활성 · {stats.expired}개 만료</div>
         </div>
-        <div className="stat-card green" onClick={() => navigateToSerials('active')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card green" onClick={() => setPage('serials', { filter: 'active' })}>
           <div className="label">{t(lang, 'dash_stat_active')}</div>
           <div className="value">{stats.active}</div>
+          <div className="sub">현재 사용중</div>
         </div>
-        <div className="stat-card red" onClick={() => navigateToSerials('cancelled')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card red" onClick={() => setPage('serials', { filter: 'cancelled' })}>
           <div className="label">{t(lang, 'dash_stat_cancelled')}</div>
           <div className="value">{stats.cancelled}</div>
+          <div className="sub">구독 취소됨</div>
         </div>
-        <div className="stat-card gray" onClick={() => navigateToSerials('expired')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card gray" onClick={() => setPage('serials', { filter: 'expired' })}>
           <div className="label">{t(lang, 'dash_stat_expired')}</div>
           <div className="value">{stats.expired}</div>
+          <div className="sub">갱신 필요</div>
         </div>
-        <div className="stat-card purple" onClick={() => navigateToSerials('not-activated')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card purple" onClick={() => setPage('serials', { filter: 'not-activated' })}>
           <div className="label">{t(lang, 'status_not_activated')}</div>
           <div className="value">{stats.notActivated}</div>
+          <div className="sub">미활성 라이선스</div>
         </div>
-        <div className="stat-card orange" onClick={() => navigateToSerials('expiring')} style={{ cursor: 'pointer' }}>
+        <div className="stat-card orange" onClick={() => setPage('serials', { filter: 'expiring' })}>
           <div className="label">{t(lang, 'dash_stat_expiring')}</div>
           <div className="value">{stats.expiringThisMonth}</div>
+          <div className="sub">이번 달 만료 예정</div>
         </div>
       </div>
 
-      <div className="table-container">
-        <div style={{ padding: '16px', borderBottom: '1px solid #eee' }}>
-          <h3 style={{ fontSize: 16 }}>{t(lang, 'dash_today_activity')}</h3>
+      {/* ── Bottom panels ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {/* Status breakdown */}
+        <div style={{
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '16px 18px',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)', marginBottom: 14 }}>
+            상태별 현황
+          </div>
+          {statusBreakdown.map(item => {
+            const pct = stats.total ? Math.round((item.count / stats.total) * 100) : 0;
+            return (
+              <div key={item.key} style={{ marginBottom: 11 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text)' }}>{item.label}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {item.count}
+                  </span>
+                </div>
+                <div style={{ height: 3, background: 'var(--bg4)', borderRadius: 2 }}>
+                  <div style={{
+                    width: `${pct}%`, height: '100%',
+                    background: item.color, borderRadius: 2,
+                    transition: 'width 0.5s ease',
+                    minWidth: item.count > 0 ? 4 : 0,
+                  }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Expiring soon */}
+        <div style={{
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '16px 18px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+            <span style={{ color: 'var(--yellow)' }}><AlertIcon /></span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>60일 내 만료 예정</span>
+            <span style={{
+              marginLeft: 'auto', fontSize: 11,
+              fontFamily: "'JetBrains Mono', monospace",
+              color: 'var(--yellow)',
+            }}>{expiringSerials.length}</span>
+          </div>
+          {expiringSerials.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text3)', padding: '12px 0' }}>만료 예정 없음</div>
+          ) : (
+            <div style={{ overflow: 'auto', maxHeight: 200 }}>
+              {expiringSerials.map((s: any) => {
+                const days = Math.ceil(
+                  (new Date(s.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                );
+                return (
+                  <div key={s.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 8,
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 11.5,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        color: 'var(--text)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {s.serial_number}
+                      </div>
+                      <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
+                        {s.customer_name}
+                      </div>
+                    </div>
+                    <div style={{
+                      fontSize: 11, flexShrink: 0,
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: days <= 30 ? 'var(--red)' : 'var(--yellow)',
+                    }}>
+                      D-{days}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Today's activity ── */}
+      <div style={{
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+        borderRadius: 10, overflow: 'hidden', marginTop: 12,
+      }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>
+            {t(lang, 'dash_today_activity')}
+          </span>
         </div>
         {todayLogs.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>{t(lang, 'dash_no_activity')}</div>
+          <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+            {t(lang, 'dash_no_activity')}
+          </div>
         ) : (
           todayLogs.map((log: any) => (
             <div key={log.id} className="log-entry">
               <span className="time">{log.created_at}</span>
               <span className={`action-badge action-${log.action}`}>{log.action}</span>
-              <span>{log.details}</span>
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>{log.details}</span>
             </div>
           ))
         )}

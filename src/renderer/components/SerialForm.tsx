@@ -1,246 +1,321 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import type { SerialWithCustomer } from '../../shared/types';
+import CustomerAutocomplete, { type CustomerChoice } from './CustomerAutocomplete';
+import ModuleListEditor from './ModuleListEditor';
 import { useLang } from '../App';
 import { t } from '../i18n';
 
-interface AddOnRow {
-  name: string;
-  added_date: string;
-}
-
 interface Props {
-  serial: any | null;
-  onSave: (input: any) => void;
+  mode: 'create' | 'edit';
+  initial?: SerialWithCustomer;
+  onSaved: (serial: SerialWithCustomer) => void;
   onClose: () => void;
 }
 
-export default function SerialForm({ serial, onSave, onClose }: Props) {
+interface FormState {
+  serial_number: string;
+  purchase_date: string;
+  expiry_date: string;
+  status: string;
+  engine_build: string;
+  version: string;
+  main_product: string;
+  modules: string[];
+  notes: string;
+  renewal_stop_requested: boolean;
+}
+
+interface CustomerFields {
+  email: string;
+  phone: string;
+  address: string;
+  dealer: string;
+  sales_manager: string;
+}
+
+const EMPTY_CUST: CustomerFields = { email: '', phone: '', address: '', dealer: '', sales_manager: '' };
+const STATUSES = ['active', 'not-activated', 'expired', 'cancelled', 'broken'] as const;
+
+export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const { lang } = useLang();
 
-  const [form, setForm] = useState({
-    serial_number:    serial?.serial_number    || '',
-    customer_name:    serial?.customer_name    || '',
-    customer_email:   serial?.customer_email   || '',
-    customer_address: serial?.customer_address || '',
-    customer_phone:   serial?.customer_phone   || '',
-    customer_manager: serial?.customer_manager || '',
-    purchase_date:    serial?.purchase_date    || new Date().toISOString().slice(0, 10),
-    expiry_date:      serial?.expiry_date      || '',
-    engine_build:     serial?.engine_build     || '',
-    version:          serial?.version          || '',
-    notes:            serial?.notes            || '',
-    status:           serial?.status           || 'active',
-  });
+  const [customer, setCustomer] = useState<CustomerChoice | null>(
+    initial?.customer ? { kind: 'existing', customer: initial.customer } : null
+  );
+  const [custFields, setCustFields] = useState<CustomerFields>(
+    initial?.customer
+      ? {
+          email:         initial.customer.email ?? '',
+          phone:         initial.customer.phone ?? '',
+          address:       initial.customer.address ?? '',
+          dealer:        initial.customer.dealer ?? '',
+          sales_manager: initial.customer.sales_manager ?? '',
+        }
+      : EMPTY_CUST
+  );
 
-  // Add-ons 관리 (등록/수정 폼 내부)
-  const [addOns, setAddOns] = useState<AddOnRow[]>(() => {
+  const [form, setForm] = useState<FormState>({
+    serial_number:          initial?.serial_number ?? '',
+    purchase_date:          initial?.purchase_date?.slice(0, 10) ?? '',
+    expiry_date:            initial?.expiry_date?.slice(0, 10) ?? '',
+    status:                 initial?.status ?? 'not-activated',
+    engine_build:           initial?.engine_build ?? '',
+    version:                initial?.version ?? '',
+    main_product:           initial?.main_product ?? '',
+    modules:                (() => { try { return JSON.parse(initial?.modules ?? '[]'); } catch { return []; } })(),
+    notes:                  initial?.notes ?? '',
+    renewal_stop_requested: (initial?.renewal_stop_requested ?? 0) === 1,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (customer?.kind === 'existing') {
+      const c = customer.customer;
+      setCustFields({
+        email:         c.email ?? '',
+        phone:         c.phone ?? '',
+        address:       c.address ?? '',
+        dealer:        c.dealer ?? '',
+        sales_manager: c.sales_manager ?? '',
+      });
+    } else if (customer?.kind === 'new') {
+      setCustFields(EMPTY_CUST);
+    }
+  }, [customer?.kind === 'existing' ? customer.customer.id : customer?.kind]);
+
+  const setF = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+    setForm(prev => ({ ...prev, [k]: v }));
+
+  const setCF = (k: keyof CustomerFields, v: string) =>
+    setCustFields(prev => ({ ...prev, [k]: v }));
+
+  const submit = async () => {
+    if (!customer) { setError(t(lang, 'err_select_customer')); return; }
+    if (!form.serial_number.trim()) { setError(t(lang, 'err_serial_required')); return; }
+
+    setSaving(true);
+    setError('');
     try {
-      return JSON.parse(serial?.add_ons || '[]');
-    } catch {
-      return [];
+      if (customer.kind === 'existing') {
+        const c = customer.customer;
+        const changed: any = {};
+        if (custFields.email         !== (c.email ?? ''))         changed.email         = custFields.email;
+        if (custFields.phone         !== (c.phone ?? ''))         changed.phone         = custFields.phone;
+        if (custFields.address       !== (c.address ?? ''))       changed.address       = custFields.address;
+        if (custFields.dealer        !== (c.dealer ?? ''))        changed.dealer        = custFields.dealer;
+        if (custFields.sales_manager !== (c.sales_manager ?? '')) changed.sales_manager = custFields.sales_manager;
+        if (Object.keys(changed).length > 0) {
+          await window.electronAPI.updateCustomer(c.id, changed);
+        }
+      }
+
+      const customerPart = customer.kind === 'existing'
+        ? { customer_id: customer.customer.id }
+        : {
+            customer_name:    customer.name,
+            customer_email:   custFields.email,
+            customer_phone:   custFields.phone,
+            customer_address: custFields.address,
+            dealer:           custFields.dealer,
+            customer_manager: custFields.sales_manager,
+          };
+
+      const input = {
+        ...customerPart,
+        serial_number: form.serial_number.trim(),
+        purchase_date: form.purchase_date || undefined,
+        expiry_date:   form.expiry_date   || undefined,
+        status:        form.status as any,
+        engine_build:  form.engine_build,
+        version:       form.version,
+        main_product:  form.main_product,
+        modules:       form.modules,
+        notes:         form.notes,
+      };
+
+      let result: SerialWithCustomer;
+      if (mode === 'create') {
+        result = await window.electronAPI.createSerial(input);
+      } else {
+        result = (await window.electronAPI.updateSerial(initial!.id, input))!;
+      }
+
+      if (mode === 'edit' && initial) {
+        const wasStop = (initial.renewal_stop_requested ?? 0) === 1;
+        if (wasStop !== form.renewal_stop_requested) {
+          await window.electronAPI.setStopRequested(initial.id, form.renewal_stop_requested);
+        }
+      }
+
+      onSaved(result);
+    } catch (e: any) {
+      setError(e?.message ?? t(lang, 'save_fail'));
+    } finally {
+      setSaving(false);
     }
-  });
-  const [newAddonName, setNewAddonName] = useState('');
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const handleAddAddon = () => {
-    const name = newAddonName.trim();
-    if (!name) return;
-    setAddOns([...addOns, { name, added_date: new Date().toISOString().slice(0, 10) }]);
-    setNewAddonName('');
-  };
-
-  const handleRemoveAddon = (idx: number) => {
-    setAddOns(addOns.filter((_, i) => i !== idx));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.serial_number) {
-      alert(t(lang, 'required_fields'));
-      return;
-    }
-    onSave({ ...form, add_ons: addOns });
   };
 
   return (
-    // ★ overlay 클릭해도 닫히지 않도록: onClick={onClose} 제거
-    <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 640, width: '100%' }} onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{serial ? t(lang, 'form_title_edit') : t(lang, 'form_title_new')}</h3>
-          {/* X 버튼으로만 닫기 가능 */}
-          <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
+    <div style={overlay}>
+      <div style={modal}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>
+            {mode === 'create' ? t(lang, 'form_title_new') : t(lang, 'form_title_edit')}
+          </h2>
+          <button onClick={onClose} style={closeBtn}>✕</button>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ overflowY: 'auto', maxHeight: '72vh', padding: '0 4px' }}>
+        {error && <div style={errorBox}>{error}</div>}
 
-          {/* ── 시리얼 정보 ── */}
-          <div className="form-section-title" style={sectionTitleStyle}>{t(lang, 'section_serial_info')}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', maxHeight: 560 }}>
 
-          <div className="form-group">
-            <label>{t(lang, 'label_serial_number')} <span style={{ color: '#ef4444' }}>*</span></label>
-            <input
-              name="serial_number"
-              value={form.serial_number}
-              onChange={handleChange}
-              placeholder="EXO-2024-001"
-              required
-            />
-            {serial && (
-              <div style={{ fontSize: 11, color: '#6366f1', marginTop: 4 }}>
-                💡 {t(lang, 'hint_serial_change_allowed')}
+          <div>
+            <label style={labelStyle}>{t(lang, 'label_customer')} <span style={{ color: '#fc8181' }}>*</span></label>
+            <CustomerAutocomplete value={customer} onChange={setCustomer} />
+          </div>
+
+          {customer && (
+            <div style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {t(lang, 'section_customer_info')}
+                {customer.kind === 'existing' && (
+                  <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)', fontWeight: 400, textTransform: 'none' }}>
+                    (수정 시 고객 DB에 즉시 반영)
+                  </span>
+                )}
               </div>
-            )}
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label>{t(lang, 'label_purchase_date')}</label>
-              <input name="purchase_date" type="date" value={form.purchase_date} onChange={handleChange} />
-            </div>
-            <div className="form-group">
-              <label>{t(lang, 'label_expiry_date')}</label>
-              <input name="expiry_date" type="date" value={form.expiry_date} onChange={handleChange} />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label>{t(lang, 'label_engine_build')}</label>
-              <input name="engine_build" value={form.engine_build} onChange={handleChange} placeholder="4.0.1" />
-            </div>
-            <div className="form-group">
-              <label>{t(lang, 'label_version')}</label>
-              <input name="version" value={form.version} onChange={handleChange} placeholder="24.01" />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label>{t(lang, 'col_status')}</label>
-            <select
-              name="status"
-              value={form.status}
-              onChange={handleChange}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '6px',
-                fontSize: '14px'
-              }}
-            >
-              <option value="active">{t(lang, 'status_active')}</option>
-              <option value="not-activated">{t(lang, 'status_not_activated')}</option>
-              <option value="cancelled">{t(lang, 'status_cancelled')}</option>
-              <option value="expired">{t(lang, 'status_expired')}</option>
-            </select>
-          </div>
-
-          {/* ── 고객 정보 ── */}
-          <div className="form-section-title" style={{ ...sectionTitleStyle, marginTop: 20 }}>{t(lang, 'section_customer_info')}</div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label>{t(lang, 'label_customer_name')}</label>
-              <input name="customer_name" value={form.customer_name} onChange={handleChange} placeholder="홍길동 치과" />
-            </div>
-            <div className="form-group">
-              <label>{t(lang, 'label_manager')}</label>
-              <input name="customer_manager" value={form.customer_manager} onChange={handleChange} placeholder="김담당" />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label>{t(lang, 'label_email')}</label>
-              <input name="customer_email" type="email" value={form.customer_email} onChange={handleChange} placeholder="hong@example.com" />
-            </div>
-            <div className="form-group">
-              <label>{t(lang, 'label_phone')}</label>
-              <input name="customer_phone" value={form.customer_phone} onChange={handleChange} placeholder="010-1234-5678" />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label>{t(lang, 'label_address')}</label>
-            <input name="customer_address" value={form.customer_address} onChange={handleChange} placeholder="서울시 강남구 테헤란로 123" />
-          </div>
-
-          {/* ── Add-ons ── */}
-          <div className="form-section-title" style={{ ...sectionTitleStyle, marginTop: 20 }}>{t(lang, 'section_addons')}</div>
-
-          {/* 기존 add-ons 목록 */}
-          {addOns.length > 0 && (
-            <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {addOns.map((a, i) => (
-                <span
-                  key={i}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    background: '#ede9fe', color: '#5b21b6',
-                    borderRadius: 20, padding: '3px 10px', fontSize: 13,
-                  }}
-                >
-                  {a.name}
-                  <span style={{ fontSize: 11, color: '#7c3aed', opacity: 0.7 }}>({a.added_date})</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveAddon(i)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontWeight: 700, fontSize: 13, padding: 0, lineHeight: 1 }}
-                  >×</button>
-                </span>
-              ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={labelStyle}>{t(lang, 'label_email')}</label>
+                  <input value={custFields.email} onChange={e => setCF('email', e.target.value)} style={inputStyle} placeholder="example@email.com" />
+                </div>
+                <div>
+                  <label style={labelStyle}>{t(lang, 'label_phone')}</label>
+                  <input value={custFields.phone} onChange={e => setCF('phone', e.target.value)} style={inputStyle} placeholder="010-0000-0000" />
+                </div>
+                <div>
+                  <label style={labelStyle}>{t(lang, 'label_dealer')}</label>
+                  <input value={custFields.dealer} onChange={e => setCF('dealer', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>{t(lang, 'label_manager')}</label>
+                  <input value={custFields.sales_manager} onChange={e => setCF('sales_manager', e.target.value)} style={inputStyle} />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={labelStyle}>{t(lang, 'label_address')}</label>
+                  <input value={custFields.address} onChange={e => setCF('address', e.target.value)} style={inputStyle} />
+                </div>
+              </div>
             </div>
           )}
 
-          {/* 새 add-on 입력 */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div>
+            <label style={labelStyle}>{t(lang, 'label_serial_number')} <span style={{ color: '#fc8181' }}>*</span></label>
             <input
-              type="text"
-              value={newAddonName}
-              onChange={e => setNewAddonName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddAddon(); } }}
-              placeholder={t(lang, 'label_addon_name')}
-              style={{ flex: 1 }}
-            />
-            <button type="button" className="btn btn-secondary btn-sm" onClick={handleAddAddon}>
-              {t(lang, 'btn_add_addon')}
-            </button>
-          </div>
-
-          {/* ── 비고 ── */}
-          <div className="form-group" style={{ marginTop: 16 }}>
-            <label>{t(lang, 'label_notes')}</label>
-            <textarea
-              name="notes"
-              value={form.notes}
-              onChange={handleChange}
-              rows={3}
-              placeholder="메모를 입력하세요..."
-              style={{ resize: 'vertical' }}
+              value={form.serial_number}
+              onChange={e => setF('serial_number', e.target.value)}
+              disabled={mode === 'edit'}
+              style={{ ...inputStyle, background: mode === 'edit' ? 'var(--bg4)' : 'var(--bg3)', opacity: mode === 'edit' ? 0.7 : 1 }}
+              placeholder="XXXXXXXXXX"
             />
           </div>
 
-          <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>{t(lang, 'cancel')}</button>
-            <button type="submit" className="btn btn-primary">{serial ? t(lang, 'edit') : t(lang, 'btn_register')}</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>{t(lang, 'label_purchase_date')}</label>
+              <input type="date" value={form.purchase_date} onChange={e => setF('purchase_date', e.target.value)} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>{t(lang, 'label_expiry_date')}</label>
+              <input type="date" value={form.expiry_date} onChange={e => setF('expiry_date', e.target.value)} style={inputStyle} />
+            </div>
           </div>
-        </form>
+
+          <div>
+            <label style={labelStyle}>{t(lang, 'label_status')}</label>
+            <select value={form.status} onChange={e => setF('status', e.target.value)} style={inputStyle}>
+              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>{t(lang, 'label_engine_build')}</label>
+              <input value={form.engine_build} onChange={e => setF('engine_build', e.target.value)} style={inputStyle} placeholder="3.1.0.1754" />
+            </div>
+            <div>
+              <label style={labelStyle}>{t(lang, 'label_version')}</label>
+              <input value={form.version} onChange={e => setF('version', e.target.value)} style={inputStyle} placeholder="3.1 ChairsideCAD" />
+            </div>
+            <div>
+              <label style={labelStyle}>{t(lang, 'label_main_product')}</label>
+              <input value={form.main_product} onChange={e => setF('main_product', e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>{t(lang, 'label_modules')}</label>
+            <ModuleListEditor modules={form.modules} onChange={v => setF('modules', v)} />
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--text)' }}>
+            <input
+              type="checkbox"
+              checked={form.renewal_stop_requested}
+              onChange={e => setF('renewal_stop_requested', e.target.checked)}
+            />
+            <span>{t(lang, 'label_renewal_stop')}</span>
+            {form.renewal_stop_requested && (
+              <span style={{ fontSize: 11, color: '#fc8181', fontWeight: 600 }}>{t(lang, 'label_renewal_stop_warn')}</span>
+            )}
+          </label>
+
+          <div>
+            <label style={labelStyle}>{t(lang, 'label_notes')}</label>
+            <textarea value={form.notes} onChange={e => setF('notes', e.target.value)} style={{ ...inputStyle, height: 60, resize: 'vertical' }} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} disabled={saving} style={cancelBtn}>{t(lang, 'cancel')}</button>
+          <button onClick={submit} disabled={saving} style={saveBtn}>
+            {saving ? t(lang, 'saving') : mode === 'create' ? t(lang, 'btn_register') : t(lang, 'save')}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  color: '#6366f1',
-  borderBottom: '1px solid #e5e7eb',
-  paddingBottom: 6,
-  marginBottom: 12,
+const overlay: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+};
+const modal: React.CSSProperties = {
+  background: 'var(--bg2)', borderRadius: 12, width: 640, padding: '24px 28px',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column',
+  maxHeight: '92vh', border: '1px solid var(--border2)',
+};
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 5,
+};
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '7px 10px', border: '1px solid var(--border2)', borderRadius: 6,
+  fontSize: 13, boxSizing: 'border-box', background: 'var(--bg3)', color: 'var(--text)',
+};
+const errorBox: React.CSSProperties = {
+  background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.4)', borderRadius: 6,
+  padding: '8px 12px', color: '#fc8181', fontSize: 13, marginBottom: 12,
+};
+const saveBtn: React.CSSProperties = {
+  padding: '8px 22px', borderRadius: 6, background: 'var(--accent)', color: '#0d1117',
+  border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
+};
+const cancelBtn: React.CSSProperties = {
+  padding: '8px 18px', borderRadius: 6, background: 'var(--bg3)',
+  border: '1px solid var(--border2)', cursor: 'pointer', fontSize: 13, color: 'var(--text)',
+};
+const closeBtn: React.CSSProperties = {
+  border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text3)',
 };

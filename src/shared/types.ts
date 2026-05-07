@@ -1,170 +1,291 @@
-// === Database Models ===
+// =========================================================
+// Database Models
+// =========================================================
 
-export interface Serial {
+/** Customer — 회사(업체) 단위. 동명이인 없음. */
+export interface Customer {
   id: number;
-  serial_number: string;
-  customer_name: string;
-  customer_email: string;
-  customer_address: string;
-  customer_phone: string;
-  customer_manager: string;
-  purchase_date: string | null;
-  expiry_date: string | null;
-  status: 'active' | 'cancelled' | 'expired' | 'not-activated' | 'broken';
-  engine_build: string;
-  version: string;
-  add_ons: string; // JSON string of AddOn[]
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  dealer: string;
+  sales_manager: string;
   notes: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface AddOn {
+export interface CustomerInput {
   name: string;
-  added_date: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  dealer?: string;
+  sales_manager?: string;
+  notes?: string;
 }
 
-// Product code group classification
-export type ProductCodeGroup = 'renewal' | 'addon' | 'main' | 'memo' | 'version_update' | 'ignore';
-
-export interface ProductCodeRule {
-  code: string;           // e.g. "006-001099"
-  group: ProductCodeGroup;
-  note?: string;          // optional user memo
+export interface MergeCandidate {
+  customer: Customer;
+  score: number;
+  matched_field: 'email' | 'name_phone' | 'name_dealer' | 'name_partial';
 }
 
-export interface RenewalRequest {
+/** Serial — 신규 스키마. customer_id FK. */
+export interface Serial {
   id: number;
-  serial_id: number;
-  request_date: string;
-  request_source: 'email' | 'manual';
-  processed: number; // 0 or 1 (SQLite boolean)
+  serial_number: string;
+  customer_id: number;
+  purchase_date: string | null;
+  expiry_date: string | null;
+  status: 'active' | 'cancelled' | 'expired' | 'not-activated' | 'broken';
+  engine_build: string;
+  version: string;
+  main_product: string;
+  modules: string;          // JSON string[]
+  notes: string;
+  renewal_stop_requested: number;   // 0 | 1 (SQLite BOOLEAN)
+  stop_requested_at: string | null;
+  activated_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+/** Serial with joined Customer data (returned by getAll/getById/search). */
+export interface SerialWithCustomer extends Serial {
+  customer: Customer;
 }
 
 export interface ActivityLog {
   id: number;
-  serial_id: number;
-  action: 'registered' | 'renewed' | 'cancelled' | 'addon_added' | 'bulk_imported';
+  serial_id: number | null;
+  action:
+    | 'registered' | 'renewed' | 'cancelled' | 'addon_added'
+    | 'activated' | 'stop_requested' | 'stop_cleared'
+    | 'status_forced_expired' | 'bulk_imported' | 'customer_merged'
+    | 'legacy_imported' | 'mail_sent' | 'mail_failed' | 'cron_ran' | 'system';
+  actor: 'manual' | 'auto' | 'email' | 'polling' | 'system';
+  diff: string;             // JSON {field:[old,new]}
   details: string;
+  trigger_id: string | null;
+  severity: 'info' | 'warn' | 'error';
   created_at: string;
 }
 
-// 폴링으로 수집된 대기 주문
+// ── Mail ──────────────────────────────────────────────────────────────────────
+
+export interface MailTemplate {
+  id: number;
+  code: string;
+  name: string;
+  subject: string;
+  body: string;
+  is_builtin: number;
+  enabled: number;
+  updated_at: string;
+}
+
+export interface MailTemplateUpsert {
+  id?: number;
+  code: string;
+  name: string;
+  subject: string;
+  body: string;
+  enabled: boolean;
+}
+
+export interface InboundMail {
+  id: number;
+  message_id: string | null;
+  mail_from: string;
+  mail_to: string;
+  subject: string;
+  body: string;
+  received_at: string;
+  classification: 'unclassified' | 'stop_request' | 'unrelated' | 'error';
+  matched_template: string | null;
+  matched_keywords: string;     // JSON string[]
+  extracted_serial: string | null;
+  linked_serial_id: number | null;
+  processed: number;
+  error: string | null;
+}
+
+// ── Pending Orders ────────────────────────────────────────────────────────────
+
 export interface PendingOrder {
   id: number;
-  source_id: string;       // 원본 사이트의 주문 고유 ID (중복 방지용)
-  source_url: string;      // 수집된 URL
+  source_id: string;
+  source_url: string;
+  trade_number: string;
   serial_number: string;
   customer_name: string;
   customer_email: string;
   customer_address: string;
   customer_phone: string;
-  customer_manager: string;
+  dealer: string;
+  sales_manager: string;
   purchase_date: string;
   expiry_date: string;
   engine_build: string;
   version: string;
-  notes: string;
+  main_product: string;
+  modules: string;              // JSON string[]
   order_type: 'new' | 'renewal' | 'addon';
-  raw_data: string;        // 원본 파싱 데이터 (JSON)
+  raw_data: string;
   status: 'pending' | 'approved' | 'rejected';
+  flag_duplicate: number;
+  notes: string;
+  product_code: string;
   created_at: string;
-  product_code: string;    // 상품코드 (商品コード) — 그룹 분류 기준
-  flag_duplicate: number;  // 1 = DB에 동일 serial 이미 존재 (구 UI 빨간색 표시)
-  
-  // JOIN 등으로 붙어오는 보조 필드들
+
+  // JOIN helpers (UI)
   existing_status?: string;
   existing_expiry?: string;
   existing_customer_name?: string;
-  
-  // UI 폼 수정용 가상 필드
-  serial_status?: 'active' | 'cancelled' | 'expired' | 'not-activated' | 'broken';
+  serial_status?: Serial['status'];
 }
 
-// === Service Types ===
+export interface GroupedOrder {
+  trade_number: string;
+  main: PendingOrder | null;
+  modules: PendingOrder[];
+  flagged_duplicate: boolean;
+  created_at: string;
+}
+
+// ── Service Input Types ───────────────────────────────────────────────────────
 
 export interface SerialInput {
   serial_number: string;
-  customer_name: string;
-  customer_email: string;
+  customer_id?: number;
+  customer_name?: string;
+  customer_email?: string;
   customer_address?: string;
   customer_phone?: string;
   customer_manager?: string;
+  dealer?: string;
   purchase_date?: string;
   expiry_date?: string;
   engine_build?: string;
   version?: string;
+  main_product?: string;
+  modules?: string[];
   add_ons?: AddOn[];
   notes?: string;
   status?: Serial['status'];
+}
+
+/** Legacy AddOn — kept for backward compatibility */
+export interface AddOn {
+  name: string;
+  added_date: string;
+}
+
+export interface LogFilter {
+  date_from?: string;
+  date_to?: string;
+  actions?: ActivityLog['action'][];
+  actors?: ActivityLog['actor'][];
+  severities?: ActivityLog['severity'][];
+  serial_id?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface StatsSeries {
+  granularity: 'day' | 'month' | 'year';
+  buckets: Array<{
+    label: string;
+    registered: number;
+    renewed: number;
+    cancelled: number;
+    addon_added: number;
+  }>;
+}
+
+export interface StatsCountsResult {
+  total: number;
+  active: number;
+  cancelled: number;
+  expired: number;
+  not_activated: number;
+  broken: number;
+  expiringThisMonth: number;
+}
+
+export interface OrderApproveInput {
+  id: number;
+  customer: { kind: 'existing'; customer_id: number } | { kind: 'new'; data: CustomerInput };
+  target_status?: 'not-activated' | 'active';
+  overrides?: Partial<SerialInput>;
+}
+
+export interface LegacyImportInput {
+  legacy_id: number;
+  target_customer:
+    | { kind: 'existing'; customer_id: number }
+    | { kind: 'new'; data: CustomerInput };
+  set_stop_requested?: boolean;
+  status_override?: Serial['status'];
+  field_overrides?: Partial<SerialInput>;
+}
+
+export interface LegacyImportResult {
+  success: boolean;
+  serial_id?: number;
+  error?: string;
 }
 
 export interface ExcelSerialRow {
   serial_number: string;
   customer_name: string;
   customer_email: string;
-  customer_address?: string;
-  customer_phone?: string;
-  customer_manager?: string;
+  customer_phone: string;
+  customer_address: string;
   purchase_date: string;
   expiry_date: string;
-  engine_build?: string;
-  version?: string;
-  add_ons?: string;
-  notes?: string;
+  status: string;
+  engine_build: string;
+  version: string;
+  notes: string;
+  [key: string]: string;
 }
 
-// URL 폴링 소스 설정
+// ── Product Code Groups ───────────────────────────────────────────────────────
+
+export type ProductCodeGroup = 'renewal' | 'addon' | 'main' | 'memo' | 'version_update' | 'ignore';
+
+export interface ProductCodeRule {
+  code: string;
+  group: ProductCodeGroup;
+  note?: string;
+}
+
+// ── Poll Types ────────────────────────────────────────────────────────────────
+
 export interface PollSource {
-  id: string;          // uuid
-  name: string;        // 사용자 정의 이름 (예: "카페24 주문관리")
-  url: string;         // 폴링할 URL
-  login_url: string;   // 로그인 페이지 URL (없으면 '')
+  id: string;
+  name: string;
+  url: string;
+  login_url: string;
   login_id: string;
   login_pw: string;
   enabled: boolean;
-  // 필드 매핑: 사이트 HTML에서 어떤 셀렉터/키워드로 값을 추출할지
-  field_serial: string;    // 시리얼 넘버 셀렉터 or 헤더 텍스트
-  field_customer: string;  // 고객명
-  field_phone: string;     // 전화번호
-  field_purchase: string;  // 구매일
-  field_expiry: string;    // 만료일
-  field_product: string;   // 제품명(버전/엔진빌드 파싱용)
-  product_filter: string;  // 키워드 필터: 비어있으면 전체 수집, 설정 시 product 열에 키워드 포함된 행만 수집 (대소문자 무시)
-  last_polled: string;     // 마지막 폴링 시각
-  schedule_times: string[]; // 스케줄링 시간 (예: ['10:00', '17:00'])
-  interval_min?: number;   // 주기적 폴링 (분 단위, schedule_times가 없을 때 사용)
-  register_directly?: boolean; // 수집 즉시 시리얼 목록에 등록 여부
+  field_serial: string;
+  field_customer: string;
+  field_phone: string;
+  field_purchase: string;
+  field_expiry: string;
+  field_product: string;
+  product_filter: string;
+  last_polled: string;
+  schedule_times: string[];
+  interval_min?: number;
+  register_directly?: boolean;
 }
 
-export interface CancelResult {
-  serial_number: string;
-  success: boolean;
-  error?: string;
-  verified?: boolean;          // true = 웹 페이지에서 opted out/expired 상태 확인됨
-  verified_status?: string;    // 감지된 상태 텍스트 (e.g. "opted out", "expired")
-  screenshot_path?: string;    // cancel 완료 후 스크린샷 파일 경로
-}
-
-// Cancel dry-run result (Playwright check without actually confirming)
-export interface CancelDryRunResult {
-  serial_number: string;
-  customer_name: string;
-  expiry_date: string | null;
-  has_renewal: boolean;       // true = would be SKIPPED (renewal request exists)
-  is_test_serial?: boolean;   // true = no DB targets found; used fallback test serial
-  product_name?: string;      // product name detected from the result row
-  cancel_btn_label?: string;  // which button would be clicked ("Cancel subscription" | "Opt out upgrade")
-  login_ok?: boolean;
-  serial_found?: boolean;
-  option_btn_found?: boolean;
-  cancel_item_found?: boolean;
-  cancel_item_clicked?: boolean; // true = cancel dropdown item was clicked (confirmation dialog NOT confirmed)
-  error?: string;
-}
-
-// Poll dry-run types (crawl without saving to DB)
 export interface PreviewRow {
   serial_number: string;
   customer_name: string;
@@ -172,8 +293,8 @@ export interface PreviewRow {
   purchase_date: string;
   expiry_date: string;
   product: string;
-  already_exists: boolean;   // true if source_id already in pending_orders
-  filtered_out: boolean;     // true if product_filter excluded this row
+  already_exists: boolean;
+  filtered_out: boolean;
 }
 
 export interface PollDryRunSourceResult {
@@ -189,15 +310,49 @@ export interface PollDryRunResult {
   sources: PollDryRunSourceResult[];
 }
 
-// Renewal dry-run: preview which emails would be detected (no DB write)
+// ── Cancel ───────────────────────────────────────────────────────────────────
+
+export interface CancelResult {
+  serial_number: string;
+  success: boolean;
+  error?: string;
+  verified?: boolean;
+  verified_status?: string;
+  screenshot_path?: string;
+}
+
+export interface CancelDryRunResult {
+  serial_number: string;
+  customer_name: string;
+  expiry_date: string | null;
+  has_renewal: boolean;
+  is_test_serial?: boolean;
+  product_name?: string;
+  cancel_btn_label?: string;
+  login_ok?: boolean;
+  serial_found?: boolean;
+  option_btn_found?: boolean;
+  cancel_item_found?: boolean;
+  cancel_item_clicked?: boolean;
+  error?: string;
+}
+
+// ── Mail connection ───────────────────────────────────────────────────────────
+
+export interface MailConnectionResult {
+  success: boolean;
+  message: string;
+  mail_count?: number;
+}
+
 export interface RenewalDryRunEmail {
   from: string;
   subject: string;
   date: string;
-  matched_keywords: string[];   // which keywords matched
-  is_dedicated: boolean;        // detected via dedicated_email header
-  serial_number: string | null; // extracted serial number
-  serial_exists: boolean;       // whether serial exists in DB
+  matched_keywords: string[];
+  is_dedicated: boolean;
+  serial_number: string | null;
+  serial_exists: boolean;
   is_renewal: boolean;
   is_related: boolean;
 }
@@ -209,12 +364,7 @@ export interface RenewalDryRunResult {
   error?: string;
 }
 
-// Mail connection test result
-export interface MailConnectionResult {
-  success: boolean;
-  message: string;
-  mail_count?: number;
-}
+// ── Reports ───────────────────────────────────────────────────────────────────
 
 export interface DailyReport {
   date: string;
@@ -228,89 +378,64 @@ export interface DailyReport {
 export interface MonthlyExpiryReport {
   report_date: string;
   target_month: string;
-  expiring_serials: Serial[];
+  expiring_serials: SerialWithCustomer[];
   total_count: number;
 }
 
-// === Settings ===
+// ── Settings ─────────────────────────────────────────────────────────────────
 
 export interface AppSettings {
-  // Mail Protocol Selection
   mail_protocol: 'pop3' | 'imap';
-
-  // POP3 Mail Settings
   pop3_host: string;
   pop3_port: number;
   pop3_user: string;
   pop3_password: string;
   pop3_tls: boolean;
-  pop3_keep_copy: boolean; // Added this
-
-  // IMAP Mail Settings
+  pop3_keep_copy: boolean;
   imap_host: string;
   imap_port: number;
   imap_user: string;
   imap_password: string;
   imap_tls: boolean;
-
-  // SMTP Mail Settings
   smtp_host: string;
   smtp_port: number;
   smtp_user: string;
   smtp_password: string;
   smtp_tls: boolean;
   report_email_to: string;
-
-  // Slack Settings
+  smtp_test_address: string;
   slack_webhook_url: string;
-  slack_webhook_url_related: string; // 새로 추가된 관련된 메일 전용 슬랙 알림 웹훅
-  slack_enabled: boolean;          // Slack 알림 전체 On/Off
-  slack_language: 'ko' | 'en' | 'ja';  // Slack 메시지 언어 (UI 언어와 독립)
-
-  // Exocad Site Settings (브라우저 자동화)
+  slack_webhook_url_related: string;
+  slack_enabled: boolean;
+  slack_language: 'ko' | 'en' | 'ja';
   exocad_site_url: string;
   exocad_login_url: string;
   exocad_username: string;
   exocad_password: string;
   cancel_button_text: string;
   cancel_confirm_text: string;
-  cancel_option_button_text: string;  // 옵션 버튼 aria-label 또는 표시 텍스트; 비어있으면 CSS 클래스 자동 감지
-
-  // URL 폴링 소스 목록 (JSON 직렬화)
+  cancel_option_button_text: string;
   poll_sources: PollSource[];
-
-  // Renewal email keywords (기존 호환성 유지 옵션 또는 Action/Product로 분리)
   renewal_product_keywords: string[];
   renewal_action_keywords: string[];
-  renewal_exclude_keywords: string[]; // 제외 키워드 (하나라돈 매칭되면 갱신 미처리)
+  renewal_exclude_keywords: string[];
   require_serial_format: boolean;
-  renewal_keywords: string[]; // (legacy)
-
-  // Mail check times (HH:MM format)
+  renewal_keywords: string[];
   mail_check_times: string[];
-
-  // Auto-cancel: days before expiry to auto-cancel if no renewal request
   auto_cancel_enabled: boolean;
-  auto_cancel_days_before: number; // default: 1
-
-  // Language
+  auto_cancel_days_before: number;
   app_language: 'ko' | 'en' | 'ja';
-
-  // Auto-cancel execution time (HH:MM format, e.g. '09:00')
   auto_cancel_time: string;
-
-  // Dedicated email address for this app (forward detection)
-  // 이 주소가 To/Cc/X-Forwarded-To 등에 포함된 메일도 갱신 요청으로 감지
   dedicated_email: string;
-
-  // 사용자 커스텀 product code 규칙 (내장 코드에 추가)
   custom_product_code_rules: ProductCodeRule[];
+  daily_report_times: string[];
 }
 
-// === IPC Channel Names ===
+// =========================================================
+// IPC Channel Names
+// =========================================================
 
 export const IPC_CHANNELS = {
-  // Serial CRUD
   SERIAL_GET_ALL: 'serial:getAll',
   SERIAL_GET_BY_ID: 'serial:getById',
   SERIAL_CREATE: 'serial:create',
@@ -319,45 +444,62 @@ export const IPC_CHANNELS = {
   SERIAL_SEARCH: 'serial:search',
   SERIAL_ADD_ADDON: 'serial:addAddon',
   SERIAL_BULK_IMPORT: 'serial:bulkImport',
+  SERIAL_ACTIVATE: 'serial:activate',
+  SERIAL_SET_STOP_REQUESTED: 'serial:setStopRequested',
+  SERIAL_RENEW: 'serial:renew',
+  SERIAL_CANCEL_DB: 'serial:cancelDb',
+  SERIAL_REMOVE_MODULE: 'serial:removeModule',
 
-  // Excel
+  CUSTOMER_LIST: 'customer:list',
+  CUSTOMER_GET_BY_ID: 'customer:getById',
+  CUSTOMER_CREATE: 'customer:create',
+  CUSTOMER_UPDATE: 'customer:update',
+  CUSTOMER_DELETE: 'customer:delete',
+  CUSTOMER_SEARCH: 'customer:search',
+  CUSTOMER_MERGE_CANDIDATES: 'customer:mergeCandidates',
+
   EXCEL_DOWNLOAD_TEMPLATE: 'excel:downloadTemplate',
+  EXCEL_EXPORT_SERIALS: 'excel:exportSerials',
 
-  // Cancel
   CANCEL_SUBSCRIPTION: 'cancel:subscription',
   CANCEL_CHECK_EXPIRING: 'cancel:checkExpiring',
   CANCEL_PRE_EXPIRY_AUTO: 'cancel:preExpiryAutoCancel',
   CANCEL_DRY_RUN: 'cancel:dryRun',
   CANCEL_RESTART_SCHEDULER: 'cancel:restartScheduler',
 
-  // Renewal
-  RENEWAL_CHECK_EMAILS: 'renewal:checkEmails',
-  RENEWAL_PROCESS: 'renewal:process',
-  RENEWAL_DRY_RUN: 'renewal:dryRun',
-  RENEWAL_TEST_CONNECTION: 'renewal:testConnection',
+  AUTOMATION_RUN_AUTO_RENEW: 'automation:runAutoRenewNow',
+  AUTOMATION_RUN_AUTO_CANCEL: 'automation:runAutoCancelNow',
+  AUTOMATION_RUN_LIMBO: 'automation:runLimboFallbackNow',
 
-  // Reports
-  REPORT_DAILY: 'report:daily',
-  REPORT_MONTHLY_EXPIRY: 'report:monthlyExpiry',
-  REPORT_SEND: 'report:send',
-  SMTP_TEST_EMAIL: 'smtp:testEmail',
+  MAIL_CHECK_INBOUND: 'mail:checkInboundNow',
+  MAIL_INBOUND_DRY_RUN: 'mail:inboundDryRun',
+  MAIL_TEST_CONNECTION: 'mail:testConnection',
+  MAIL_LIST_INBOUND: 'mail:listInbound',
 
-  // Slack
-  SLACK_TEST_WEBHOOK: 'slack:testWebhook',
+  MAIL_SEND_TEMPLATE: 'mail:sendTemplate',
+  MAIL_TEST_SMTP: 'mail:testSmtp',
+  MAIL_SEND_TEST_DRY_RUN: 'mail:sendTestDryRun',
+  MAIL_TEMPLATE_LIST: 'mailTemplate:list',
+  MAIL_TEMPLATE_GET: 'mailTemplate:get',
+  MAIL_TEMPLATE_UPSERT: 'mailTemplate:upsert',
+  MAIL_TEMPLATE_DELETE: 'mailTemplate:delete',
+  MAIL_TEMPLATE_PREVIEW: 'mailTemplate:preview',
 
-  // Stats
-  STATS_GET: 'stats:get',
+  STATS_COUNTS: 'stats:counts',
+  STATS_SERIES: 'stats:series',
+  STATS_FAILURES: 'stats:failures',
 
-  // Settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
+  SETTINGS_EXPORT: 'settings:export',
+  SETTINGS_IMPORT: 'settings:import',
 
-  // Logs
-  LOGS_GET: 'logs:get',
-  LOGS_GET_TODAY: 'logs:getToday',
+  LOGS_LIST: 'logs:list',
+  LOGS_PUSH: 'logs:push',
 
-  // 주문 폴링 & 대기함
   ORDER_GET_PENDING: 'order:getPending',
+  ORDER_LIST_ALL: 'order:listAll',
+  ORDER_LIST_GROUPED: 'order:listGrouped',
   ORDER_APPROVE: 'order:approve',
   ORDER_REJECT: 'order:reject',
   ORDER_UPDATE: 'order:update',
@@ -367,7 +509,16 @@ export const IPC_CHANNELS = {
   ORDER_POLL_DRY_RUN: 'order:pollDryRun',
   ORDER_RESTART_SCHEDULER: 'order:restartScheduler',
 
-  // Webhook
+  NOTIFICATION_TEST_SLACK: 'notification:testSlack',
+  NOTIFICATION_SEND_DAILY_NOW: 'notification:sendDailyReportNow',
+  NOTIFICATION_LIST_REPORT_TIMES: 'notification:listReportTimes',
+  NOTIFICATION_SET_REPORT_TIMES: 'notification:setReportTimes',
+
+  LEGACY_DETECT: 'legacy:detect',
+  LEGACY_LIST_SERIALS: 'legacy:listSerials',
+  LEGACY_SUGGEST_MERGE: 'legacy:suggestMerge',
+  LEGACY_IMPORT: 'legacy:import',
+
   WEBHOOK_GET_STATUS: 'webhook:getStatus',
   WEBHOOK_START: 'webhook:start',
   WEBHOOK_STOP: 'webhook:stop',

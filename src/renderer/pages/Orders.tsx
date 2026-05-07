@@ -91,7 +91,7 @@ export default function Orders() {
         t(lang, 'orders_status_rejected');
 
   const statusColor = (s: string) =>
-    s === 'pending' ? '#f59e0b' : s === 'approved' ? '#10b981' : '#ef4444';
+    s === 'pending' ? 'var(--yellow)' : s === 'approved' ? 'var(--green)' : 'var(--red)';
 
   const typeLabel = (tp: string) =>
     tp === 'new' ? t(lang, 'orders_type_new') :
@@ -107,13 +107,13 @@ export default function Orders() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h1 className="page-title">{t(lang, 'page_title_orders')}</h1>
           {pendingCount > 0 && (
-            <span style={{ background: '#ef4444', color: '#fff', borderRadius: 12, padding: '2px 10px', fontSize: 13, fontWeight: 700 }}>
+            <span style={{ background: 'var(--red)', color: 'var(--bg)', borderRadius: 12, padding: '2px 10px', fontSize: 13, fontWeight: 700 }}>
               {pendingCount}
             </span>
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {pollMsg && <span style={{ fontSize: 12, color: '#6b7280' }}>{pollMsg}</span>}
+          {pollMsg && <span style={{ fontSize: 12, color: 'var(--text3)' }}>{pollMsg}</span>}
           <button className="btn btn-primary" onClick={handlePollNow} disabled={polling}>
             {polling ? t(lang, 'orders_polling') : t(lang, 'orders_poll_btn')}
           </button>
@@ -121,7 +121,7 @@ export default function Orders() {
       </div>
 
       {/* ── Description ── */}
-      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: '#1e40af' }}>
+      <div style={{ background: 'var(--accent-dim)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: 'var(--accent)' }}>
         💡 {t(lang, 'orders_desc')}
       </div>
 
@@ -133,8 +133,8 @@ export default function Orders() {
             onClick={() => setFilter(f)}
             style={{
               padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-              background: filter === f ? '#6366f1' : '#f3f4f6',
-              color: filter === f ? '#fff' : '#374151',
+              background: filter === f ? 'var(--accent)' : 'var(--bg3)',
+              color: filter === f ? 'var(--bg)' : 'var(--text2)',
             }}
           >
             {f === 'pending'
@@ -150,7 +150,7 @@ export default function Orders() {
 
       {/* ── Order Cards ── */}
       {filtered.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af', background: '#f9fafb', borderRadius: 10 }}>
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text3)', background: 'var(--bg2)', borderRadius: 10 }}>
           {filter === 'pending' ? t(lang, 'orders_empty_pending') : t(lang, 'orders_empty')}
         </div>
       ) : (
@@ -159,52 +159,52 @@ export default function Orders() {
             <div
               key={order.id}
               style={{
-                border: `1px solid ${order.flag_duplicate ? '#fca5a5'
-                  : order.status === 'pending' ? '#fbbf24'
-                    : '#e5e7eb'
+                border: `1px solid ${order.flag_duplicate ? 'rgba(240,82,82,0.4)'
+                  : order.status === 'pending' ? 'rgba(245,194,107,0.4)'
+                    : 'var(--border)'
                   }`,
                 borderRadius: 10,
                 padding: '16px 20px',
                 background: order.flag_duplicate
-                  ? '#fff1f2'
-                  : order.status === 'pending' ? '#fffbeb' : '#fff',
+                  ? 'var(--red-dim)'
+                  : order.status === 'pending' ? 'var(--yellow-dim)' : 'var(--bg2)',
               }}
             >
               {/* Card Header */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                 <span style={{
-                  background: statusColor(order.status), color: '#fff',
+                  background: statusColor(order.status), color: 'var(--bg)',
                   borderRadius: 6, padding: '2px 10px', fontSize: 12, fontWeight: 700,
                 }}>
                   {statusLabel(order.status)}
                 </span>
-                <span style={{ background: '#e0e7ff', color: '#4338ca', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>
+                <span style={{ background: 'var(--purple-dim)', color: 'var(--purple)', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>
                   {typeLabel(order.order_type)}
                 </span>
                 {order.product_code && (
-                  <span style={{ background: '#f3f4f6', color: '#6b7280', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}>
+                  <span style={{ background: 'var(--bg4)', color: 'var(--text3)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}>
                     {order.product_code}
                   </span>
                 )}
                 {!!order.flag_duplicate && (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#fee2e2', border: '1px solid #fecaca', padding: '4px 8px', borderRadius: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--red-dim)', border: '1px solid rgba(240,82,82,0.3)', padding: '4px 8px', borderRadius: 6 }}>
                     <span style={{
-                      color: '#dc2626', fontSize: 12, fontWeight: 700,
+                      color: 'var(--red)', fontSize: 12, fontWeight: 700,
                       animation: 'pulse 1.5s infinite',
                     }}>
                       🔴 중복 (DB 상태: {order.existing_status || '알수없음'})
                     </span>
-                    <span style={{ fontSize: 11, color: '#991b1b' }}>
+                    <span style={{ fontSize: 11, color: 'var(--red)' }}>
                       | 만료: {order.existing_expiry || '없음'} | 고객: {order.existing_customer_name || '없음'}
                     </span>
                   </div>
                 )}
-                <span style={{ fontSize: 12, color: '#9ca3af', marginLeft: 'auto' }}>
+                <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 'auto' }}>
                   {t(lang, 'orders_collected_at')}{order.created_at?.slice(0, 16).replace('T', ' ')}
                 </span>
                 {order.source_url && (
                   <a href={order.source_url} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 11, color: '#6366f1', textDecoration: 'none' }}>
+                    style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
                     {t(lang, 'orders_source_link')}
                   </a>
                 )}
@@ -223,7 +223,7 @@ export default function Orders() {
               </div>
 
               {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: 8, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+              <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                 {order.status === 'pending' && (
                   <>
                     <button
@@ -236,7 +236,7 @@ export default function Orders() {
                     >Data Update</button>
                     <button
                       className="btn btn-sm"
-                      style={{ background: '#fee2e2', color: '#dc2626' }}
+                      style={{ background: 'var(--red-dim)', color: 'var(--red)' }}
                       onClick={() => handleReject(order.id)}
                     >{t(lang, 'orders_btn_reject')}</button>
                   </>
@@ -249,7 +249,7 @@ export default function Orders() {
                 )}
                 <button
                   className="btn btn-sm"
-                  style={{ marginLeft: 'auto', background: '#f3f4f6', color: '#6b7280' }}
+                  style={{ marginLeft: 'auto', background: 'var(--bg4)', color: 'var(--text3)' }}
                   onClick={() => handleDelete(order.id)}
                 >{t(lang, 'delete')}</button>
               </div>
@@ -277,7 +277,7 @@ export default function Orders() {
               <h3>{t(lang, 'orders_raw_title')}</h3>
               <button className="btn btn-sm btn-secondary" onClick={() => setRawModal(null)}>✕</button>
             </div>
-            <pre style={{ fontSize: 12, background: '#f9fafb', padding: 12, borderRadius: 6, overflowX: 'auto', maxHeight: 400, overflow: 'auto' }}>
+            <pre style={{ fontSize: 12, background: 'var(--bg3)', padding: 12, borderRadius: 6, overflowX: 'auto', maxHeight: 400, overflow: 'auto' }}>
               {JSON.stringify(JSON.parse(rawModal.raw_data || '{}'), null, 2)}
             </pre>
             <div className="modal-footer">
@@ -294,9 +294,9 @@ export default function Orders() {
 function Field({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div>
-      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-      <div style={{ fontSize: 13, color: highlight ? '#6366f1' : '#111827', fontWeight: highlight ? 700 : 400 }}>
-        {value || <span style={{ color: '#d1d5db' }}>—</span>}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+      <div style={{ fontSize: 13, color: highlight ? 'var(--accent)' : 'var(--text)', fontWeight: highlight ? 700 : 400 }}>
+        {value || <span style={{ color: 'var(--border2)' }}>—</span>}
       </div>
     </div>
   );
@@ -328,7 +328,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
         <div style={{ overflowY: 'auto', maxHeight: '65vh', padding: '0 4px' }}>
           <div style={sLabel}>{t(lang, 'section_serial_info')}</div>
           <div className="form-group">
-            <label>{t(lang, 'label_serial_number')} <span style={{ color: '#ef4444' }}>*</span></label>
+            <label>{t(lang, 'label_serial_number')} <span style={{ color: 'var(--red)' }}>*</span></label>
             <input value={form.serial_number} onChange={e => set('serial_number', e.target.value)} />
           </div>
           <div className="form-row">
@@ -366,7 +366,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
             </div>
             <div className="form-group">
               <label>{t(lang, 'label_manager')}</label>
-              <input value={form.customer_manager} onChange={e => set('customer_manager', e.target.value)} />
+              <input value={form.sales_manager} onChange={e => set('sales_manager', e.target.value)} />
             </div>
           </div>
           <div className="form-row">
@@ -400,6 +400,6 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
 
 const sLabel: React.CSSProperties = {
   fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-  letterSpacing: '0.07em', color: '#6366f1',
-  borderBottom: '1px solid #e5e7eb', paddingBottom: 4, marginBottom: 10,
+  letterSpacing: '0.07em', color: 'var(--accent)',
+  borderBottom: '1px solid var(--border)', paddingBottom: 4, marginBottom: 10,
 };

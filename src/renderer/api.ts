@@ -20,18 +20,33 @@ const post = <T>(path: string, body?: unknown) => req<T>('POST', path, body);
 const put = <T>(path: string, body?: unknown) => req<T>('PUT', path, body);
 const del = <T>(path: string) => req<T>('DELETE', path);
 
-// ── Serials ────────────────────────────────────────────────────────────────
 export const api = {
+    // ── Serials ────────────────────────────────────────────────────────────────
     getSerials: () => get('/serials'),
     getSerial: (id: number) => get(`/serials/${id}`),
+    getSerialById: (id: number) => get(`/serials/${id}`),
     searchSerials: (q: string) => get(`/serials/search?q=${encodeURIComponent(q)}`),
     getStats: () => get('/serials/stats'),
     createSerial: (data: unknown) => post('/serials', data),
     updateSerial: (id: number, data: unknown) => put(`/serials/${id}`, data),
     deleteSerial: (id: number) => del(`/serials/${id}`),
     addAddon: (id: number, addon: unknown) => post(`/serials/${id}/addon`, addon),
+    activateSerial: (id: number) => post(`/serials/${id}/activate`),
+    setStopRequested: (id: number, flag: boolean, triggerId?: string) =>
+        post(`/serials/${id}/stop-requested`, { flag, triggerId }),
+    cancelSerialDb: (id: number) => post(`/serials/${id}/cancel-db`),
+    removeModule: (id: number, name: string) => post(`/serials/${id}/remove-module`, { name }),
+    renewSerial: (id: number) => post(`/serials/${id}/renew`),
+    exportSerials: async (serials: unknown[]) => {
+        try {
+            await post('/serials/export', { serials });
+            return { success: true };
+        } catch {
+            return { success: false, error: 'Export not supported in browser mode' };
+        }
+    },
 
-    // 엑셀 템플릿 다운로드 (직접 링크 방식)
+    // 엑셀 템플릿 다운로드
     downloadTemplate: () => { window.location.href = `${BASE}/serials/template/download`; },
 
     // 엑셀 대량 임포트 (multipart)
@@ -43,8 +58,18 @@ export const api = {
         return res.json();
     },
 
+    // ── Customers ─────────────────────────────────────────────────────────────
+    listCustomers: () => get('/customers'),
+    getCustomerById: (id: number) => get(`/customers/${id}`),
+    createCustomer: (data: unknown) => post('/customers', data),
+    updateCustomer: (id: number, data: unknown) => put(`/customers/${id}`, data),
+    deleteCustomer: (id: number) => del(`/customers/${id}`),
+    searchCustomers: (q: string) => get(`/customers/search?q=${encodeURIComponent(q)}`),
+    getCustomerMergeCandidates: (q: unknown) => post('/customers/merge-candidates', q),
+
     // ── Orders ────────────────────────────────────────────────────────────────
     getOrders: () => get('/orders'),
+    listGroupedOrders: () => get('/orders/grouped'),
     getPollStatus: () => get('/orders/poll-status'),
     pollNow: (sourceId?: string) => post('/orders/poll-now', { sourceId }),
     pollDryRun: (sourceId?: string, overrides?: unknown) =>
@@ -52,45 +77,87 @@ export const api = {
     restartOrderScheduler: () => post('/orders/restart-scheduler'),
     updateOrder: (id: number, data: unknown) => put(`/orders/${id}`, data),
     approveOrder: (id: number, data?: unknown) => post(`/orders/${id}/approve`, data),
-    updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
     rejectOrder: (id: number) => post(`/orders/${id}/reject`),
     deleteOrder: (id: number) => del(`/orders/${id}`),
 
     // ── Cancel ────────────────────────────────────────────────────────────────
     cancelSubscription: (serialNumber: string) => post(`/cancel/${encodeURIComponent(serialNumber)}`),
     checkExpiring: () => post('/cancel/run/expired'),
-    preExpiryAutoCancel: () => post('/cancel/run/pre-expiry'),
     cancelDryRun: () => post('/cancel/run/dry-run'),
-    restartCancelScheduler: () => post('/cancel/restart-scheduler'),
+    cancelRestartScheduler: () => post('/cancel/restart-scheduler'),
 
-    // ── Renewal ───────────────────────────────────────────────────────────────
-    checkRenewalEmails: () => post('/logs/renewal-check'),
-    renewalDryRun: () => post('/logs/renewal-dry-run'),
-    renewSerial: (id: number) => post(`/serials/${id}/renew`),
+    // ── Automation ────────────────────────────────────────────────────────────
+    runAutoRenewNow: () => post('/logs/renewal-check'),
+    runAutoCancelNow: () => post('/cancel/run/expired'),
+    runLimboFallbackNow: () => post('/cancel/run/pre-expiry'),
+
+    // ── Mail Inbound ──────────────────────────────────────────────────────────
+    checkInboundNow: () => post('/logs/renewal-check'),
+    inboundDryRun: () => post('/logs/renewal-dry-run'),
     testMailConnection: (override?: unknown) => post('/settings/test-mail-connection', override),
+    listInboundMails: (filter?: unknown) => post('/logs/inbound-mails', filter),
 
-    // ── Reports ───────────────────────────────────────────────────────────────
-    getDailyReport: () => get('/reports/daily'),
-    getMonthlyExpiry: () => get('/reports/monthly-expiry'),
-    sendReport: (type: 'daily' | 'monthly') => post(`/reports/send-${type}`),
+    // ── Mail Templates ────────────────────────────────────────────────────────
+    listMailTemplates: () => get('/mail-templates'),
+    getMailTemplate: (code: string) => get(`/mail-templates/${code}`),
+    upsertMailTemplate: (data: unknown) => post('/mail-templates', data),
+    deleteMailTemplate: (code: string) => del(`/mail-templates/${encodeURIComponent(code)}`),
+    previewMailTemplate: (code: string, serialId: number) =>
+        get(`/mail-templates/${encodeURIComponent(code)}/preview?serialId=${serialId}`),
+    sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: unknown) =>
+        post('/mail/send-template', { code, to, vars, options }),
+    sendTestDryRun: (override?: unknown) => post('/settings/test-smtp-dry-run', override),
+
+    // ── Stats ─────────────────────────────────────────────────────────────────
+    getStatsCounts: () => get('/serials/stats/counts'),
+    getStatsSeries: (granularity: string, range: number) =>
+        get(`/serials/stats/series?granularity=${granularity}&range=${range}`),
+    getStatsFailures: () => get('/logs?type=failure&limit=20'),
 
     // ── Settings ──────────────────────────────────────────────────────────────
     getSettings: () => get('/settings'),
     saveSettings: (data: unknown) => post('/settings', data),
     testSmtp: (override?: unknown) => post('/settings/test-smtp', override),
     testSlack: (override?: unknown) => post('/settings/test-slack', override),
+    testSlackWebhook: (override?: unknown) => post('/settings/test-slack', override),
     testSlackRelated: (override?: unknown) => post('/settings/test-slack-related', override),
+    renewalDryRun: () => post('/logs/renewal-dry-run'),
+    checkRenewalEmails: () => post('/logs/renewal-check'),
+    updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
+    exportSettings: () => post('/settings/export'),
+    importSettings: () => post('/settings/import'),
+    listReportTimes: () => get('/settings/report-times'),
+    setReportTimes: (times: string[]) => post('/settings/report-times', { times }),
+    sendDailyReportNow: () => post('/reports/send-daily'),
 
     // ── Logs ──────────────────────────────────────────────────────────────────
     getLogs: (limit = 100, offset = 0) => get(`/logs?limit=${limit}&offset=${offset}`),
     getTodayLogs: () => get('/logs/today'),
     getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
     getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
+    listLogs: (filter?: unknown) => post('/logs/list', filter),
+    onLogsPush: (callback: (payload: { id: number }) => void): () => void => {
+        const interval = setInterval(() => callback({ id: 0 }), 30000);
+        return () => clearInterval(interval);
+    },
+
+    // ── Legacy Import ─────────────────────────────────────────────────────────
+    detectLegacy: () => get('/legacy/detect'),
+    listLegacySerials: (filter?: unknown) => post('/legacy/serials', filter),
+    suggestLegacyMerge: (row: unknown) => post('/legacy/suggest-merge', row),
+    importLegacySerial: (input: unknown) => post('/legacy/import', input),
+
+    // ── Reports ───────────────────────────────────────────────────────────────
+    getDailyReport: () => get('/reports/daily'),
+    getMonthlyExpiry: () => get('/reports/monthly-expiry'),
+    sendReport: (type: 'daily' | 'monthly') => post(`/reports/send-${type}`),
 
     // ── Webhook ───────────────────────────────────────────────────────────────
     getWebhookStatus: () => get<{ running: boolean; port: number }>('/webhook/status'),
     startWebhook: () => post<{ running: boolean; port: number }>('/webhook/start'),
     stopWebhook: () => post<{ running: boolean; port: number }>('/webhook/stop'),
+    startWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/start'),
+    stopWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/stop'),
 };
 
 export type Api = typeof api;

@@ -35,27 +35,29 @@ function ManualPopup({ title, content, onClose }: { title: string; content: Reac
   return (
     <div
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+        backdropFilter: 'blur(4px)',
         zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
       onClick={onClose}
     >
       <div
         style={{
-          background: '#fff', borderRadius: 12, padding: '24px 28px',
+          background: 'var(--bg2)', border: '1px solid var(--border2)',
+          borderRadius: 10, padding: '20px 24px',
           maxWidth: 520, width: '90%', maxHeight: '80vh', overflowY: 'auto',
-          boxShadow: '0 10px 40px rgba(0,0,0,0.18)',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
         }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <h3 style={{ margin: 0, fontSize: 16, color: '#1f2937' }}>📖 {title}</h3>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>📖 {title}</h3>
           <button
             onClick={onClose}
-            style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6b7280', lineHeight: 1 }}
+            style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text3)', lineHeight: 1 }}
           >✕</button>
         </div>
-        <div style={{ fontSize: 13.5, color: '#374151', lineHeight: 1.7 }}>{content}</div>
+        <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.7 }}>{content}</div>
       </div>
     </div>
   );
@@ -65,14 +67,14 @@ function ManualPopup({ title, content, onClose }: { title: string; content: Reac
 function SectionHeader({ title, onManual }: { title: string; onManual: () => void }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-      <h3 style={{ margin: 0 }}>{title}</h3>
+      <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{title}</h3>
       <button
         onClick={onManual}
         title="사용 방법 보기"
         style={{
-          background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0369a1',
-          borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'var(--bg4)', border: '1px solid var(--border2)', color: 'var(--text2)',
+          borderRadius: 6, padding: '3px 10px', fontSize: 11.5, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit',
         }}
       >
         📖 Manual
@@ -230,7 +232,7 @@ export default function Settings() {
             <li>갱신 요청(renewal request)이 있으면 → 건너뜀</li>
             <li>갱신 요청 없으면 → Exocad 사이트 자동 Cancel 실행</li>
           </ul>
-          <p style={{ color: '#dc2626', fontWeight: 600 }}>⚠️ Exocad 사이트 설정(로그인 정보)이 올바르게 입력되어 있어야 동작합니다.</p>
+          <p style={{ color: 'var(--red)', fontWeight: 600 }}>⚠️ Exocad 사이트 설정(로그인 정보)이 올바르게 입력되어 있어야 동작합니다.</p>
         </>
       ),
     },
@@ -246,7 +248,7 @@ export default function Settings() {
           </ul>
           <p><strong>Gmail 사용 시:</strong> IMAP 활성화 + 앱 비밀번호 사용 필요</p>
           <p><strong>포트 기본값:</strong> POP3=995(TLS), IMAP=993(TLS)</p>
-          <hr style={{ margin: '12px 0', borderColor: '#e5e7eb' }} />
+          <hr style={{ margin: '12px 0', borderColor: 'var(--border)' }} />
           <p><strong>📮 앱 전용 이메일 주소 (Forward 감지)</strong></p>
           <p>이 주소를 등록하면 다음 경우를 자동 감지합니다:</p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
@@ -254,7 +256,7 @@ export default function Settings() {
             <li>다른 메일함에서 이 주소로 <strong>Forward</strong>된 메일</li>
             <li>Gmail 자동 전달(auto-forward) 설정으로 도착한 메일</li>
           </ul>
-          <p style={{ color: '#0369a1' }}>💡 갱신 키워드 없이도 이 주소가 수신 헤더에 있으면 갱신 요청으로 처리됩니다.</p>
+          <p style={{ color: 'var(--text)' }}>💡 갱신 키워드 없이도 이 주소가 수신 헤더에 있으면 갱신 요청으로 처리됩니다.</p>
           <p><strong>탐색하는 헤더:</strong> <code>Delivered-To, X-Forwarded-To, X-Original-To, To, Cc, Resent-To</code></p>
         </>
       ),
@@ -301,7 +303,7 @@ export default function Settings() {
             <li><strong>Cancel 버튼 텍스트</strong> — 드롭다운에서 클릭할 항목 (예: "opt out upgrade")</li>
             <li><strong>확인 팝업 텍스트</strong> — 확인 팝업의 버튼 텍스트 (예: "okay")</li>
           </ul>
-          <p style={{ color: '#f59e0b' }}>💡 실제 사이트 버튼 텍스트와 정확히 일치해야 합니다.</p>
+          <p style={{ color: 'var(--yellow)' }}>💡 실제 사이트 버튼 텍스트와 정확히 일치해야 합니다.</p>
         </>
       ),
     },
@@ -338,7 +340,7 @@ export default function Settings() {
   };
 
   return (
-    <div>
+    <div className="page-wrapper">
       {/* 매뉴얼 팝업 */}
       {manualOpen && manuals[manualOpen] && (
         <ManualPopup
@@ -349,7 +351,10 @@ export default function Settings() {
       )}
 
       <div className="page-header">
-        <h1 className="page-title">{t(lang, 'page_title_settings')}</h1>
+        <div>
+          <div className="page-title">{t(lang, 'page_title_settings')}</div>
+          <div className="page-subtitle">시스템 환경 설정</div>
+        </div>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? t(lang, 'saving') : t(lang, 'btn_save_settings')}
         </button>
@@ -366,7 +371,7 @@ export default function Settings() {
               { value: 'en', label: '🇺🇸 English' },
               { value: 'ja', label: '🇯🇵 日本語' },
             ] as { value: Language; label: string }[]).map(opt => (
-              <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '6px 14px', borderRadius: 8, border: `2px solid ${appLanguage === opt.value ? '#6366f1' : '#e5e7eb'}`, background: appLanguage === opt.value ? '#ede9fe' : '#fff', fontWeight: appLanguage === opt.value ? 700 : 400 }}>
+              <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '6px 14px', borderRadius: 8, border: `2px solid ${appLanguage === opt.value ? 'var(--accent)' : 'var(--border2)'}`, background: appLanguage === opt.value ? 'var(--accent-dim2)' : 'var(--bg3)', fontWeight: appLanguage === opt.value ? 700 : 400, color: appLanguage === opt.value ? 'var(--accent)' : 'var(--text2)', fontSize: 13 }}>
                 <input
                   type="radio"
                   name="app_language"
@@ -418,12 +423,12 @@ export default function Settings() {
                   onChange={e => setAutoCancelTime(e.target.value)}
                   style={{ width: 130 }}
                 />
-                <small style={{ color: '#888', fontSize: 12, display: 'block', marginTop: 2 }}>
+                <small style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginTop: 2 }}>
                   {t(lang, 'auto_cancel_time_note')}
                 </small>
               </div>
             </div>
-            <small style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 12 }}>
+            <small style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginBottom: 12 }}>
               {t(lang, 'auto_cancel_note')}
             </small>
 
@@ -431,7 +436,7 @@ export default function Settings() {
             <div style={{ marginTop: 8 }}>
               <button
                 className="btn btn-secondary"
-                style={{ background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd' }}
+                style={{ background: 'var(--bg3)', color: 'var(--accent)', border: '1px solid #c4b5fd' }}
                 onClick={async () => {
                   setCancelDryRunning(true);
                   setCancelDryResults(null);
@@ -453,18 +458,18 @@ export default function Settings() {
             {/* Dry-Run Results Panel */}
             {cancelDryResults !== null && (
               <div style={{ marginTop: 14, border: '1px solid #c4b5fd', borderRadius: 8, overflow: 'hidden' }}>
-                <div style={{ padding: '8px 14px', background: '#ede9fe', fontWeight: 700, fontSize: 13, color: '#6d28d9' }}>
+                <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>
                   🔍 Dry-Run 결과 ({cancelDryResults.length}건)
                 </div>
                 {cancelDryResults.length === 0 ? (
-                  <div style={{ padding: '16px 14px', color: '#6b7280', fontSize: 13 }}>
+                  <div style={{ padding: '16px 14px', color: 'var(--text)', fontSize: 13 }}>
                     {t(lang, 'cancel_dryrun_no_targets')}
                   </div>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                       <thead>
-                        <tr style={{ background: '#f5f3ff', borderBottom: '1px solid #e5e7eb' }}>
+                        <tr style={{ background: 'var(--bg3)', borderBottom: '1px solid #e5e7eb' }}>
                           <th style={thStyle}>{t(lang, 'cancel_dryrun_col_serial')}</th>
                           <th style={thStyle}>{t(lang, 'cancel_dryrun_col_customer')}</th>
                           <th style={thStyle}>{t(lang, 'cancel_dryrun_col_expiry')}</th>
@@ -490,22 +495,22 @@ export default function Settings() {
                               <td style={tdStyle}>
                                 <code style={{ fontSize: 11 }}>{r.serial_number}</code>
                                 {r.is_test_serial && (
-                                  <span style={{ marginLeft: 4, fontSize: 10, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 3, padding: '1px 4px', fontWeight: 600 }}>TEST</span>
+                                  <span style={{ marginLeft: 4, fontSize: 10, background: 'var(--yellow-dim)', color: 'var(--yellow)', border: '1px solid #fde68a', borderRadius: 3, padding: '1px 4px', fontWeight: 600 }}>TEST</span>
                                 )}
                               </td>
                               <td style={tdStyle}>{r.customer_name}</td>
                               <td style={tdStyle}>{r.expiry_date}</td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>
-                                {isSkipped ? <span style={{ color: '#d97706', fontWeight: 600 }}>⚠ {t(lang, 'cancel_dryrun_skipped')}</span> : <span style={{ color: '#6d28d9', fontWeight: 600 }}>{t(lang, 'cancel_dryrun_would_cancel')}</span>}
+                                {isSkipped ? <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>⚠ {t(lang, 'cancel_dryrun_skipped')}</span> : <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{t(lang, 'cancel_dryrun_would_cancel')}</span>}
                               </td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>{isSkipped ? '—' : checkIcon(r.login_ok)}</td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>{isSkipped ? '—' : checkIcon(r.serial_found)}</td>
-                              <td style={{ ...tdStyle, fontSize: 11, color: '#374151' }}>{r.product_name || '—'}</td>
+                              <td style={{ ...tdStyle, fontSize: 11, color: 'var(--text)' }}>{r.product_name || '—'}</td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>{isSkipped ? '—' : checkIcon(r.option_btn_found)}</td>
-                              <td style={{ ...tdStyle, fontSize: 11, color: '#6d28d9', whiteSpace: 'nowrap' }}>{r.cancel_btn_label || '—'}</td>
+                              <td style={{ ...tdStyle, fontSize: 11, color: 'var(--accent)', whiteSpace: 'nowrap' }}>{r.cancel_btn_label || '—'}</td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>{isSkipped ? '—' : checkIcon(r.cancel_item_found)}</td>
                               <td style={{ ...tdStyle, textAlign: 'center' }}>{isSkipped ? '—' : checkIcon(r.cancel_item_clicked)}</td>
-                              <td style={{ ...tdStyle, color: '#dc2626', fontSize: 11 }}>{hasError ? r.error : ''}</td>
+                              <td style={{ ...tdStyle, color: 'var(--red)', fontSize: 11 }}>{hasError ? r.error : ''}</td>
                             </tr>
                           );
                         })}
@@ -600,7 +605,7 @@ export default function Settings() {
                 {t(lang, 'label_tls')}
               </label>
             </div>
-            <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'imap_note')}</small>
+            <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'imap_note')}</small>
           </>
         )}
 
@@ -618,21 +623,21 @@ export default function Settings() {
               placeholder="renewal@yourcompany.com"
               style={{ fontFamily: 'monospace' }}
             />
-            <div style={{ marginTop: 6, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
-              <small style={{ color: '#0369a1', fontSize: 12, lineHeight: 1.6, display: 'block' }}>
+            <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--bg3)', borderRadius: 8, border: '1px solid #bae6fd' }}>
+              <small style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.6, display: 'block' }}>
                 💡 {t(lang, 'dedicated_email_note')}
               </small>
-              <small style={{ color: '#0284c7', fontSize: 11.5, lineHeight: 1.6, display: 'block', marginTop: 4 }}>
+              <small style={{ color: 'var(--text)', fontSize: 11.5, lineHeight: 1.6, display: 'block', marginTop: 4 }}>
                 {t(lang, 'dedicated_email_how')}
               </small>
-              <small style={{ color: '#6b7280', fontSize: 11, display: 'block', marginTop: 6 }}>
+              <small style={{ color: 'var(--text)', fontSize: 11, display: 'block', marginTop: 6 }}>
                 {t(lang, 'detect_headers')}{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>Delivered-To</code>{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>X-Forwarded-To</code>{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>X-Original-To</code>{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>To</code>{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>Cc</code>{' '}
-                <code style={{ background: '#e0f2fe', padding: '1px 4px', borderRadius: 3 }}>Resent-To</code>
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>Delivered-To</code>{' '}
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>X-Forwarded-To</code>{' '}
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>X-Original-To</code>{' '}
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>To</code>{' '}
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>Cc</code>{' '}
+                <code style={{ background: 'var(--bg4)', padding: '1px 4px', borderRadius: 3 }}>Resent-To</code>
               </small>
             </div>
           </div>
@@ -648,7 +653,7 @@ export default function Settings() {
               onChange={e => setVal('renewal_product_keywords_raw', e.target.value)}
               placeholder="exocad, exoplan"
             />
-            <small style={{ color: '#6b7280', fontSize: 12 }}>이 단어가 본문 또는 제목에 포함되어야 관련 메일로 수집됩니다. (예: exocad, exoplan)</small>
+            <small style={{ color: 'var(--text)', fontSize: 12 }}>이 단어가 본문 또는 제목에 포함되어야 관련 메일로 수집됩니다. (예: exocad, exoplan)</small>
           </div>
           <div className="form-group" style={{ marginBottom: 16 }}>
             <label style={{ fontWeight: 600 }}>🔑 액션 키워드 (Action Keywords) — 콤마(,) 구분</label>
@@ -658,10 +663,10 @@ export default function Settings() {
               onChange={e => setVal('renewal_action_keywords_raw', e.target.value)}
               placeholder="renewal, renew, 갱신, 연장"
             />
-            <small style={{ color: '#6b7280', fontSize: 12 }}>제품명과 함께 이 단어가 추가로 포함되어야 실제 '갱신 요청'으로 인식합니다. (예: 갱신, 연장)</small>
+            <small style={{ color: 'var(--text)', fontSize: 12 }}>제품명과 함께 이 단어가 추가로 포함되어야 실제 '갱신 요청'으로 인식합니다. (예: 갱신, 연장)</small>
           </div>
-          <div className="form-group" style={{ marginBottom: 16, borderLeft: '3px solid #fca5a5', paddingLeft: 12, background: '#fef2f2', borderRadius: 4, padding: '10px 12px' }}>
-            <label style={{ fontWeight: 600, color: '#dc2626' }}>🚫 제외 키워드 (Exclude Keywords) — 콤마(,) 구분</label>
+          <div className="form-group" style={{ marginBottom: 16, borderLeft: '3px solid #fca5a5', paddingLeft: 12, background: 'var(--red-dim)', borderRadius: 4, padding: '10px 12px' }}>
+            <label style={{ fontWeight: 600, color: 'var(--red)' }}>🚫 제외 키워드 (Exclude Keywords) — 콤마(,) 구분</label>
             <input
               key={`kw-excl-${loadKey}`}
               defaultValue={formVals.current.renewal_exclude_keywords_raw || ''}
@@ -669,7 +674,7 @@ export default function Settings() {
               placeholder="Newsletter, 뉴스레터, 광고, unsubscribe"
               style={{ marginTop: 6 }}
             />
-            <small style={{ color: '#7f1d1d', fontSize: 12, display: 'block', marginTop: 4 }}>
+            <small style={{ color: 'var(--red)', fontSize: 12, display: 'block', marginTop: 4 }}>
               ⚠️ 이 키워드 중 하나라도 메일 제목/본문에 포함되면, 나머지 조건과 무관하게 <strong>완전히 제외</strong>됩니다. (갱신 및 관련 메일 알림 모두 건너뜀)
             </small>
           </div>
@@ -682,7 +687,7 @@ export default function Settings() {
               />
               검색 필터: 메일 본문 내 시리얼 번호(ex: xxxxx-xxxx) 필수 여부
             </label>
-            <small style={{ color: '#6b7280', fontSize: 12, marginLeft: 22, display: 'block', marginTop: 4 }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
+            <small style={{ color: 'var(--text)', fontSize: 12, marginLeft: 22, display: 'block', marginTop: 4 }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
           </div>
         </div>
 
@@ -692,7 +697,7 @@ export default function Settings() {
           <div>
             <button
               className="btn btn-secondary"
-              style={{ background: '#f0f9ff', color: '#0369a1', border: '1px solid #bae6fd' }}
+              style={{ background: 'var(--bg3)', color: 'var(--text)', border: '1px solid #bae6fd' }}
               disabled={connTesting}
               onClick={async () => {
                 setConnTesting(true);
@@ -730,7 +735,7 @@ export default function Settings() {
               }}>
                 {connTestResult.success ? '✅' : '❌'} {connTestResult.message}
                 {connTestResult.mail_count !== undefined && (
-                  <span style={{ marginLeft: 8, color: '#6b7280', fontSize: 12 }}>{t(lang, 'conn_mail_count').replace('{n}', String(connTestResult.mail_count))}</span>
+                  <span style={{ marginLeft: 8, color: 'var(--text)', fontSize: 12 }}>{t(lang, 'conn_mail_count').replace('{n}', String(connTestResult.mail_count))}</span>
                 )}
               </div>
             )}
@@ -740,7 +745,7 @@ export default function Settings() {
           <div style={{ flex: 1, minWidth: 200 }}>
             <button
               className="btn btn-secondary"
-              style={{ background: '#fdf4ff', color: '#7e22ce', border: '1px solid #d8b4fe' }}
+              style={{ background: 'var(--bg3)', color: 'var(--accent)', border: '1px solid #d8b4fe' }}
               disabled={renewalDryRunning}
               onClick={async () => {
                 setRenewalDryRunning(true);
@@ -757,7 +762,7 @@ export default function Settings() {
             >
               {renewalDryRunning ? t(lang, 'renewal_dryrun_running') : t(lang, 'renewal_dryrun_label')}
             </button>
-            <small style={{ display: 'block', marginTop: 4, color: '#6b7280', fontSize: 11.5 }}>
+            <small style={{ display: 'block', marginTop: 4, color: 'var(--text)', fontSize: 11.5 }}>
               {t(lang, 'renewal_dryrun_note')}
             </small>
           </div>
@@ -766,18 +771,18 @@ export default function Settings() {
         {/* Renewal Dry-Run 결과 */}
         {renewalDryRunResult !== null && (
           <div style={{ marginTop: 14, border: '1px solid #d8b4fe', borderRadius: 8, overflow: 'hidden' }}>
-            <div style={{ padding: '8px 14px', background: '#fdf4ff', fontWeight: 700, fontSize: 13, color: '#7e22ce', display: 'flex', gap: 12, alignItems: 'center' }}>
+            <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 13, color: 'var(--accent)', display: 'flex', gap: 12, alignItems: 'center' }}>
               <span>{t(lang, 'renewal_dryrun_result_title')}</span>
-              <span style={{ fontWeight: 400, fontSize: 12, color: '#6b7280' }}>({t(lang, 'renewal_dryrun_checked').replace('{n}', String(renewalDryRunResult.total_checked))} / {t(lang, 'renewal_dryrun_detected').replace('{n}', String(renewalDryRunResult.matched))})</span>
-              {renewalDryRunResult.error && <span style={{ color: '#dc2626', fontSize: 12 }}>❌ {renewalDryRunResult.error}</span>}
+              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text)' }}>({t(lang, 'renewal_dryrun_checked').replace('{n}', String(renewalDryRunResult.total_checked))} / {t(lang, 'renewal_dryrun_detected').replace('{n}', String(renewalDryRunResult.matched))})</span>
+              {renewalDryRunResult.error && <span style={{ color: 'var(--red)', fontSize: 12 }}>❌ {renewalDryRunResult.error}</span>}
             </div>
             {renewalDryRunResult.emails && renewalDryRunResult.emails.length === 0 ? (
-              <div style={{ padding: '14px', color: '#6b7280', fontSize: 13 }}>{t(lang, 'renewal_dryrun_empty')}</div>
+              <div style={{ padding: '14px', color: 'var(--text)', fontSize: 13 }}>{t(lang, 'renewal_dryrun_empty')}</div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
-                    <tr style={{ background: '#f5f3ff', borderBottom: '1px solid #e5e7eb' }}>
+                    <tr style={{ background: 'var(--bg3)', borderBottom: '1px solid #e5e7eb' }}>
                       <th style={thStyle}>From</th>
                       <th style={thStyle}>Subject</th>
                       <th style={thStyle}>Date</th>
@@ -790,22 +795,22 @@ export default function Settings() {
                   </thead>
                   <tbody>
                     {(renewalDryRunResult.emails || []).map((em: any, i: number) => (
-                      <tr key={i} style={{ borderBottom: '1px solid #f3f4f6', background: em.serial_exists ? '#f0fdf4' : '#fffbeb' }}>
+                      <tr key={i} style={{ borderBottom: '1px solid #f3f4f6', background: em.serial_exists ? 'var(--green-dim)' : 'var(--yellow-dim)' }}>
                         <td style={{ ...tdStyle, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.from}</td>
                         <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.subject}</td>
                         <td style={{ ...tdStyle, whiteSpace: 'nowrap', fontSize: 11 }}>{em.date ? new Date(em.date).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                         <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, fontSize: 11 }}>
-                          {em.is_renewal ? <span style={{ color: '#166534' }}>갱신 요청</span> :
-                            em.is_related ? <span style={{ color: '#d97706' }}>단순 수신(알림)</span> : '—'}
+                          {em.is_renewal ? <span style={{ color: 'var(--green)' }}>갱신 요청</span> :
+                            em.is_related ? <span style={{ color: 'var(--yellow)' }}>단순 수신(알림)</span> : '—'}
                         </td>
                         <td style={tdStyle}>
                           {(em.matched_keywords || []).map((kw: string, ki: number) => (
-                            <span key={ki} style={{ display: 'inline-block', background: '#ede9fe', color: '#6d28d9', borderRadius: 4, padding: '1px 6px', fontSize: 11, marginRight: 3 }}>{kw}</span>
+                            <span key={ki} style={{ display: 'inline-block', background: 'var(--bg3)', color: 'var(--accent)', borderRadius: 4, padding: '1px 6px', fontSize: 11, marginRight: 3 }}>{kw}</span>
                           ))}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'center' }}>{em.is_dedicated ? '✅' : '—'}</td>
                         <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11 }}>{em.serial_number || '—'}</td>
-                        <td style={{ ...tdStyle, textAlign: 'center' }}>{em.serial_number ? (em.serial_exists ? '✅' : <span style={{ color: '#f59e0b' }}>?</span>) : '—'}</td>
+                        <td style={{ ...tdStyle, textAlign: 'center' }}>{em.serial_number ? (em.serial_exists ? '✅' : <span style={{ color: 'var(--yellow)' }}>?</span>) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -843,12 +848,12 @@ export default function Settings() {
         {/* Gmail App Password 안내 */}
         <div style={{
           marginTop: 4, marginBottom: 8, padding: '10px 14px',
-          background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, fontSize: 12,
+          background: 'var(--yellow-dim)', border: '1px solid #fed7aa', borderRadius: 8, fontSize: 12,
         }}>
           <strong>💡 Gmail 사용 시 안내:</strong> Gmail은 일반 비밀번호 로그인이 더 이상 지원되지 않습니다.
           <strong>"앱 비밀번호(App Password)"</strong>를 생성해서 이곳에 입력해야 합니다.{' '}
           <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer"
-            style={{ color: '#ea580c', fontWeight: 700 }}>
+            style={{ color: 'var(--yellow)', fontWeight: 700 }}>
             → 앱 비밀번호 생성
           </a>
           {' '}(구글 전 반드시 2단계 인증 활성화 필요)
@@ -868,7 +873,7 @@ export default function Settings() {
         <div style={{ marginTop: 12 }}>
           <button
             className="btn btn-secondary"
-            style={{ background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
+            style={{ background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid #bbf7d0' }}
             disabled={smtpTesting}
             onClick={async () => {
               setSmtpTesting(true);
@@ -940,7 +945,7 @@ export default function Settings() {
         <div className="form-group" style={{ marginTop: 14 }}>
           <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>
             {t(lang, 'slack_msg_lang_label')}
-            <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: '#6b7280' }}>
+            <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: 'var(--text)' }}>
               {t(lang, 'slack_msg_lang_note')}
             </span>
           </label>
@@ -980,7 +985,7 @@ export default function Settings() {
           <div>
             <button
               className="btn btn-secondary"
-              style={{ background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a' }}
+              style={{ background: 'var(--yellow-dim)', color: 'var(--yellow)', border: '1px solid #fde68a' }}
               disabled={(window as any).__slackTesting}
               onClick={async (e) => {
                 const btn = e.currentTarget;
@@ -1027,7 +1032,7 @@ export default function Settings() {
           <div>
             <button
               className="btn btn-secondary"
-              style={{ background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}
+              style={{ background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid #a7f3d0' }}
               disabled={(window as any).__slackTestingRelated}
               onClick={async (e) => {
                 const btn = e.currentTarget;
@@ -1098,17 +1103,17 @@ export default function Settings() {
           <div className="form-group">
             <label>{t(lang, 'label_cancel_btn_text')}</label>
             <input key={`cbtn-${loadKey}`} defaultValue={formVals.current.cancel_button_text || ''} onChange={e => setVal('cancel_button_text', e.target.value)} placeholder="opt out upgrade" />
-            <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'cancel_btn_hint')}</small>
+            <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'cancel_btn_hint')}</small>
           </div>
           <div className="form-group">
             <label>{t(lang, 'label_cancel_confirm_text')}</label>
             <input key={`cconf-${loadKey}`} defaultValue={formVals.current.cancel_confirm_text || ''} onChange={e => setVal('cancel_confirm_text', e.target.value)} placeholder="okay" />
-            <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'cancel_confirm_hint')}</small>
+            <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'cancel_confirm_hint')}</small>
           </div>
           <div className="form-group">
             <label>{t(lang, 'label_cancel_option_btn_text')}</label>
             <input key={`copt-${loadKey}`} defaultValue={formVals.current.cancel_option_button_text || ''} onChange={e => setVal('cancel_option_button_text', e.target.value)} placeholder="more options, actions, ..." />
-            <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'cancel_option_hint')}</small>
+            <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'cancel_option_hint')}</small>
           </div>
         </div>
       </div>
@@ -1149,7 +1154,7 @@ export default function Settings() {
                 />
                 <button
                   className="btn btn-sm"
-                  style={{ padding: '0 8px', background: '#fee2e2', color: '#dc2626' }}
+                  style={{ padding: '0 8px', background: 'var(--red-dim)', color: 'var(--red)' }}
                   onClick={() => {
                     const newTimes = (formVals.current.mail_check_times || []).filter((_: any, i: number) => i !== idx);
                     setVal('mail_check_times', newTimes);
@@ -1242,7 +1247,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
   return (
     <div className="settings-section">
       <SectionHeader title={t(lang, 'section_polling')} onManual={onManual} />
-      <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 16 }}>
+      <p style={{ color: 'var(--text)', fontSize: 13, marginBottom: 16 }}>
         {t(lang, 'polling_desc')}<strong>{t(lang, 'polling_desc2')}</strong>{t(lang, 'polling_desc3')}
       </p>
 
@@ -1254,11 +1259,11 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
         >
           {polling ? t(lang, 'polling_now') : t(lang, 'btn_poll_all')}
         </button>
-        {pollMsg && <span style={{ fontSize: 13, color: '#6b7280' }}>{pollMsg}</span>}
+        {pollMsg && <span style={{ fontSize: 13, color: 'var(--text)' }}>{pollMsg}</span>}
       </div>
 
       {sources.length === 0 && (
-        <div style={{ padding: '20px', textAlign: 'center', background: '#f9fafb', borderRadius: 8, color: '#9ca3af', marginBottom: 12 }}>
+        <div style={{ padding: '20px', textAlign: 'center', background: 'var(--bg3)', borderRadius: 8, color: 'var(--text)', marginBottom: 12 }}>
           {t(lang, 'no_poll_sources')}
         </div>
       )}
@@ -1266,7 +1271,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
       {sources.map((src: any) => (
         <div key={src.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}>
           <div
-            style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', background: '#f9fafb', cursor: 'pointer', gap: 10 }}
+            style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', background: 'var(--bg3)', cursor: 'pointer', gap: 10 }}
             onClick={() => setExpanded(expanded === src.id ? null : src.id)}
           >
             <input
@@ -1277,7 +1282,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
             />
             <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{src.name || '(이름 없음)'}</span>
             {src.last_polled && (
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>{t(lang, 'last_polled')}{src.last_polled.slice(0, 16).replace('T', ' ')}</span>
+              <span style={{ fontSize: 11, color: 'var(--text)' }}>{t(lang, 'last_polled')}{src.last_polled.slice(0, 16).replace('T', ' ')}</span>
             )}
             <button
               className="btn btn-sm btn-primary"
@@ -1287,13 +1292,13 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
             >{t(lang, 'btn_poll_now')}</button>
             <button
               className="btn btn-sm"
-              style={{ fontSize: 11, padding: '2px 8px', background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd' }}
+              style={{ fontSize: 11, padding: '2px 8px', background: 'var(--bg3)', color: 'var(--accent)', border: '1px solid #c4b5fd' }}
               onClick={e => { e.stopPropagation(); handlePollDryRun(src.id); }}
               disabled={dryRunState[src.id]?.running}
             >{dryRunState[src.id]?.running ? t(lang, 'poll_dryrun_running') : t(lang, 'btn_poll_dryrun')}</button>
             <button
               className="btn btn-sm"
-              style={{ fontSize: 11, padding: '2px 8px', background: '#fee2e2', color: '#dc2626' }}
+              style={{ fontSize: 11, padding: '2px 8px', background: 'var(--red-dim)', color: 'var(--red)' }}
               onClick={e => { e.stopPropagation(); if (confirm(t(lang, 'confirm_delete_source'))) removeSource(src.id); }}
             >{t(lang, 'delete')}</button>
             <span>{expanded === src.id ? '▲' : '▼'}</span>
@@ -1303,24 +1308,24 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
           {dryRunState[src.id]?.result !== null && dryRunState[src.id]?.result !== undefined && (() => {
             const dr = dryRunState[src.id].result;
             return (
-              <div style={{ borderTop: '1px solid #e5e7eb', background: '#faf5ff' }}>
-                <div style={{ padding: '8px 14px', background: '#ede9fe', fontWeight: 700, fontSize: 12, color: '#6d28d9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ borderTop: '1px solid #e5e7eb', background: 'var(--bg3)' }}>
+                <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 12, color: 'var(--accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>🔍 Dry-Run 결과</span>
                   {!dr.error && (
-                    <span style={{ fontWeight: 400, color: '#7c3aed', fontSize: 11 }}>
+                    <span style={{ fontWeight: 400, color: 'var(--accent)', fontSize: 11 }}>
                       {dr.rows.length}{t(lang, 'poll_dryrun_summary')}{dr.would_insert}{t(lang, 'poll_dryrun_summary2')}{dr.already_fetched}{t(lang, 'poll_dryrun_summary3')}{dr.rows.filter((r: any) => r.filtered_out).length}{t(lang, 'poll_dryrun_summary4')}
                     </span>
                   )}
                 </div>
                 {dr.error ? (
-                  <div style={{ padding: '10px 14px', color: '#dc2626', fontSize: 12 }}>⚠ {dr.error}</div>
+                  <div style={{ padding: '10px 14px', color: 'var(--red)', fontSize: 12 }}>⚠ {dr.error}</div>
                 ) : dr.rows.length === 0 ? (
-                  <div style={{ padding: '10px 14px', color: '#6b7280', fontSize: 12 }}>{t(lang, 'poll_dryrun_no_rows')}</div>
+                  <div style={{ padding: '10px 14px', color: 'var(--text)', fontSize: 12 }}>{t(lang, 'poll_dryrun_no_rows')}</div>
                 ) : (
                   <div style={{ overflowX: 'auto', maxHeight: 260 }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                       <thead>
-                        <tr style={{ background: '#f3e8ff', position: 'sticky', top: 0 }}>
+                        <tr style={{ background: 'var(--bg3)', position: 'sticky', top: 0 }}>
                           <th style={thStyle}>Status</th>
                           <th style={thStyle}>{t(lang, 'cancel_dryrun_col_serial')}</th>
                           <th style={thStyle}>{t(lang, 'cancel_dryrun_col_customer')}</th>
@@ -1335,10 +1340,10 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
                           const status = row.filtered_out ? 'filtered' : row.already_exists ? 'dup' : 'new';
                           const bg = status === 'new' ? '#f0fdf4' : status === 'dup' ? '#fefce8' : '#f3f4f6';
                           const badge = status === 'new'
-                            ? <span style={{ background: '#d1fae5', color: '#065f46', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_new')}</span>
+                            ? <span style={{ background: 'var(--green-dim)', color: 'var(--green)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_new')}</span>
                             : status === 'dup'
-                              ? <span style={{ background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_already')}</span>
-                              : <span style={{ background: '#e5e7eb', color: '#6b7280', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_filtered')}</span>;
+                              ? <span style={{ background: 'var(--yellow-dim)', color: 'var(--yellow)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_already')}</span>
+                              : <span style={{ background: 'var(--bg4)', color: 'var(--text)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>{t(lang, 'poll_dryrun_filtered')}</span>;
                           return (
                             <tr key={ri} style={{ background: bg, borderBottom: '1px solid #f3f4f6' }}>
                               <td style={tdStyle}>{badge}</td>
@@ -1383,7 +1388,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
                         />
                         <button
                           className="btn btn-sm"
-                          style={{ padding: '0 8px', background: '#fee2e2', color: '#dc2626' }}
+                          style={{ padding: '0 8px', background: 'var(--red-dim)', color: 'var(--red)' }}
                           onClick={() => {
                             const newTimes = (src.schedule_times || []).filter((_: any, i: number) => i !== idx);
                             updateSource(src.id, 'schedule_times', newTimes);
@@ -1403,9 +1408,9 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
                 </div>
               </div>
               <div className="form-group">
-                <label>{t(lang, 'label_order_url')} <span style={{ color: '#ef4444' }}>*</span></label>
+                <label>{t(lang, 'label_order_url')} <span style={{ color: 'var(--red)' }}>*</span></label>
                 <input value={src.url} onChange={e => updateSource(src.id, 'url', e.target.value)} placeholder="https://admin.myshop.com/orders" />
-                <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'poll_url_hint')}</small>
+                <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'poll_url_hint')}</small>
               </div>
 
               <div style={{ ...sectionLabel, marginTop: 14 }}>{t(lang, 'section_login_info')}</div>
@@ -1425,7 +1430,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               </div>
 
               <div style={{ ...sectionLabel, marginTop: 14 }}>{t(lang, 'section_field_mapping')}</div>
-              <small style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 10 }}>
+              <small style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginBottom: 10 }}>
                 {t(lang, 'field_mapping_note')}
               </small>
               <div className="form-row">
@@ -1461,7 +1466,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               <div className="form-group" style={{ marginTop: 10 }}>
                 <label>{t(lang, 'label_product_filter')}</label>
                 <input value={src.product_filter || ''} onChange={e => updateSource(src.id, 'product_filter', e.target.value)} placeholder="exocad, DentalCAD, ..." />
-                <small style={{ color: '#888', fontSize: 12 }}>{t(lang, 'poll_filter_hint')}</small>
+                <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'poll_filter_hint')}</small>
               </div>
             </div>
           )}
@@ -1478,7 +1483,7 @@ const sectionLabel: React.CSSProperties = {
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.07em',
-  color: '#6366f1',
+  color: 'var(--accent)',
   borderBottom: '1px solid #e5e7eb',
   paddingBottom: 4,
   marginBottom: 10,
@@ -1489,7 +1494,7 @@ const thStyle: React.CSSProperties = {
   textAlign: 'left',
   fontWeight: 600,
   fontSize: 11,
-  color: '#374151',
+  color: 'var(--text)',
   whiteSpace: 'nowrap',
 };
 
@@ -1501,8 +1506,8 @@ const tdStyle: React.CSSProperties = {
 function checkIcon(val: boolean | undefined): React.ReactNode {
   if (val === undefined) return '—';
   return val
-    ? <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
-    : <span style={{ color: '#dc2626', fontWeight: 700 }}>✗</span>;
+    ? <span style={{ color: 'var(--green)', fontWeight: 700 }}>✓</span>
+    : <span style={{ color: 'var(--red)', fontWeight: 700 }}>✗</span>;
 }
 
 // ── Product Code 그룹 설정 섹션 ─────────────────────────────────────────────
@@ -1510,12 +1515,12 @@ type ProductCodeGroup = 'renewal' | 'addon' | 'main' | 'memo' | 'version_update'
 interface ProductCodeRule { code: string; group: ProductCodeGroup; note?: string; }
 
 const GROUP_META: Record<ProductCodeGroup, { label: string; color: string; bg: string; descKey: string }> = {
-  renewal: { label: 'A · Renewal', color: '#1d4ed8', bg: '#eff6ff', descKey: 'group_desc_renewal' },
-  addon: { label: 'B · Add-On', color: '#15803d', bg: '#f0fdf4', descKey: 'group_desc_addon' },
-  main: { label: 'C · Main Product', color: '#7e22ce', bg: '#fdf4ff', descKey: 'group_desc_main' },
-  memo: { label: 'D · Memo', color: '#b45309', bg: '#fffbeb', descKey: 'group_desc_memo' },
-  version_update: { label: 'E · Version Update', color: '#c2410c', bg: '#fff7ed', descKey: 'group_desc_version_update' },
-  ignore: { label: 'F · Ignore', color: '#6b7280', bg: '#f9fafb', descKey: 'group_desc_ignore' },
+  renewal: { label: 'A · Renewal', color: 'var(--blue)', bg: 'var(--blue-dim)', descKey: 'group_desc_renewal' },
+  addon: { label: 'B · Add-On', color: 'var(--green)', bg: 'var(--green-dim)', descKey: 'group_desc_addon' },
+  main: { label: 'C · Main Product', color: 'var(--accent)', bg: 'var(--accent-dim)', descKey: 'group_desc_main' },
+  memo: { label: 'D · Memo', color: 'var(--yellow)', bg: 'var(--yellow-dim)', descKey: 'group_desc_memo' },
+  version_update: { label: 'E · Version Update', color: 'var(--red)', bg: 'var(--red-dim)', descKey: 'group_desc_version_update' },
+  ignore: { label: 'F · Ignore', color: 'var(--text)', bg: 'var(--bg4)', descKey: 'group_desc_ignore' },
 };
 
 const BUILT_IN_DISPLAY: Record<ProductCodeGroup, string[]> = {
@@ -1570,12 +1575,12 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
     <div className="settings-section">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h3 style={{ margin: 0 }}>{t(lang, 'product_code_title')}</h3>
-        <span style={{ fontSize: 12, color: '#6b7280' }}>{t(lang, 'product_code_sub')}</span>
+        <span style={{ fontSize: 12, color: 'var(--text)' }}>{t(lang, 'product_code_sub')}</span>
       </div>
 
       {/* 그룹별 내장 코드 목록 */}
       <div style={{ marginBottom: 20 }}>
-        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 10px' }}>
+        <p style={{ fontSize: 12, color: 'var(--text)', margin: '0 0 10px' }}>
           {t(lang, 'product_code_note')}
         </p>
         {(Object.keys(GROUP_META) as ProductCodeGroup[]).map(g => {
@@ -1595,7 +1600,7 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
               >
                 <span>{meta.label}</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 400, color: '#6b7280' }}>{t(lang, meta.descKey as any)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text)' }}>{t(lang, meta.descKey as any)}</span>
                   <span style={{ fontSize: 11, background: meta.color, color: '#fff', borderRadius: 10, padding: '1px 7px' }}>
                     {t(lang, 'product_code_count').replace('{n}', String(builtIn.length + custom.length))}
                   </span>
@@ -1603,7 +1608,7 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
                 </span>
               </button>
               {isOpen && (
-                <div style={{ padding: '10px 12px', background: '#fff' }}>
+                <div style={{ padding: '10px 12px', background: 'var(--bg2)' }}>
                   {/* 내장 코드 (read-only) */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: custom.length > 0 ? 8 : 0 }}>
                     {builtIn.map(code => (
@@ -1620,12 +1625,12 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
                         <span key={r.code} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
                           fontSize: 11, fontFamily: 'monospace',
-                          background: '#fef9c3', border: '1px solid #fbbf24', borderRadius: 4, padding: '2px 6px', color: '#92400e',
+                          background: 'var(--yellow-dim)', border: '1px solid #fbbf24', borderRadius: 4, padding: '2px 6px', color: 'var(--yellow)',
                         }}>
                           ★ {r.code}{r.note ? ` (${r.note})` : ''}
                           <button
                             onClick={() => removeRule(r.code)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, lineHeight: 1, padding: 0 }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 12, lineHeight: 1, padding: 0 }}
                           >✕</button>
                         </span>
                       ))}
@@ -1639,11 +1644,11 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
       </div>
 
       {/* 커스텀 코드 추가 */}
-      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '14px 16px' }}>
-        <div style={{ fontWeight: 600, fontSize: 13, color: '#374151', marginBottom: 10 }}>{t(lang, 'product_code_add_title')}</div>
+      <div style={{ background: 'var(--bg3)', border: '1px solid #e2e8f0', borderRadius: 8, padding: '14px 16px' }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', marginBottom: 10 }}>{t(lang, 'product_code_add_title')}</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ flex: '1 1 140px' }}>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 3 }}>Product Code</label>
+            <label style={{ fontSize: 11, color: 'var(--text)', display: 'block', marginBottom: 3 }}>Product Code</label>
             <input
               value={newCode}
               onChange={e => setNewCode(e.target.value)}
@@ -1653,7 +1658,7 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
             />
           </div>
           <div style={{ flex: '1 1 160px' }}>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 3 }}>{t(lang, 'product_code_group_label')}</label>
+            <label style={{ fontSize: 11, color: 'var(--text)', display: 'block', marginBottom: 3 }}>{t(lang, 'product_code_group_label')}</label>
             <select
               value={newGroup}
               onChange={e => setNewGroup(e.target.value as ProductCodeGroup)}
@@ -1665,7 +1670,7 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
             </select>
           </div>
           <div style={{ flex: '2 1 160px' }}>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 3 }}>{t(lang, 'product_code_memo_label')}</label>
+            <label style={{ fontSize: 11, color: 'var(--text)', display: 'block', marginBottom: 3 }}>{t(lang, 'product_code_memo_label')}</label>
             <input
               value={newNote}
               onChange={e => setNewNote(e.target.value)}
@@ -1680,7 +1685,7 @@ function ProductCodeRulesSection({ initialRules, loadKey, onRulesChange, lang }:
           >{t(lang, 'product_code_add_btn')}</button>
         </div>
         {rules.length > 0 && (
-          <div style={{ marginTop: 10, fontSize: 12, color: '#6b7280' }}>
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text)' }}>
             {t(lang, 'product_code_registered').replace('{n}', String(rules.length))}
           </div>
         )}

@@ -86,16 +86,16 @@ export default function SystemLogs() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                 {/* === 상단: System Logs === */}
                 <div className="table-container" style={{ flex: 1, minHeight: 300 }}>
-                    <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: 16, color: '#0f172a' }}>
+                    <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: 16, color: 'var(--text)' }}>
                         🖥️ System Logs ( {systemLogs.length}건 )
                     </h3>
                     {loading ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>{t(lang, 'loading')}</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'loading')}</div>
                     ) : systemLogs.length === 0 ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>해당 날짜 로그가 없습니다.</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>해당 날짜 로그가 없습니다.</div>
                     ) : (
                         <div style={{ overflowX: 'auto', maxHeight: '40vh' }}>
-                            <pre style={{ margin: 0, padding: 16, fontSize: 13, background: '#1e293b', color: '#f8fafc', whiteSpace: 'pre-wrap', minHeight: '100%' }}>
+                            <pre style={{ margin: 0, padding: 16, fontSize: 13, background: 'var(--bg4)', color: 'var(--text)', whiteSpace: 'pre-wrap', minHeight: '100%' }}>
                                 {systemLogs.join('\n')}
                             </pre>
                         </div>
@@ -103,22 +103,22 @@ export default function SystemLogs() {
                 </div>
 
                 {/* === 하단: 관련 메일 수신 알림 === */}
-                <div className="table-container" style={{ flex: 1, minHeight: 300, border: '1px solid #fde68a' }}>
-                    <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: '#fefce8', borderBottom: '1px solid #fef08a', fontSize: 16, color: '#854d0e' }}>
+                <div className="table-container" style={{ flex: 1, minHeight: 300, border: '1px solid var(--yellow)' }}>
+                    <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: 16, color: 'var(--text)' }}>
                         🔔 관련 메일 수신 알림 ( {relatedEmails.length}건 )
                     </h3>
-                    <p style={{ margin: '0 16px 10px', fontSize: 13, color: '#6b7280' }}>제품 이름은 포함되어 있으나 갱신 키워드 또는 시리얼 포맷이 일치하지 않아 갱신 요청으로 분류되지 않은 메일입니다.</p>
+                    <p style={{ margin: '0 16px 10px', fontSize: 13, color: 'var(--text)' }}>제품 이름은 포함되어 있으나 갱신 키워드 또는 시리얼 포맷이 일치하지 않아 갱신 요청으로 분류되지 않은 메일입니다.</p>
                     {loading ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>{t(lang, 'loading')}</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'loading')}</div>
                     ) : relatedEmails.length === 0 ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>관련 메일 수신 기록이 없습니다.</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>관련 메일 수신 기록이 없습니다.</div>
                     ) : (
                         <div style={{ overflowX: 'auto', maxHeight: '40vh' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
-                                    <tr style={{ background: '#fefce8', borderBottom: '1px solid #fde68a' }}>
-                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: '#854d0e' }}>Time</th>
-                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: '#854d0e' }}>Detail</th>
+                                    <tr style={{ background: 'var(--bg3)', borderBottom: '1px solid var(--border)' }}>
+                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text)' }}>Time</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text)' }}>Detail</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -131,15 +131,15 @@ export default function SystemLogs() {
                                         const detail = log.split(']: ')[1]?.replace(/\[mailId=\d+\]/, '') || log;
 
                                         return (
-                                            <tr key={idx} style={{ 
-                                                borderBottom: '1px solid #fef9c3', 
+                                            <tr key={idx} style={{
+                                                borderBottom: '1px solid var(--border)',
                                                 cursor: mailId ? 'pointer' : 'default',
-                                                backgroundColor: mailId ? '#fffdf0' : 'transparent'
+                                                backgroundColor: mailId ? 'var(--bg3)' : 'transparent'
                                             }} onClick={() => mailId && openMailPopup(mailId)}>
-                                                <td style={{ padding: '8px 12px', whiteSpace: 'nowrap', color: '#888' }}>{timeStr}</td>
+                                                <td style={{ padding: '8px 12px', whiteSpace: 'nowrap', color: 'var(--text)' }}>{timeStr}</td>
                                                 <td style={{ padding: '8px 12px' }}>
                                                     {detail}
-                                                    {mailId && <span style={{ marginLeft: 8, color: '#2563eb', textDecoration: 'underline', fontSize: 11 }}>[내용 보기]</span>}
+                                                    {mailId && <span style={{ marginLeft: 8, color: 'var(--accent)', textDecoration: 'underline', fontSize: 11 }}>[내용 보기]</span>}
                                                 </td>
                                             </tr>
                                         );

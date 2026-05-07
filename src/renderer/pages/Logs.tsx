@@ -38,7 +38,7 @@ export default function Logs() {
   if (loading) return <div>{t(lang, 'loading')}</div>;
 
   return (
-    <div>
+    <div className="page-wrapper">
       <div className="page-header">
         <h1 className="page-title">{t(lang, 'nav_logs')}</h1>
         <button className="btn btn-secondary" onClick={loadLogs}>{t(lang, 'logs_btn_refresh')}</button>
@@ -46,7 +46,7 @@ export default function Logs() {
 
       <div className="table-container">
         {logs.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>{t(lang, 'logs_empty')}</div>
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>{t(lang, 'logs_empty')}</div>
         ) : (
           <table>
             <thead>
@@ -59,7 +59,7 @@ export default function Logs() {
             <tbody>
               {logs.map(log => (
                 <tr key={log.id}>
-                  <td style={{ whiteSpace: 'nowrap', color: '#888', fontSize: 13 }}>{log.created_at}</td>
+                  <td style={{ whiteSpace: 'nowrap', color: 'var(--text3)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{log.created_at}</td>
                   <td>
                     <span className={`action-badge action-${log.action}`}>
                       {actionLabel(log.action)}
