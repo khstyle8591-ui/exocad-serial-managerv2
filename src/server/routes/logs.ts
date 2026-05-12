@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { serialService } from '../../main/services/serial.service';
-import { emailMonitorService } from '../../main/services/email-monitor.service';
+import { checkInboundNow, inboundDryRun } from '../../main/services/mail/inbound.service';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,13 +20,13 @@ router.get('/today', (_req: Request, res: Response) => {
 
 // POST /api/logs/renewal-check  (메일 스캔)
 router.post('/renewal-check', async (_req: Request, res: Response) => {
-    const result = await emailMonitorService.checkForRenewalRequests();
+    const result = await checkInboundNow();
     res.json(result);
 });
 
 // POST /api/logs/renewal-dry-run
 router.post('/renewal-dry-run', async (_req: Request, res: Response) => {
-    const result = await emailMonitorService.renewalDryRun();
+    const result = await inboundDryRun();
     res.json(result);
 });
 
@@ -66,7 +66,7 @@ router.get('/mail/:id', (req: Request, res: Response) => {
     try {
         const { getDb } = require('../../main/database');
         const db = getDb();
-        const row = db.prepare('SELECT body FROM captured_emails WHERE id = ?').get(req.params.id) as { body: string } | undefined;
+        const row = db.prepare('SELECT body FROM inbound_mails WHERE id = ?').get(req.params.id) as { body: string } | undefined;
         if (!row) return res.status(404).send('메일을 찾을 수 없습니다.');
         res.send(row.body);
     } catch (err: any) {

@@ -1,42 +1,54 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import { api } from '../api';
-
-interface Serial {
-  id: number;
-  serial_number: string;
-  customer_name: string;
-  customer_manager: string;
-  customer_email: string;
-  customer_phone: string;
-  status: string;
-}
+import type { Customer, SerialWithCustomer } from '../../shared/types';
 
 export default function Customers() {
   const { lang } = useLang();
-  const [serials, setSerials] = useState<Serial[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [serials, setSerials] = useState<SerialWithCustomer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch]   = useState('');
 
   useEffect(() => {
-    api.getSerials()
-      .then(data => setSerials(data as Serial[]))
-      .catch(console.error)
+    Promise.all([
+      window.electronAPI.listCustomers(),
+      window.electronAPI.getSerials(),
+    ])
+      .then(([customerData, serialData]) => {
+        setCustomers(customerData);
+        setSerials(serialData);
+      })
+      .catch(err => {
+        console.error(err);
+        setError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  // Group by customer
-  const customerMap = new Map<string, Serial[]>();
+  const serialsByCustomer = new Map<number, SerialWithCustomer[]>();
   serials.forEach(s => {
-    const list = customerMap.get(s.customer_name) || [];
+    const customerId = s.customer?.id ?? s.customer_id;
+    if (!customerId) return;
+    const list = serialsByCustomer.get(customerId) || [];
     list.push(s);
-    customerMap.set(s.customer_name, list);
+    serialsByCustomer.set(customerId, list);
   });
 
-  const customers = [...customerMap.entries()]
-    .filter(([name]) => !search || name.toLowerCase().includes(search.toLowerCase()))
-    .sort(([a], [b]) => a.localeCompare(b));
+  const query = search.trim().toLowerCase();
+  const filteredCustomers = customers
+    .filter(customer => {
+      if (!query) return true;
+      return [
+        customer.name,
+        customer.email,
+        customer.phone,
+        customer.dealer,
+        customer.sales_manager,
+      ].some(value => (value || '').toLowerCase().includes(query));
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'loading')}</div>;
@@ -48,7 +60,7 @@ export default function Customers() {
       <div className="page-header">
         <div>
           <div className="page-title">{t(lang, 'nav_customers')}</div>
-          <div className="page-subtitle">{t(lang, 'page_subtitle_customers').replace('{n}', String(customerMap.size))}</div>
+          <div className="page-subtitle">{t(lang, 'page_subtitle_customers').replace('{n}', String(customers.length))}</div>
         </div>
         <div style={{ position: 'relative' }}>
           <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text3)' }}>
@@ -73,18 +85,26 @@ export default function Customers() {
         </div>
       </div>
 
+      {error && (
+        <div style={{ marginBottom: 12, padding: 12, border: '1px solid var(--red)', borderRadius: 7, color: 'var(--red)', fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
       {/* Customer grid */}
       <div className="card-grid">
-        {customers.map(([name, cSerials]) => {
+        {filteredCustomers.map(customer => {
+          const cSerials = serialsByCustomer.get(customer.id) || [];
           const active    = cSerials.filter(s => s.status === 'active').length;
           const cancelled = cSerials.filter(s => s.status === 'cancelled').length;
           const expired   = cSerials.filter(s => s.status === 'expired').length;
-          const manager   = cSerials[0]?.customer_manager || '';
-          const email     = cSerials[0]?.customer_email   || '';
-          const phone     = cSerials[0]?.customer_phone   || '';
+          const name      = customer.name || '(unknown)';
+          const manager   = customer.sales_manager || '';
+          const email     = customer.email || '';
+          const phone     = customer.phone || '';
 
           return (
-            <div key={name} className="card">
+            <div key={customer.id} className="card">
               {/* Avatar + name */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <div style={{
@@ -93,7 +113,7 @@ export default function Customers() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 14, fontWeight: 600, color: 'var(--accent)',
                 }}>
-                  {name[0]}
+                  {name.charAt(0)}
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -144,7 +164,7 @@ export default function Customers() {
         })}
       </div>
 
-      {customers.length === 0 && (
+      {filteredCustomers.length === 0 && (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
           {t(lang, 'no_data')}
         </div>

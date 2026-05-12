@@ -69,7 +69,7 @@ export interface ActivityLog {
   diff: string;             // JSON {field:[old,new]}
   details: string;
   trigger_id: string | null;
-  severity: 'info' | 'warn' | 'error';
+  severity: 'info' | 'warn' | 'error' | 'critical';
   created_at: string;
 }
 
@@ -103,12 +103,14 @@ export interface InboundMail {
   subject: string;
   body: string;
   received_at: string;
-  classification: 'unclassified' | 'stop_request' | 'unrelated' | 'error';
+  classification: 'unclassified' | 'renewal_request' | 'stop_request_candidate' | 'stop_request' | 'missing_info' | 'unrelated' | 'error';
   matched_template: string | null;
   matched_keywords: string;     // JSON string[]
   extracted_serial: string | null;
   linked_serial_id: number | null;
   processed: number;
+  missing_fields: string | null; // JSON string[]
+  template_sent_at: string | null;
   error: string | null;
 }
 
@@ -167,7 +169,7 @@ export interface SerialInput {
   customer_manager?: string;
   dealer?: string;
   purchase_date?: string;
-  expiry_date?: string;
+  expiry_date?: string | null;
   engine_build?: string;
   version?: string;
   main_product?: string;
@@ -261,6 +263,12 @@ export interface ProductCodeRule {
   code: string;
   group: ProductCodeGroup;
   note?: string;
+}
+
+export interface ExpiryNoticeRule {
+  id: string;
+  days_before: number;
+  renewal_template: string;
 }
 
 // ── Poll Types ────────────────────────────────────────────────────────────────
@@ -407,6 +415,9 @@ export interface AppSettings {
   slack_webhook_url: string;
   slack_webhook_url_related: string;
   slack_enabled: boolean;
+  critical_alert_emails: string[];
+  slack_alert_enabled: boolean;
+  alert_suppress_minutes: number;
   slack_language: 'ko' | 'en' | 'ja';
   exocad_site_url: string;
   exocad_login_url: string;
@@ -420,6 +431,9 @@ export interface AppSettings {
   renewal_action_keywords: string[];
   renewal_exclude_keywords: string[];
   require_serial_format: boolean;
+  mail_serial_pattern: string;
+  missing_info_auto_reply_enabled: boolean;
+  missing_info_template: string;
   renewal_keywords: string[];
   mail_check_times: string[];
   auto_cancel_enabled: boolean;
@@ -429,6 +443,16 @@ export interface AppSettings {
   dedicated_email: string;
   custom_product_code_rules: ProductCodeRule[];
   daily_report_times: string[];
+  expiry_notice_enabled: boolean;
+  expiry_notice_time: string;
+  expiry_notice_rules: ExpiryNoticeRule[];
+  expiry_notice_days: number[];
+  expiry_notice_renewal_template: string;
+  expiry_notice_stop_template: string;
+  stop_request_notice_enabled: boolean;
+  stop_request_notice_template: string;
+  cancel_complete_notice_enabled: boolean;
+  cancel_complete_notice_template: string;
 }
 
 // =========================================================
@@ -475,6 +499,8 @@ export const IPC_CHANNELS = {
   MAIL_INBOUND_DRY_RUN: 'mail:inboundDryRun',
   MAIL_TEST_CONNECTION: 'mail:testConnection',
   MAIL_LIST_INBOUND: 'mail:listInbound',
+  MAIL_CONFIRM_STOP_REQUEST: 'mail:confirmStopRequest',
+  MAIL_SEND_MISSING_INFO_TEMPLATE: 'mail:sendMissingInfoTemplate',
 
   MAIL_SEND_TEMPLATE: 'mail:sendTemplate',
   MAIL_TEST_SMTP: 'mail:testSmtp',
@@ -513,6 +539,8 @@ export const IPC_CHANNELS = {
   NOTIFICATION_SEND_DAILY_NOW: 'notification:sendDailyReportNow',
   NOTIFICATION_LIST_REPORT_TIMES: 'notification:listReportTimes',
   NOTIFICATION_SET_REPORT_TIMES: 'notification:setReportTimes',
+  EXPIRY_NOTICE_DRY_RUN: 'expiryNotice:dryRun',
+  STOP_LIFECYCLE_NOTICE_DRY_RUN: 'stopLifecycleNotice:dryRun',
 
   LEGACY_DETECT: 'legacy:detect',
   LEGACY_LIST_SERIALS: 'legacy:listSerials',

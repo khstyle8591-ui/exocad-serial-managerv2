@@ -1,10 +1,11 @@
-import { chromium, Browser, BrowserContext } from 'playwright';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import cron from 'node-cron';
 import { getDb } from '../database';
 import { getSettings, saveSettings } from '../settings';
 import { serialService } from './serial.service';
 import { logger } from '../utils/logger';
-import type { PendingOrder, PollSource, SerialInput, PollDryRunResult, PollDryRunSourceResult, PreviewRow, ProductCodeGroup, ProductCodeRule } from '../../shared/types';
+import type { PendingOrder, PollSource, SerialInput, PollDryRunResult, PollDryRunSourceResult, PreviewRow, ProductCodeGroup, ProductCodeRule, GroupedOrder } from '../../shared/types';
+import { customerService } from './customer.service';
 
 // ────────────────────────────────────────────────────────────
 // 폴링 상태
@@ -113,6 +114,33 @@ export function getAllOrders(): PendingOrder[] {
   ).all() as PendingOrder[];
 }
 
+export function listGroupedOrders(): GroupedOrder[] {
+  const orders = getPendingOrders();
+  const grouped = new Map<string, PendingOrder[]>();
+
+  for (const order of orders) {
+    const key = order.trade_number?.trim() || `single:${order.id}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(order);
+    grouped.set(key, bucket);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([tradeNumber, bucket]) => {
+      const ordersInGroup = bucket.sort((a, b) => a.id - b.id);
+      const main = ordersInGroup.find(order => order.order_type === 'new' || order.order_type === 'renewal') ?? ordersInGroup[0] ?? null;
+      const modules = ordersInGroup.filter(order => order !== main);
+      return {
+        trade_number: tradeNumber.startsWith('single:') ? '' : tradeNumber,
+        main,
+        modules,
+        flagged_duplicate: ordersInGroup.some(order => !!order.flag_duplicate),
+        created_at: ordersInGroup[0]?.created_at || '',
+      };
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
 export function updatePendingOrder(id: number, data: Partial<PendingOrder>): PendingOrder | undefined {
   const db = getDb();
   const fields: string[] = [];
@@ -120,7 +148,7 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
 
   const allowed = [
     'serial_number', 'customer_name', 'customer_email', 'customer_address',
-    'customer_phone', 'customer_manager', 'purchase_date', 'expiry_date',
+    'customer_phone', 'dealer', 'sales_manager', 'purchase_date', 'expiry_date',
     'engine_build', 'version', 'notes', 'order_type',
   ] as const;
 
@@ -138,13 +166,27 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
-export async function approvePendingOrder(id: number, options?: { serial_status?: string }): Promise<{ success: boolean; error?: string }> {
+export async function approvePendingOrder(
+  id: number,
+  options?: { serial_status?: string; customer_id?: number; customer_data?: { name: string; email?: string; phone?: string; address?: string; dealer?: string; sales_manager?: string; notes?: string } },
+): Promise<{ success: boolean; error?: string; customer_id?: number; was_renewed?: boolean }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
 
   try {
     const targetStatus = (options?.serial_status as any) || 'active';
+    let was_renewed = false;
+    const customerInput = options?.customer_data ?? {
+      name: order.customer_name,
+      email: order.customer_email,
+      phone: order.customer_phone,
+      address: order.customer_address,
+      dealer: order.dealer,
+      sales_manager: order.sales_manager,
+    };
+    const selectedCustomerId = options?.customer_id
+      ?? (customerInput.name ? customerService.findOrCreate(customerInput).id : undefined);
     const today = new Date().toISOString().slice(0, 10);
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -152,14 +194,15 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
     if (order.order_type === 'new') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
-        // 이미 존재 → 갱신 + 폼에서 수정된 고객 정보도 함께 업데이트
+        // 이미 존재 → 갱신 처리 (flag_duplicate가 설정된 경우). 호출자에게 was_renewed로 알림
+        was_renewed = true;
         serialService.renewSerial(existing.id, 'manual');
         const customerUpdates: any = {};
         if (order.customer_name) customerUpdates.customer_name = order.customer_name;
         if (order.customer_email) customerUpdates.customer_email = order.customer_email;
         if (order.customer_phone) customerUpdates.customer_phone = order.customer_phone;
         if (order.customer_address) customerUpdates.customer_address = order.customer_address;
-        if (order.customer_manager) customerUpdates.customer_manager = order.customer_manager;
+        if (order.sales_manager) customerUpdates.customer_manager = order.sales_manager;
         if (order.version) customerUpdates.version = order.version;
         if (order.notes) customerUpdates.notes = order.notes;
         if (order.purchase_date) customerUpdates.purchase_date = order.purchase_date;
@@ -170,11 +213,13 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
       } else {
         const input: SerialInput = {
           serial_number: order.serial_number || `IMPORT-${Date.now()}`,
-          customer_name: order.customer_name,
-          customer_email: order.customer_email,
-          customer_address: order.customer_address,
-          customer_phone: order.customer_phone,
-          customer_manager: order.customer_manager,
+          customer_id: selectedCustomerId,
+          customer_name: customerInput.name,
+          customer_email: customerInput.email,
+          customer_address: customerInput.address,
+          customer_phone: customerInput.phone,
+          customer_manager: customerInput.sales_manager,
+          dealer: customerInput.dealer,
           purchase_date: order.purchase_date || today,
           expiry_date: order.expiry_date || (targetStatus === 'active' ? oneYearLater.toISOString().slice(0, 10) : ''),
           engine_build: order.engine_build,
@@ -203,7 +248,7 @@ export async function approvePendingOrder(id: number, options?: { serial_status?
     }
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
-    return { success: true };
+    return { success: true, customer_id: selectedCustomerId, was_renewed: was_renewed || undefined };
   } catch (err: any) {
     logger.error(`승인 오류: ${err.message}`);
     return { success: false, error: err.message };
@@ -221,7 +266,7 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
     if (!existing) return { success: false, error: `DB에 시리얼 ${targetSerialName}이 존재하지 않습니다.` };
 
     const updates: any = {};
-    const fields = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'customer_manager', 'purchase_date', 'version', 'notes'];
+    const fields = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'sales_manager', 'purchase_date', 'version', 'notes'];
     fields.forEach(f => {
       // undefined/null인 경우만 제외 — 빈 문자열도 업데이트 허용
       if ((form as any)[f] !== undefined && (form as any)[f] !== null) {
@@ -231,7 +276,7 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
 
     if (form.serial_status) updates.status = form.serial_status;
     if (form.serial_status === 'broken') {
-      updates.expiry_date = '';
+      updates.expiry_date = null;
     } else if (form.expiry_date !== undefined && form.expiry_date !== null) {
       updates.expiry_date = form.expiry_date;
     }
@@ -269,24 +314,229 @@ export function isAlreadyFetched(sourceId: string): boolean {
   return row.cnt > 0;
 }
 
+type PendingOrderInsert =
+  Omit<PendingOrder, 'id' | 'created_at' | 'trade_number' | 'dealer' | 'main_product' | 'modules'> &
+  { trade_number?: string; dealer?: string; main_product?: string; modules?: string };
+
 export function insertPendingOrder(
-  data: Omit<PendingOrder, 'id' | 'created_at'>,
+  data: PendingOrderInsert,
 ): void {
   const db = getDb();
   db.prepare(`
     INSERT INTO pending_orders
-      (source_id, source_url, serial_number, customer_name, customer_email,
-       customer_address, customer_phone, customer_manager, purchase_date,
-       expiry_date, engine_build, version, notes, order_type, raw_data, status,
+      (source_id, source_url, trade_number, serial_number, customer_name, customer_email,
+       customer_address, customer_phone, dealer, sales_manager, purchase_date,
+       expiry_date, engine_build, version, main_product, modules, notes, order_type, raw_data, status,
        product_code, flag_duplicate)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)
   `).run(
-    data.source_id, data.source_url, data.serial_number, data.customer_name,
+    data.source_id, data.source_url, data.trade_number ?? '', data.serial_number, data.customer_name,
     data.customer_email, data.customer_address, data.customer_phone,
-    data.customer_manager, data.purchase_date, data.expiry_date,
-    data.engine_build, data.version, data.notes, data.order_type, data.raw_data,
-    data.product_code ?? '', data.flag_duplicate ?? 0,
+    data.dealer ?? '', data.sales_manager, data.purchase_date, data.expiry_date,
+    data.engine_build, data.version, data.main_product ?? '', data.modules ?? '[]',
+    data.notes, data.order_type, data.raw_data, data.product_code ?? '', data.flag_duplicate ?? 0,
   );
+}
+
+// ────────────────────────────────────────────────────────────
+// Playwright 크롤링 공유 헬퍼
+// ────────────────────────────────────────────────────────────
+
+async function loginToSource(page: Page, source: PollSource): Promise<void> {
+  if (!source.login_url || !source.login_id) return;
+  await page.goto(source.login_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+  if (source.login_url.includes('geomedi.online')) {
+    const idField = page.locator('input[name="admin_id"]');
+    const pwField = page.locator('input[name="admin_pw"]');
+    const currentId = await idField.inputValue().catch(() => '');
+    const currentPw = await pwField.inputValue().catch(() => '');
+    if (!currentId) await idField.fill(source.login_id);
+    if (!currentPw) await pwField.fill(source.login_pw);
+    await page.locator('button.btn_login, input[src*="btn_login"], button.btn_black').first().click();
+  } else {
+    const idSelectors = ['input[type="email"]', 'input[name="id"]', 'input[name="username"]', 'input[name="user_id"]', '#id', '#username'];
+    const pwSelectors = ['input[type="password"]', 'input[name="password"]', 'input[name="pw"]', '#pw', '#password'];
+    const btnSelectors = ['button[type="submit"]', 'input[type="submit"]', '.btn-login', '#loginBtn', 'button:has-text("로그인")', 'button:has-text("Login")'];
+    for (const sel of idSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.fill(source.login_id); break; }
+    }
+    for (const sel of pwSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.fill(source.login_pw); break; }
+    }
+    for (const sel of btnSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.click(); break; }
+    }
+  }
+  await page.waitForLoadState('domcontentloaded').catch(() => { });
+  await page.waitForTimeout(2000);
+}
+
+async function setupOrderPage(page: Page, source: PollSource, logPrefix: string): Promise<void> {
+  await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(2000);
+
+  if (!source.url.includes('stock_serial.html')) return;
+
+  const categorySelected = await page.evaluate(() => {
+    const sel = document.querySelector('select[name="s_h_code_fk"]') as HTMLSelectElement | null;
+    if (!sel) return false;
+    sel.value = '0013';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    if (typeof (window as any).sub_dir10 === 'function') (window as any).sub_dir10();
+    return true;
+  });
+  if (categorySelected) {
+    logger.info(`${logPrefix} ${source.name}: 품목대분류 CAD(0013) 선택 완료`);
+    await page.waitForTimeout(2000);
+  } else {
+    logger.warn(`${logPrefix} ${source.name}: s_h_code_fk 드롭다운을 찾지 못했습니다.`);
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  await page.evaluate((date) => {
+    const dateInput = document.getElementById('s_date1') as HTMLInputElement;
+    if (dateInput) {
+      dateInput.readOnly = false;
+      dateInput.value = date;
+      dateInput.dispatchEvent(new Event('input', { bubbles: true }));
+      dateInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }, today);
+
+  const searchBtn = page.locator('button:has-text("検索"), button.btn_black, input[type="button"][value*="検索"]').first();
+  if (await searchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await searchBtn.click();
+  }
+  await page.waitForTimeout(2500);
+}
+
+function buildFieldMap(source: PollSource): Record<string, string> {
+  return {
+    serial: source.field_serial || 'LOT',
+    serial_alt: 'シリアル番号',
+    customer: source.field_customer || '注文先',
+    phone: source.field_phone || '',
+    purchase: source.field_purchase || '入荷日',
+    expiry: source.field_expiry || '出荷日',
+    product: source.field_product || '品名',
+    delivery_to: '納品先',
+    invoice_no: '出荷伝票',
+    item_code: '商品コード',
+  };
+}
+
+async function parseTablePage(page: Page, fieldMap: Record<string, string>): Promise<Record<string, string>[]> {
+  const MIN_DATA_COLS = 5;
+  const rows = await page.evaluate((args: { fieldMap: Record<string, string>; minCols: number }) => {
+    const { fieldMap, minCols } = args;
+    const results: Record<string, string>[] = [];
+    for (const table of Array.from(document.querySelectorAll('table'))) {
+      const headerRow = table.querySelector('thead tr, tr:first-child');
+      if (!headerRow) continue;
+      const headers = Array.from(headerRow.querySelectorAll('th, td'))
+        .map((c: Element) => (c.textContent || '').replace(/\s+/g, ' ').trim());
+      if (headers.length < minCols) continue;
+      for (const row of Array.from(table.querySelectorAll('tbody tr, tr:not(:first-child)'))) {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < minCols) continue;
+        const record: Record<string, string> = {};
+        cells.forEach((c: Element, i: number) => {
+          if (i < headers.length) record[headers[i]] = (c.textContent || '').replace(/\s+/g, ' ').trim();
+        });
+        const mapped: Record<string, string> = { _raw: JSON.stringify(record) };
+        for (const [key, hdr] of Object.entries(fieldMap)) {
+          if (!hdr) continue;
+          const h = headers.find(h => h.toLowerCase().includes(hdr.toLowerCase()) || hdr.toLowerCase().includes(h.toLowerCase()));
+          if (h) mapped[key] = record[h] || '';
+        }
+        if (Object.keys(mapped).length > 1) results.push(mapped);
+      }
+    }
+    return results;
+  }, { fieldMap, minCols: MIN_DATA_COLS });
+  for (const r of rows) { if (!r.serial && r.serial_alt) r.serial = r.serial_alt; }
+  return rows;
+}
+
+function createPageNavigator(page: Page, source: PollSource, logPrefix: string) {
+  let pageUrlTemplate: string | null = null;
+  const URL_PATTERNS = [
+    /(.*[?&]page_num=)\d+(&.*|$)/i,
+    /(.*[?&]page=)\d+(&.*|$)/i,
+    /(.*[?&]p=)\d+(&.*|$)/i,
+    /(.*[?&]pg=)\d+(&.*|$)/i,
+    /(.*[?&]current_page=)\d+(&.*|$)/i,
+  ];
+
+  return async (targetNum: number): Promise<boolean> => {
+    if (pageUrlTemplate) {
+      const targetUrl = pageUrlTemplate.replace('__PAGE__', String(targetNum));
+      logger.info(`${logPrefix} ${source.name}: 페이지 ${targetNum} URL 패턴 이동 → ${targetUrl.slice(0, 80)}`);
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
+      return true;
+    }
+
+    const href = await page.evaluate((n) => {
+      const all = Array.from(document.querySelectorAll('a'));
+      const target = all.find(l =>
+        l.textContent?.trim() === String(n) &&
+        (l as HTMLAnchorElement).href &&
+        !(l.getAttribute('onclick') || '').includes('pop_up')
+      );
+      return target ? (target as HTMLAnchorElement).href : null;
+    }, targetNum);
+
+    if (href) {
+      if (!pageUrlTemplate) {
+        for (const pat of URL_PATTERNS) {
+          const m = href.match(pat);
+          if (m) {
+            pageUrlTemplate = m[1] + '__PAGE__' + m[2];
+            logger.info(`${logPrefix} 페이지 URL 패턴 발견: ${pageUrlTemplate.slice(0, 80)}`);
+            break;
+          }
+        }
+      }
+      logger.info(`${logPrefix} ${source.name}: 페이지 ${targetNum} 이동 → ${href.slice(0, 80)}`);
+      await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
+      return true;
+    }
+
+    logger.info(`${logPrefix} ${source.name}: 페이지 ${targetNum} 링크 없음 — 수집 종료`);
+    return false;
+  };
+}
+
+async function collectAllPages(
+  page: Page,
+  source: PollSource,
+  fieldMap: Record<string, string>,
+  logPrefix: string,
+): Promise<Record<string, string>[]> {
+  const tableData: Record<string, string>[] = [];
+  const MAX_PAGES = 200;
+  const navigateToPage = createPageNavigator(page, source, logPrefix);
+
+  const firstRows = await parseTablePage(page, fieldMap);
+  if (firstRows.length > 0) tableData.push(...firstRows);
+  logger.info(`${logPrefix} ${source.name}: 페이지 1 → ${firstRows.length}행`);
+
+  for (let pg = 2; pg <= MAX_PAGES; pg++) {
+    const ok = await navigateToPage(pg);
+    if (!ok) break;
+    const pgRows = await parseTablePage(page, fieldMap);
+    if (pgRows.length === 0) break;
+    tableData.push(...pgRows);
+    logger.info(`${logPrefix} ${source.name}: 페이지 ${pg} → ${pgRows.length}행`);
+  }
+
+  return tableData;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -305,223 +555,11 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
     });
     const page = await context.newPage();
 
-    // ── 로그인 처리 ──────────────────────────────────────
-    if (source.login_url && source.login_id) {
-      await page.goto(source.login_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await loginToSource(page, source);
+    await setupOrderPage(page, source, '[Crawling]');
 
-      // geomedi.online 특정 로그인 처리
-      if (source.login_url.includes('geomedi.online')) {
-        const idField = page.locator('input[name="admin_id"]');
-        const pwField = page.locator('input[name="admin_pw"]');
-
-        // 현재 입력값 확인 → 값이 없는 곳에만 입력
-        const currentId = await idField.inputValue().catch(() => '');
-        const currentPw = await pwField.inputValue().catch(() => '');
-
-        if (!currentId) await idField.fill(source.login_id);
-        if (!currentPw) await pwField.fill(source.login_pw);
-
-        // 로그인 버튼 클릭 (btn_login 클래스 우선, fallback: btn_black)
-        await page.locator('button.btn_login, input[src*="btn_login"], button.btn_black').first().click();
-      } else {
-        // 공통 로그인 폼 패턴 시도 (id/email 필드 + password 필드)
-        const idSelectors = ['input[type="email"]', 'input[name="id"]', 'input[name="username"]', 'input[name="user_id"]', '#id', '#username'];
-        const pwSelectors = ['input[type="password"]', 'input[name="password"]', 'input[name="pw"]', '#pw', '#password'];
-        const btnSelectors = ['button[type="submit"]', 'input[type="submit"]', '.btn-login', '#loginBtn', 'button:has-text("로그인")', 'button:has-text("Login")'];
-
-        for (const sel of idSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await el.fill(source.login_id);
-            break;
-          }
-        }
-        for (const sel of pwSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await el.fill(source.login_pw);
-            break;
-          }
-        }
-        for (const sel of btnSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await el.click();
-            break;
-          }
-        }
-      }
-      await page.waitForLoadState('domcontentloaded').catch(() => { });
-      await page.waitForTimeout(2000);
-    }
-
-    // ── 주문 페이지 접속 ──────────────────────────────────
-    await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
-
-    // geomedi.online 특정 페이지 처리 (품목대분류 선택 → 날짜 선택 → 검색)
-    if (source.url.includes('stock_serial.html')) {
-      // 1) 품목대분류 드롭다운에서 CAD(value="0013") 선택 후 onchange 트리거
-      const categorySelected = await page.evaluate(() => {
-        const sel = document.querySelector('select[name="s_h_code_fk"]') as HTMLSelectElement | null;
-        if (!sel) return false;
-        sel.value = '0013';
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        // onchange 핸들러(sub_dir10)가 있으면 직접 호출
-        if (typeof (window as any).sub_dir10 === 'function') {
-          (window as any).sub_dir10();
-        }
-        return true;
-      });
-      if (categorySelected) {
-        logger.info(`[Crawling] ${source.name}: 품목대분류 CAD(0013) 선택 완료`);
-        await page.waitForTimeout(2000); // 분류 변경 후 페이지 반응 대기
-      } else {
-        logger.warn(`[Crawling] ${source.name}: s_h_code_fk 드롭다운을 찾지 못했습니다.`);
-      }
-
-      // 2) 날짜 설정
-      const today = new Date().toISOString().slice(0, 10);
-      await page.evaluate((date) => {
-        const dateInput = document.getElementById('s_date1') as HTMLInputElement;
-        if (dateInput) {
-          dateInput.readOnly = false;
-          dateInput.value = date;
-          dateInput.dispatchEvent(new Event('input', { bubbles: true }));
-          dateInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }, today);
-
-      // 3) 검색 버튼 클릭
-      const searchBtn = page.locator('button:has-text("検索"), button.btn_black').first();
-      if (await searchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await searchBtn.click();
-      }
-      await page.waitForTimeout(2500);
-    }
-
-    // ── 전체 페이지 수집 (페이지네이션 루프) ─────────────
-    const MIN_DATA_COLS = 5;
-    const FIELD_MAP = {
-      serial: source.field_serial || 'LOT',
-      serial_alt: 'シリアル番号',
-      customer: source.field_customer || '注文先',
-      phone: source.field_phone || '',
-      purchase: source.field_purchase || '入荷日',
-      expiry: source.field_expiry || '出荷日',
-      product: source.field_product || '品名',
-      delivery_to: '納品先',
-      invoice_no: '出荷伝票',
-      item_code: '商品コード',
-    };
-
-    // 현재 페이지 테이블 파싱 함수 (page.evaluate 래퍼)
-    const parseCurrentPage = async (): Promise<Record<string, string>[]> => {
-      const rows = await page.evaluate((args: { fieldMap: Record<string, string>; minCols: number }) => {
-        const { fieldMap, minCols } = args;
-        const results: Record<string, string>[] = [];
-        for (const table of Array.from(document.querySelectorAll('table'))) {
-          const headerRow = table.querySelector('thead tr, tr:first-child');
-          if (!headerRow) continue;
-          const headers = Array.from(headerRow.querySelectorAll('th, td'))
-            .map((c: Element) => (c.textContent || '').replace(/\s+/g, ' ').trim());
-          if (headers.length < minCols) continue;
-          for (const row of Array.from(table.querySelectorAll('tbody tr, tr:not(:first-child)'))) {
-            const cells = Array.from(row.querySelectorAll('td'));
-            if (cells.length < minCols) continue;
-            const record: Record<string, string> = {};
-            cells.forEach((c: Element, i: number) => {
-              if (i < headers.length) record[headers[i]] = (c.textContent || '').replace(/\s+/g, ' ').trim();
-            });
-            const mapped: Record<string, string> = { _raw: JSON.stringify(record) };
-            for (const [key, hdr] of Object.entries(fieldMap)) {
-              if (!hdr) continue;
-              const h = headers.find(h => h.toLowerCase().includes(hdr.toLowerCase()) || hdr.toLowerCase().includes(h.toLowerCase()));
-              if (h) mapped[key] = record[h] || '';
-            }
-            if (Object.keys(mapped).length > 1) results.push(mapped);
-          }
-        }
-        return results;
-      }, { fieldMap: FIELD_MAP, minCols: MIN_DATA_COLS });
-
-      // serial_alt fallback
-      for (const r of rows) { if (!r.serial && r.serial_alt) r.serial = r.serial_alt; }
-      return rows;
-    };
-
-    // 페이지 URL 패턴을 기억해 직접 URL 구성
-    let pageUrlTemplate: string | null = null; // e.g. ?...&page_num=PAGE
-
-    const navigateToPage = async (targetNum: number): Promise<boolean> => {
-      // 1) 페이지 생성 URL 패턴이 이미 말혀인 경우 직접 구성
-      if (pageUrlTemplate) {
-        const targetUrl = pageUrlTemplate.replace('__PAGE__', String(targetNum));
-        logger.info(`[폴링] ${source.name}: 페이지 ${targetNum} URL 패턴 이동 → ${targetUrl.slice(0, 80)}`);
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1500);
-        return true;
-      }
-
-      // 2) 텍스트로 페이지 번호에 해당하는 <a href> 찾았는 경우
-      const href = await page.evaluate((n) => {
-        const all = Array.from(document.querySelectorAll('a'));
-        const target = all.find(l =>
-          l.textContent?.trim() === String(n) &&
-          (l as HTMLAnchorElement).href &&
-          !(l.getAttribute('onclick') || '').includes('pop_up')
-        );
-        return target ? (target as HTMLAnchorElement).href : null;
-      }, targetNum);
-
-      if (href) {
-        // URL에서 페이지 번호 파라미터 패턴 추출
-        if (!pageUrlTemplate) {
-          const patterns = [
-            /(.*[?&]page_num=)\d+(&.*|$)/i,
-            /(.*[?&]page=)\d+(&.*|$)/i,
-            /(.*[?&]p=)\d+(&.*|$)/i,
-            /(.*[?&]pg=)\d+(&.*|$)/i,
-            /(.*[?&]current_page=)\d+(&.*|$)/i,
-          ];
-          for (const pat of patterns) {
-            const m = href.match(pat);
-            if (m) {
-              pageUrlTemplate = m[1] + '__PAGE__' + m[2];
-              logger.info(`[폴링] 페이지 URL 패턴 발견: ${pageUrlTemplate.slice(0, 80)}`);
-              break;
-            }
-          }
-        }
-        logger.info(`[폴링] ${source.name}: 페이지 ${targetNum} 이동 → ${href.slice(0, 80)}`);
-        await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1500);
-        return true;
-      }
-
-      logger.info(`[폴링] ${source.name}: 페이지 ${targetNum} 링크 없음 — 수집 종료`);
-      return false;
-    };
-
-    const tableData: Record<string, string>[] = [];
-    const MAX_PAGES = 200;
-    let currentPage = 1;
-
-    while (currentPage <= MAX_PAGES) {
-      const pgRows = await parseCurrentPage();
-      if (pgRows.length > 0 || currentPage === 1) {
-        if (pgRows.length > 0) tableData.push(...pgRows);
-        logger.info(`[폴링] ${source.name}: 페이지 ${currentPage} → ${pgRows.length}행`);
-      } else {
-        break;
-      }
-
-      const ok = await navigateToPage(currentPage + 1);
-      if (!ok) break;
-
-      currentPage++;
-    }
-
+    const fieldMap = buildFieldMap(source);
+    const tableData = await collectAllPages(page, source, fieldMap, '[폴링]');
     logger.info(`[Crawling] ${source.name}: 전체 ${tableData.length}행 수집`);
 
 
@@ -559,7 +597,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
             customer_email: '',
             customer_address: '',
             customer_phone: row.phone || '',
-            customer_manager: '',
+            sales_manager: '',
             purchase_date: normalizeDate(row.purchase) || '',
             expiry_date: normalizeDate(row.expiry) || '',
             engine_build: '',
@@ -570,6 +608,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
             status: 'pending',
             product_code: code,
             flag_duplicate: 0,
+            trade_number: row.invoice_no || '',
           });
           found++;
         } catch (insertErr: any) {
@@ -597,10 +636,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
             d.setFullYear(d.getFullYear() + 1);
             newExpiry = d.toISOString().slice(0, 10);
           }
-          const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-          const db = getDb();
-          db.prepare("UPDATE serials SET expiry_date = ?, status = 'active', updated_at = ? WHERE id = ?")
-            .run(newExpiry, now, existing.id);
+          serialService.renewSerialWithExpiry(existing.id, newExpiry, 'polling');
           logger.info(`[폴링] Renewal 처리: ${serial} expiry ${existing.expiry_date} → ${newExpiry}`);
           found++;
         }
@@ -699,7 +735,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         logger.info(`[폴링] 중복 serial 감지 (flag): ${serial}`);
       }
 
-      const pendingData: Omit<PendingOrder, 'id' | 'created_at'> = {
+      const pendingData: PendingOrderInsert = {
         source_id: sourceId,
         source_url: source.url,
         serial_number: serial,
@@ -707,7 +743,11 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         customer_email: '',
         customer_address: '',
         customer_phone: baseRow.phone || '',
-        customer_manager: '',
+        dealer: '',
+        sales_manager: '',
+        trade_number: baseRow.invoice_no || '',
+        main_product: mainProduct,
+        modules: JSON.stringify(addOns),
         purchase_date: normalizeDate(baseRow.purchase) || '',
         expiry_date: normalizeDate(baseRow.expiry) || '',
         engine_build: '',
@@ -748,7 +788,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       if (isAlreadyFetched(sourceId)) continue;
 
       const standaloneFilterKeyword = (source.product_filter || '').trim().toLowerCase();
-      if (standaloneFilterKeyword && !(row.product || '').toLowerCase().includes(standaloneFilterKeyword)) continue;
+      if (!matchesProductFilter(row.product || '', standaloneFilterKeyword)) continue;
 
       try {
         insertPendingOrder({
@@ -759,7 +799,8 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
           customer_email: '',
           customer_address: '',
           customer_phone: row.phone || '',
-          customer_manager: '',
+          sales_manager: '',
+          trade_number: row.invoice_no || '',
           purchase_date: normalizeDate(row.purchase) || '',
           expiry_date: normalizeDate(row.expiry) || '',
           engine_build: '',
@@ -872,207 +913,11 @@ async function crawlSourceDryRun(source: PollSource): Promise<PollDryRunSourceRe
     });
     const page = await context.newPage();
 
-    // 로그인
-    if (source.login_url && source.login_id) {
-      await page.goto(source.login_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await loginToSource(page, source);
+    await setupOrderPage(page, source, '[Dry-Run]');
 
-      // geomedi.online 전용 로그인 처리 (값 있는 곳은 스킵, 없는 곳만 입력)
-      if (source.login_url.includes('geomedi.online')) {
-        const idField = page.locator('input[name="admin_id"]');
-        const pwField = page.locator('input[name="admin_pw"]');
-
-        const currentId = await idField.inputValue().catch(() => '');
-        const currentPw = await pwField.inputValue().catch(() => '');
-
-        if (!currentId) await idField.fill(source.login_id);
-        if (!currentPw) await pwField.fill(source.login_pw);
-
-        await page.locator('button.btn_login, input[src*="btn_login"], button.btn_black').first().click();
-      } else {
-        const idSelectors = ['input[type="email"]', 'input[name="id"]', 'input[name="username"]', 'input[name="user_id"]', '#id', '#username'];
-        const pwSelectors = ['input[type="password"]', 'input[name="password"]', 'input[name="pw"]', '#pw', '#password'];
-        const btnSelectors = ['button[type="submit"]', 'input[type="submit"]', '.btn-login', '#loginBtn', 'button:has-text("로그인")', 'button:has-text("Login")'];
-
-        for (const sel of idSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.fill(source.login_id); break; }
-        }
-        for (const sel of pwSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.fill(source.login_pw); break; }
-        }
-        for (const sel of btnSelectors) {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 2000 }).catch(() => false)) { await el.click(); break; }
-        }
-      }
-      await page.waitForLoadState('domcontentloaded').catch(() => { });
-      await page.waitForTimeout(2000);
-    }
-
-    // 주문 페이지 접속
-    await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
-
-    // geomedi.online 특정 페이지 처리 (품목대분류 선택 → 날짜 선택 → 검색) — dry-run도 동일하게 적용
-    if (source.url.includes('stock_serial.html')) {
-      // 1) 품목대분류 드롭다운에서 CAD(value="0013") 선택 후 onchange 트리거
-      const categorySelectedDry = await page.evaluate(() => {
-        const sel = document.querySelector('select[name="s_h_code_fk"]') as HTMLSelectElement | null;
-        if (!sel) return false;
-        sel.value = '0013';
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        // onchange 핸들러(sub_dir10)가 있으면 직접 호출
-        if (typeof (window as any).sub_dir10 === 'function') {
-          (window as any).sub_dir10();
-        }
-        return true;
-      });
-      if (categorySelectedDry) {
-        logger.info(`[Dry-Run] ${source.name}: 품목대분류 CAD(0013) 선택 완료`);
-        await page.waitForTimeout(2000); // 분류 변경 후 페이지 반응 대기
-      } else {
-        logger.warn(`[Dry-Run] ${source.name}: s_h_code_fk 드롭다운을 찾지 못했습니다.`);
-      }
-
-      // 2) 날짜 설정
-      const today = new Date().toISOString().slice(0, 10);
-      await page.evaluate((date) => {
-        const dateInput = document.getElementById('s_date1') as HTMLInputElement;
-        if (dateInput) {
-          dateInput.readOnly = false;
-          dateInput.value = date;
-          // React/Vue 등 프레임워크가 감지할 수 있도록 change 이벤트 발생
-          dateInput.dispatchEvent(new Event('input', { bubbles: true }));
-          dateInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }, today);
-
-      // 3) 검색 버튼 클릭
-      const searchBtn = page.locator('button:has-text("検索"), button.btn_black, input[type="button"][value*="検索"]').first();
-      if (await searchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await searchBtn.click();
-        await page.waitForTimeout(2000);
-      }
-    }
-
-    // 테이블 파싱 — 전체 페이지 수집 (crawlSource와 동일한 루프)
-    const MIN_COLS_DRY = 5;
-    const FIELD_MAP_DRY = {
-      serial: source.field_serial || 'LOT',
-      serial_alt: 'シリアル番号',
-      customer: source.field_customer || '注文先',
-      phone: source.field_phone || '',
-      purchase: source.field_purchase || '入荷日',
-      expiry: source.field_expiry || '出荷日',
-      product: source.field_product || '品名',
-      delivery_to: '納品先',
-      invoice_no: '出荷伝票',
-      item_code: '商品コード',
-    };
-
-    const parsePageDry = async (): Promise<Record<string, string>[]> => {
-      const rows = await page.evaluate((args: { fieldMap: Record<string, string>; minCols: number }) => {
-        const { fieldMap, minCols } = args;
-        const results: Record<string, string>[] = [];
-        for (const table of Array.from(document.querySelectorAll('table'))) {
-          const headerRow = table.querySelector('thead tr, tr:first-child');
-          if (!headerRow) continue;
-          const headers = Array.from(headerRow.querySelectorAll('th, td'))
-            .map((c: Element) => (c.textContent || '').replace(/\s+/g, ' ').trim());
-          if (headers.length < minCols) continue;
-          for (const row of Array.from(table.querySelectorAll('tbody tr, tr:not(:first-child)'))) {
-            const cells = Array.from(row.querySelectorAll('td'));
-            if (cells.length < minCols) continue;
-            const record: Record<string, string> = {};
-            cells.forEach((c: Element, i: number) => {
-              if (i < headers.length) record[headers[i]] = (c.textContent || '').replace(/\s+/g, ' ').trim();
-            });
-            const mapped: Record<string, string> = { _raw: JSON.stringify(record) };
-            for (const [key, hdr] of Object.entries(fieldMap)) {
-              if (!hdr) continue;
-              const h = headers.find(h => h.toLowerCase().includes(hdr.toLowerCase()) || hdr.toLowerCase().includes(h.toLowerCase()));
-              if (h) mapped[key] = record[h] || '';
-            }
-            if (Object.keys(mapped).length > 1) results.push(mapped);
-          }
-        }
-        return results;
-      }, { fieldMap: FIELD_MAP_DRY, minCols: MIN_COLS_DRY });
-      for (const r of rows) { if (!r.serial && r.serial_alt) r.serial = r.serial_alt; }
-      return rows;
-    };
-
-    // 페이지 URL 패턴을 기억해 URL 구성 (Dry-Run 전용)
-    let dryPageUrlTemplate: string | null = null;
-
-    const navigateToPageDry = async (targetNum: number): Promise<boolean> => {
-      // 1) URL 패턴 장억인 경우 직접 구성
-      if (dryPageUrlTemplate) {
-        const targetUrl = dryPageUrlTemplate.replace('__PAGE__', String(targetNum));
-        logger.info(`[Dry-Run] ${source.name}: 페이지 ${targetNum} URL 패턴 이동 → ${targetUrl.slice(0, 80)}`);
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1500);
-        return true;
-      }
-
-      // 2) 텍스트로 페이지 번호 <a href> 찾기
-      const href = await page.evaluate((n) => {
-        const all = Array.from(document.querySelectorAll('a'));
-        const target = all.find(l =>
-          l.textContent?.trim() === String(n) &&
-          (l as HTMLAnchorElement).href &&
-          !(l.getAttribute('onclick') || '').includes('pop_up')
-        );
-        return target ? (target as HTMLAnchorElement).href : null;
-      }, targetNum);
-
-      if (href) {
-        // URL 패턴 추출
-        if (!dryPageUrlTemplate) {
-          const patterns = [
-            /(.*[?&]page_num=)\d+(&.*|$)/i,
-            /(.*[?&]page=)\d+(&.*|$)/i,
-            /(.*[?&]p=)\d+(&.*|$)/i,
-            /(.*[?&]pg=)\d+(&.*|$)/i,
-            /(.*[?&]current_page=)\d+(&.*|$)/i,
-          ];
-          for (const pat of patterns) {
-            const m = href.match(pat);
-            if (m) {
-              dryPageUrlTemplate = m[1] + '__PAGE__' + m[2];
-              logger.info(`[Dry-Run] 페이지 URL 패턴 발견: ${dryPageUrlTemplate.slice(0, 80)}`);
-              break;
-            }
-          }
-        }
-        logger.info(`[Dry-Run] ${source.name}: 페이지 ${targetNum} 이동 → ${href.slice(0, 80)}`);
-        await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1500);
-        return true;
-      }
-
-      logger.info(`[Dry-Run] ${source.name}: 페이지 ${targetNum} 링크 없음 — 종료`);
-      return false;
-    };
-
-    const tableData: Record<string, string>[] = [];
-    const MAX_PAGES = 200;
-
-    // 페이지 1 수집
-    const firstRows = await parsePageDry();
-    tableData.push(...firstRows);
-    logger.info(`[Dry-Run] ${source.name}: 페이지 1 → ${firstRows.length}행`);
-
-    // 2페이지부터 URL 이동으로 순수 탐색
-    for (let pg = 2; pg <= MAX_PAGES; pg++) {
-      const ok = await navigateToPageDry(pg);
-      if (!ok) break;
-      const pgRows = await parsePageDry();
-      tableData.push(...pgRows);
-      logger.info(`[Dry-Run] ${source.name}: 페이지 ${pg} → ${pgRows.length}행`);
-      if (pgRows.length === 0) break;
-    }
+    const fieldMap = buildFieldMap(source);
+    const tableData = await collectAllPages(page, source, fieldMap, '[Dry-Run]');
 
 
     // 결과 분류 (저장하지 않고 미리보기만)
@@ -1180,7 +1025,7 @@ export function startPollingScheduler(): void {
             await pollNow(source.id).catch(err => {
               logger.error(`[Scheduler] 예약 폴링 실패 (${source.name}): ${err.message}`);
             });
-          }, { timezone: 'Asia/Seoul' });
+          }, { timezone: 'Asia/Tokyo' });
           
           tasks.push(task);
           logger.info(`[Scheduler] 스케줄 등록 완료: ${source.name} -> ${cronExpr} (KST)`);

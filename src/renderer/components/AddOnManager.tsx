@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../api';
+import { useLang } from '../App';
+import { t } from '../i18n';
 
 interface Props {
   serial: any;
@@ -7,6 +9,7 @@ interface Props {
 }
 
 export default function AddOnManager({ serial, onClose }: Props) {
+  const { lang } = useLang();
   const [addOns, setAddOns] = useState<{ name: string; added_date: string }[]>(
     JSON.parse(serial.add_ons || '[]')
   );
@@ -33,13 +36,13 @@ export default function AddOnManager({ serial, onClose }: Props) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 400 }}>
         <div className="modal-header">
-          <h3>Add-on 관리 - {serial.serial_number}</h3>
+          <h3>{t(lang, 'addon_manage_title').replace('{sn}', serial.serial_number)}</h3>
           <button className="btn btn-sm btn-secondary" onClick={onClose}>X</button>
         </div>
 
         <div style={{ marginBottom: 16 }}>
           {addOns.length === 0 ? (
-            <div style={{ color: '#888', padding: 10 }}>등록된 Add-on이 없습니다.</div>
+            <div style={{ color: '#888', padding: 10 }}>{t(lang, 'no_addons')}</div>
           ) : (
             <div className="addon-tags" style={{ gap: 8 }}>
               {addOns.map((addon, i) => (
@@ -56,17 +59,17 @@ export default function AddOnManager({ serial, onClose }: Props) {
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text"
-            placeholder="Add-on 이름 입력..."
+            placeholder={t(lang, 'addon_name_placeholder')}
             value={newAddon}
             onChange={e => setNewAddon(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleAdd()}
             style={{ flex: 1, padding: '8px 12px', border: '1px solid #ddd', borderRadius: 6 }}
           />
-          <button className="btn btn-primary" onClick={handleAdd}>추가</button>
+          <button className="btn btn-primary" onClick={handleAdd}>{t(lang, 'add')}</button>
         </div>
 
         <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>닫기</button>
+          <button className="btn btn-secondary" onClick={onClose}>{t(lang, 'close')}</button>
         </div>
       </div>
     </div>

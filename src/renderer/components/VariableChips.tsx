@@ -1,16 +1,18 @@
 import React from 'react';
+import { useLang } from '../App';
+import { t } from '../i18n';
 
-const VARS: { key: string; label: string }[] = [
-  { key: 'CUSTOMER_NAME', label: '顧客名' },
-  { key: 'CUSTOMER_EMAIL', label: 'メール' },
-  { key: 'SERIAL_NUMBER', label: 'シリアル' },
-  { key: 'EXPIRY_DATE', label: '有効期限' },
-  { key: 'PURCHASE_DATE', label: '購入日' },
-  { key: 'MAIN_PRODUCT', label: '製品名' },
-  { key: 'MODULES', label: 'Add-on' },
-  { key: 'TODAY', label: '今日' },
-  { key: 'DEALER', label: 'ディーラー' },
-  { key: 'SALES_MANAGER', label: '担当者' },
+const VARS: { key: string; labelKey: string }[] = [
+  { key: 'CUSTOMER_NAME', labelKey: 'var_customer_name' },
+  { key: 'CUSTOMER_EMAIL', labelKey: 'var_customer_email' },
+  { key: 'SERIAL_NUMBER', labelKey: 'var_serial_number' },
+  { key: 'EXPIRY_DATE', labelKey: 'var_expiry_date' },
+  { key: 'PURCHASE_DATE', labelKey: 'var_purchase_date' },
+  { key: 'MAIN_PRODUCT', labelKey: 'var_main_product' },
+  { key: 'MODULES', labelKey: 'col_addons' },
+  { key: 'TODAY', labelKey: 'var_today' },
+  { key: 'DEALER', labelKey: 'var_dealer' },
+  { key: 'SALES_MANAGER', labelKey: 'var_sales_manager' },
 ];
 
 interface Props {
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export default function VariableChips({ onInsert }: Props) {
+  const { lang } = useLang();
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
       {VARS.map(v => (
@@ -38,7 +41,7 @@ export default function VariableChips({ onInsert }: Props) {
             lineHeight: '18px',
           }}
         >
-          {v.label}
+          {t(lang, v.labelKey as any)}
         </button>
       ))}
     </div>

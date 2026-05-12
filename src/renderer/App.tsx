@@ -84,6 +84,10 @@ export default function App() {
     })();
   }, []);
 
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+
   const renderPage = () => {
     switch (page) {
       case 'dashboard':        return <Dashboard />;

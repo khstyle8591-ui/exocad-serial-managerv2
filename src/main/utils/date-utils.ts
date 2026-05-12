@@ -1,19 +1,19 @@
 /**
- * Returns the current date string in YYYY-MM-DD format (Asia/Seoul timezone)
+ * Returns the current date string in YYYY-MM-DD format (Asia/Tokyo timezone)
  */
 export function getTodayDateString(): string {
-  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 
 /**
- * Returns the date string in YYYY-MM-DD format for a given Date object (Asia/Seoul timezone)
+ * Returns the date string in YYYY-MM-DD format for a given Date object (Asia/Tokyo timezone)
  */
 export function getDateString(date: Date): string {
-  return date.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+  return date.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 
 /**
- * Returns the yesterday's date string in YYYY-MM-DD format (Asia/Seoul timezone)
+ * Returns the yesterday's date string in YYYY-MM-DD format (Asia/Tokyo timezone)
  */
 export function getYesterdayDateString(): string {
   const yesterday = new Date();
@@ -22,10 +22,10 @@ export function getYesterdayDateString(): string {
 }
 
 /**
- * Returns the current timestamp string in YYYY-MM-DD HH:mm:ss format (Asia/Seoul timezone)
+ * Returns the current timestamp string in YYYY-MM-DD HH:mm:ss format (Asia/Tokyo timezone)
  */
 export function getNowTimestampString(): string {
-  return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).replace('T', ' ');
+  return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace('T', ' ');
 }
 
 /**

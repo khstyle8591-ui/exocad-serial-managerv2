@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { SerialInput, ExcelSerialRow } from '../../shared/types';
+import type { SerialInput, SerialWithCustomer, ExcelSerialRow } from '../../shared/types';
 
 export class ExcelService {
   parseExcelFile(filePath: string): { serials: SerialInput[]; errors: string[] } {
@@ -142,6 +142,42 @@ export class ExcelService {
     ws['!cols'] = [
       { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 30 }, { wch: 16 }, { wch: 12 },
       { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 24 }, { wch: 20 },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Serials');
+    XLSX.writeFile(wb, outputPath);
+  }
+
+  exportSerials(serials: SerialWithCustomer[], outputPath: string): void {
+    const wb = XLSX.utils.book_new();
+    const headers = [
+      'serial_number', 'status', 'customer_name', 'customer_email',
+      'customer_phone', 'customer_address', 'sales_manager', 'dealer',
+      'purchase_date', 'expiry_date', 'main_product', 'engine_build',
+      'version', 'modules', 'renewal_stop', 'notes',
+    ];
+    const rows = serials.map(s => [
+      s.serial_number,
+      s.status,
+      s.customer?.name ?? '',
+      s.customer?.email ?? '',
+      s.customer?.phone ?? '',
+      s.customer?.address ?? '',
+      s.customer?.sales_manager ?? '',
+      s.customer?.dealer ?? '',
+      s.purchase_date ?? '',
+      s.expiry_date ?? '',
+      s.main_product ?? '',
+      s.engine_build ?? '',
+      s.version ?? '',
+      (() => { try { return (JSON.parse(s.modules || '[]') as string[]).join(', '); } catch { return ''; } })(),
+      s.renewal_stop_requested ? 'Y' : '',
+      s.notes ?? '',
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [
+      { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 16 },
+      { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+      { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 28 }, { wch: 10 }, { wch: 20 },
     ];
     XLSX.utils.book_append_sheet(wb, ws, 'Serials');
     XLSX.writeFile(wb, outputPath);

@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getSettings, saveSettings } from '../../main/settings';
-import { restartPreExpiryTask, startMailCheck } from '../../main/scheduler';
+import { restartPreExpiryTask, runExpiryNoticeDryRun, startDailyReportTasks, startExpiryNoticeTask, startMailCheck } from '../../main/scheduler';
 import { startPollingScheduler } from '../../main/services/order.service';
 import { notificationService } from '../../main/services/notification.service';
 import { emailMonitorService } from '../../main/services/email-monitor.service';
+import { runStopLifecycleNoticeDryRun } from '../../main/services/mail/lifecycle-notice.service';
 import type { AppSettings } from '../../shared/types';
 
 const router = Router();
@@ -18,6 +19,8 @@ router.post('/', (req: Request, res: Response) => {
     saveSettings(req.body as Partial<AppSettings>);
     restartPreExpiryTask();
     startMailCheck();
+    startDailyReportTasks();
+    startExpiryNoticeTask();
     startPollingScheduler();
     res.json(getSettings());
 });
@@ -43,6 +46,18 @@ router.post('/test-slack-related', async (req: Request, res: Response) => {
 // POST /api/settings/test-mail-connection
 router.post('/test-mail-connection', async (req: Request, res: Response) => {
     const result = await emailMonitorService.testMailConnection(req.body);
+    res.json(result);
+});
+
+// POST /api/settings/expiry-notice-dry-run
+router.post('/expiry-notice-dry-run', async (req: Request, res: Response) => {
+    const result = await runExpiryNoticeDryRun(req.body);
+    res.json(result);
+});
+
+// POST /api/settings/stop-lifecycle-notice-dry-run
+router.post('/stop-lifecycle-notice-dry-run', async (req: Request, res: Response) => {
+    const result = await runStopLifecycleNoticeDryRun(req.body);
     res.json(result);
 });
 

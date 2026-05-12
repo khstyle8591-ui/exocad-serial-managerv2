@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
 import { excelService } from '../../main/services/excel.service';
+import { sendStopRequestReceivedNotice } from '../../main/services/mail/lifecycle-notice.service';
 import type { SerialInput, AddOn } from '../../shared/types';
 
 const router = Router();
@@ -15,6 +16,18 @@ router.get('/', (_req: Request, res: Response) => {
 // GET /api/serials/stats
 router.get('/stats', (_req: Request, res: Response) => {
     res.json(serialService.getStats());
+});
+
+// GET /api/serials/stats/counts
+router.get('/stats/counts', (_req: Request, res: Response) => {
+    res.json(serialService.getStats());
+});
+
+// GET /api/serials/stats/series?granularity=day&range=30
+router.get('/stats/series', (req: Request, res: Response) => {
+    const granularity = String(req.query.granularity || 'day') as 'day' | 'month' | 'year';
+    const range = Number(req.query.range) || 30;
+    res.json(serialService.getStatsSeries(granularity, range));
 });
 
 // GET /api/serials/template/download
@@ -77,6 +90,49 @@ router.post('/:id/addon', (req: Request, res: Response) => {
     try {
         const result = serialService.addAddon(Number(req.params.id), req.body as AddOn);
         res.json(result);
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// POST /api/serials/:id/activate
+router.post('/:id/activate', (req: Request, res: Response) => {
+    try {
+        res.json(serialService.activate(Number(req.params.id)));
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// POST /api/serials/:id/stop-requested
+router.post('/:id/stop-requested', async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const flag = !!req.body?.flag;
+        const before = serialService.getById(id);
+        const result = serialService.setStopRequested(id, flag, req.body?.triggerId);
+        if (flag && before && before.renewal_stop_requested !== 1 && result) {
+            await sendStopRequestReceivedNotice(result).catch(() => {});
+        }
+        res.json(result);
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// POST /api/serials/:id/cancel-db
+router.post('/:id/cancel-db', (req: Request, res: Response) => {
+    try {
+        res.json(serialService.cancelManual(Number(req.params.id)));
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// POST /api/serials/:id/remove-module
+router.post('/:id/remove-module', (req: Request, res: Response) => {
+    try {
+        res.json(serialService.removeModule(Number(req.params.id), String(req.body?.name || '')));
     } catch (err: any) {
         res.status(400).json({ error: err.message });
     }

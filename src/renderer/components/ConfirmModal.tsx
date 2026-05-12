@@ -2,6 +2,8 @@
  * ConfirmModal.tsx — Generic yes/no confirmation dialog.
  */
 import React from 'react';
+import { useLang } from '../App';
+import { t } from '../i18n';
 
 interface Props {
   title: string;
@@ -12,7 +14,8 @@ interface Props {
   onCancel: () => void;
 }
 
-export default function ConfirmModal({ title, message, confirmLabel = '확인', danger = false, onConfirm, onCancel }: Props) {
+export default function ConfirmModal({ title, message, confirmLabel, danger = false, onConfirm, onCancel }: Props) {
+  const { lang } = useLang();
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
@@ -27,10 +30,10 @@ export default function ConfirmModal({ title, message, confirmLabel = '확인', 
         <p style={{ margin: '0 0 24px', color: 'var(--text2)', fontSize: 14, lineHeight: 1.6 }}>{message}</p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onCancel} className="btn btn-secondary">
-            취소
+            {t(lang, 'cancel')}
           </button>
           <button onClick={onConfirm} className={danger ? 'btn btn-danger' : 'btn btn-primary'}>
-            {confirmLabel}
+            {confirmLabel ?? t(lang, 'confirm')}
           </button>
         </div>
       </div>

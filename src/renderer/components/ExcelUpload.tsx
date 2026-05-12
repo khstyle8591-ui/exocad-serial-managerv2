@@ -1,11 +1,14 @@
 import React from 'react';
 import { api } from '../api';
+import { useLang } from '../App';
+import { t } from '../i18n';
 
 interface Props {
   onImportComplete: () => void;
 }
 
 export default function ExcelUpload({ onImportComplete }: Props) {
+  const { lang } = useLang();
   const handleUpload = async () => {
     // 웹서버 모드: <input type="file"> 으로 파일 선택 후 raw buffer POST
     const input = document.createElement('input');
@@ -17,17 +20,17 @@ export default function ExcelUpload({ onImportComplete }: Props) {
       try {
         const result = await api.bulkImport(file) as any;
         if (result.imported > 0) {
-          alert(`${result.imported}건이 성공적으로 임포트되었습니다.`);
+          alert(t(lang, 'excel_import_success').replace('{n}', String(result.imported)));
           onImportComplete();
         }
         if (result.errors.length > 0) {
-          alert(`오류 발생:\n${result.errors.slice(0, 10).join('\n')}${result.errors.length > 10 ? `\n... 외 ${result.errors.length - 10}건` : ''}`);
+          alert(t(lang, 'excel_import_errors').replace('{errors}', result.errors.slice(0, 10).join('\n')) + (result.errors.length > 10 ? t(lang, 'excel_import_more').replace('{n}', String(result.errors.length - 10)) : ''));
         }
         if (result.imported === 0 && result.errors.length === 0) {
-          alert('임포트할 데이터가 없습니다.');
+          alert(t(lang, 'excel_import_empty'));
         }
       } catch (err: any) {
-        alert(`임포트 실패: ${err.message}`);
+        alert(t(lang, 'import_failed').replace('{error}', err.message));
       }
     };
     input.click();
@@ -35,7 +38,7 @@ export default function ExcelUpload({ onImportComplete }: Props) {
 
   return (
     <button className="btn btn-success" onClick={handleUpload}>
-      엑셀 업로드
+      {t(lang, 'excel_upload')}
     </button>
   );
 }

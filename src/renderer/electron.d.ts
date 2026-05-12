@@ -59,6 +59,8 @@ declare global {
       inboundDryRun(): Promise<any>;
       testMailConnection(settingsOverride?: Partial<AppSettings>): Promise<any>;
       listInboundMails(filter?: any): Promise<any[]>;
+      confirmStopRequestFromMail(id: number): Promise<{ success: boolean; error?: string; serial_number?: string }>;
+      sendMissingInfoTemplateForMail(id: number): Promise<{ success: boolean; message: string }>;
 
       // ── Mail Templates ────────────────────────────────────────────────────
       sendMailTemplate(code: string, to: string, vars: Record<string, string>, options?: any): Promise<any>;
@@ -102,6 +104,8 @@ declare global {
       sendDailyReportNow(): Promise<any>;
       listReportTimes(): Promise<string[]>;
       setReportTimes(times: string[]): Promise<any>;
+      runExpiryNoticeDryRun(input: any): Promise<any>;
+      runStopLifecycleNoticeDryRun(input: any): Promise<any>;
 
       // ── Legacy Import ─────────────────────────────────────────────────────
       detectLegacy(): Promise<{ available: boolean; path: string; serial_count: number; last_modified: string | null }>;

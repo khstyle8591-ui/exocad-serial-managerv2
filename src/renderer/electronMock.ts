@@ -108,6 +108,8 @@ const mock: any = {
   inboundDryRun: () => api.inboundDryRun(),
   testMailConnection: (override?: any) => api.testMailConnection(override),
   listInboundMails: (filter?: any) => api.listInboundMails(filter),
+  confirmStopRequestFromMail: (id: number) => api.confirmStopRequestFromMail(id),
+  sendMissingInfoTemplateForMail: (id: number) => api.sendMissingInfoTemplateForMail(id),
 
   // ── Mail Templates ────────────────────────────────────────────────────────
   sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: any) =>
@@ -158,6 +160,8 @@ const mock: any = {
   sendDailyReportNow: () => api.sendDailyReportNow(),
   listReportTimes: () => api.listReportTimes(),
   setReportTimes: (times: string[]) => api.setReportTimes(times),
+  runExpiryNoticeDryRun: (input: any) => api.runExpiryNoticeDryRun(input),
+  runStopLifecycleNoticeDryRun: (input: any) => api.runStopLifecycleNoticeDryRun(input),
 
   // ── Legacy Import ─────────────────────────────────────────────────────────
   detectLegacy: () => api.detectLegacy(),

@@ -69,11 +69,11 @@ export default function SerialData() {
     if (!deleteTarget) return;
     try {
       const result = await ea.deleteSerial(deleteTarget.id);
-      if (!result.success) { alert(result.error ?? '삭제 실패'); return; }
+      if (!result.success) { alert(result.error ?? t(lang, 'delete_failed')); return; }
       setSerials(prev => prev.filter(s => s.id !== deleteTarget.id));
       if (detailId === deleteTarget.id) setDetailId(null);
     } catch (e: any) {
-      alert(e?.message ?? '오류');
+      alert(e?.message ?? t(lang, 'error_occurred'));
     } finally {
       setDeleteTarget(null);
     }
@@ -84,10 +84,12 @@ export default function SerialData() {
     try {
       const result = await ea.bulkImport();
       if (result.imported > 0) await load();
-      const msg = `${result.imported}건 임포트 완료` + (result.errors.length > 0 ? ` / 오류 ${result.errors.length}건` : '');
+      const msg = result.errors.length > 0
+        ? t(lang, 'import_done_with_errors').replace('{imported}', String(result.imported)).replace('{errors}', String(result.errors.length))
+        : t(lang, 'import_done_count').replace('{n}', String(result.imported));
       setExcelMsg(msg);
     } catch (e: any) {
-      setExcelMsg('임포트 실패: ' + (e?.message ?? ''));
+      setExcelMsg(t(lang, 'import_failed').replace('{error}', e?.message ?? ''));
     }
     setTimeout(() => setExcelMsg(''), 6000);
   };
@@ -96,10 +98,10 @@ export default function SerialData() {
     setExcelMsg('');
     try {
       const result = await ea.exportSerials(filtered);
-      if (result.success) setExcelMsg(`내보내기 완료${result.filePath ? ': ' + result.filePath : ''}`);
-      else if (result.error) setExcelMsg('내보내기 실패: ' + result.error);
+      if (result.success) setExcelMsg(result.filePath ? t(lang, 'export_done_path').replace('{path}', result.filePath) : t(lang, 'export_done'));
+      else if (result.error) setExcelMsg(t(lang, 'export_failed').replace('{error}', result.error));
     } catch (e: any) {
-      setExcelMsg('내보내기 실패: ' + (e?.message ?? ''));
+      setExcelMsg(t(lang, 'export_failed').replace('{error}', e?.message ?? ''));
     }
     setTimeout(() => setExcelMsg(''), 6000);
   };
@@ -134,13 +136,13 @@ export default function SerialData() {
             <button onClick={() => setShowLegacy(true)} style={btnOutline}>📦 Legacy Import</button>
           )}
           <button onClick={() => ea.downloadExcelTemplate()} style={btnOutline}>
-            📋 {lang === 'en' ? 'Template' : lang === 'ja' ? 'テンプレ' : '템플릿'}
+            📋 {t(lang, 'btn_download_template').replace('📋 ', '')}
           </button>
           <button onClick={handleBulkImport} style={btnOutline}>
-            📥 {lang === 'en' ? 'Import Excel' : lang === 'ja' ? 'インポート' : '엑셀 업로드'}
+            📥 {t(lang, 'excel_upload')}
           </button>
           <button onClick={handleExport} style={btnOutline} disabled={filtered.length === 0}>
-            📤 {lang === 'en' ? 'Export Excel' : lang === 'ja' ? 'エクスポート' : '엑셀 내보내기'}
+            📤 {t(lang, 'notification_export')}
           </button>
           <button onClick={() => { setEditTarget(null); setShowForm('create'); }} style={btnPrimary}>
             {t(lang, 'btn_new_register')}
@@ -239,7 +241,7 @@ export default function SerialData() {
       </div>
 
       <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)' }}>
-        {filtered.length}{lang === 'en' ? ' shown' : '건 표시'} / {lang === 'en' ? 'total' : '전체'} {serials.length}{lang === 'en' ? '' : '건'}
+        {t(lang, 'serial_data_count_summary').replace('{shown}', String(filtered.length)).replace('{total}', String(serials.length))}
       </div>
 
       {showForm && (
@@ -254,7 +256,7 @@ export default function SerialData() {
       {deleteTarget && (
         <ConfirmModal
           title={t(lang, 'serial_delete_title')}
-          message={`${deleteTarget.serial_number} ${lang === 'en' ? 'will be deleted. This action cannot be undone.' : '을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.'}`}
+          message={t(lang, 'serial_delete_confirm_name').replace('{sn}', deleteTarget.serial_number)}
           confirmLabel={t(lang, 'delete')}
           danger
           onConfirm={handleDelete}

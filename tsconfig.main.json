@@ -16,5 +16,5 @@
     },
     "baseUrl": "."
   },
-  "include": ["src/main/**/*", "src/shared/**/*"]
+  "include": ["src/main/**/*", "src/server/**/*", "src/shared/**/*"]
 }

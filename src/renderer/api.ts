@@ -87,15 +87,17 @@ export const api = {
     cancelRestartScheduler: () => post('/cancel/restart-scheduler'),
 
     // ── Automation ────────────────────────────────────────────────────────────
-    runAutoRenewNow: () => post('/logs/renewal-check'),
-    runAutoCancelNow: () => post('/cancel/run/expired'),
-    runLimboFallbackNow: () => post('/cancel/run/pre-expiry'),
+    runAutoRenewNow: () => post('/automation/run-auto-renew'),
+    runAutoCancelNow: () => post('/automation/run-auto-cancel'),
+    runLimboFallbackNow: () => post('/automation/run-limbo-fallback'),
 
     // ── Mail Inbound ──────────────────────────────────────────────────────────
-    checkInboundNow: () => post('/logs/renewal-check'),
-    inboundDryRun: () => post('/logs/renewal-dry-run'),
-    testMailConnection: (override?: unknown) => post('/settings/test-mail-connection', override),
-    listInboundMails: (filter?: unknown) => post('/logs/inbound-mails', filter),
+    checkInboundNow: () => post('/mail/check-inbound-now'),
+    inboundDryRun: () => post('/mail/inbound-dry-run'),
+    testMailConnection: (override?: unknown) => post('/mail/test-connection', override),
+    listInboundMails: (filter?: unknown) => post('/mail/inbound-mails', filter),
+    confirmStopRequestFromMail: (id: number) => post(`/mail/inbound-mails/${id}/confirm-stop`),
+    sendMissingInfoTemplateForMail: (id: number) => post(`/mail/inbound-mails/${id}/send-missing-info`),
 
     // ── Mail Templates ────────────────────────────────────────────────────────
     listMailTemplates: () => get('/mail-templates'),
@@ -106,7 +108,7 @@ export const api = {
         get(`/mail-templates/${encodeURIComponent(code)}/preview?serialId=${serialId}`),
     sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: unknown) =>
         post('/mail/send-template', { code, to, vars, options }),
-    sendTestDryRun: (override?: unknown) => post('/settings/test-smtp-dry-run', override),
+    sendTestDryRun: (override?: unknown) => post('/mail/send-test-dry-run', override),
 
     // ── Stats ─────────────────────────────────────────────────────────────────
     getStatsCounts: () => get('/serials/stats/counts'),
@@ -117,18 +119,20 @@ export const api = {
     // ── Settings ──────────────────────────────────────────────────────────────
     getSettings: () => get('/settings'),
     saveSettings: (data: unknown) => post('/settings', data),
-    testSmtp: (override?: unknown) => post('/settings/test-smtp', override),
+    testSmtp: (override?: unknown) => post('/mail/test-smtp', override),
     testSlack: (override?: unknown) => post('/settings/test-slack', override),
     testSlackWebhook: (override?: unknown) => post('/settings/test-slack', override),
     testSlackRelated: (override?: unknown) => post('/settings/test-slack-related', override),
-    renewalDryRun: () => post('/logs/renewal-dry-run'),
-    checkRenewalEmails: () => post('/logs/renewal-check'),
+    renewalDryRun: () => post('/mail/inbound-dry-run'),
+    checkRenewalEmails: () => post('/mail/check-inbound-now'),
     updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
     exportSettings: () => post('/settings/export'),
     importSettings: () => post('/settings/import'),
     listReportTimes: () => get('/settings/report-times'),
     setReportTimes: (times: string[]) => post('/settings/report-times', { times }),
     sendDailyReportNow: () => post('/reports/send-daily'),
+    runExpiryNoticeDryRun: (input: unknown) => post('/settings/expiry-notice-dry-run', input),
+    runStopLifecycleNoticeDryRun: (input: unknown) => post('/settings/stop-lifecycle-notice-dry-run', input),
 
     // ── Logs ──────────────────────────────────────────────────────────────────
     getLogs: (limit = 100, offset = 0) => get(`/logs?limit=${limit}&offset=${offset}`),

@@ -12,6 +12,15 @@ type SlackLang = 'ko' | 'en' | 'ja';
 
 const S: Record<SlackLang, Record<string, string>> = {
   ko: {
+    sched_mail_check: '메일체크',
+    sched_auto_renew: '자동갱신',
+    sched_auto_cancel: '자동취소',
+    sched_limbo: 'Limbo보정',
+    sched_expiry_mail: '만료예고메일',
+    sched_daily_report: '일일리포트',
+    sched_monthly_report: '월간리포트',
+    sched_monthly_date: '매월 10일',
+    sched_daily_summary: '일일요약',
     test_ok: '✅ *Exocad Manager* — Slack 연동 테스트 성공!\n이 메시지가 보이면 Webhook이 정상 작동합니다. 🎉\n전송 시각: {time}',
     daily_summary: '📊 *일일 요약 알림* — {date}',
     divider: '━━━━━━━━━━━━━━━━━━',
@@ -41,6 +50,15 @@ const S: Record<SlackLang, Record<string, string>> = {
     scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
   en: {
+    sched_mail_check: 'Mail Check',
+    sched_auto_renew: 'Auto-Renew',
+    sched_auto_cancel: 'Auto-Cancel',
+    sched_limbo: 'Limbo Fix',
+    sched_expiry_mail: 'Expiry Notice',
+    sched_daily_report: 'Daily Report',
+    sched_monthly_report: 'Monthly Report',
+    sched_monthly_date: '10th monthly',
+    sched_daily_summary: 'Daily Summary',
     test_ok: '✅ *Exocad Manager* — Slack webhook test successful!\nIf you see this message, the webhook is working. 🎉\nSent at: {time}',
     daily_summary: '📊 *Daily Summary* — {date}',
     divider: '━━━━━━━━━━━━━━━━━━',
@@ -70,6 +88,15 @@ const S: Record<SlackLang, Record<string, string>> = {
     scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
   ja: {
+    sched_mail_check: 'メールチェック',
+    sched_auto_renew: '自動更新',
+    sched_auto_cancel: '自動キャンセル',
+    sched_limbo: 'Limbo補正',
+    sched_expiry_mail: '失効予告メール',
+    sched_daily_report: '日次レポート',
+    sched_monthly_report: '月次レポート',
+    sched_monthly_date: '毎月10日',
+    sched_daily_summary: '日次サマリー',
     test_ok: '✅ *Exocad Manager* — Slack連携テスト成功！\nこのメッセージが見えれば、Webhookは正常に動作しています。🎉\n送信時刻: {time}',
     daily_summary: '📊 *日次サマリー* — {date}',
     divider: '━━━━━━━━━━━━━━━━━━',
@@ -96,30 +123,57 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_total: '合計 {n} 件のシリアルが期限切れになる予定です。',
     cancel_failures: '⚠️ *Cancel 失敗:*',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
+    scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
 };
 
-// 현재 설정의 slack_language를 읽어 해당 언어 사전 반환
-function slang(): Record<string, string> {
-  const lang = (getSettings().slack_language || 'ko') as SlackLang;
+function normalizeSlackLang(lang: unknown): SlackLang {
+  return lang === 'en' || lang === 'ja' || lang === 'ko' ? lang : 'ko';
+}
+
+function getSlackLanguage(settingsOverride?: any): SlackLang {
+  const settings = settingsOverride ? { ...getSettings(), ...settingsOverride } : getSettings();
+  return normalizeSlackLang(settings.slack_language || settings.app_language);
+}
+
+// Slack 전용 언어 설정(slack_language)에 맞춰 슬랙 메시지 언어 반환
+function slang(langOverride?: SlackLang): Record<string, string> {
+  const lang = langOverride || getSlackLanguage();
   return S[lang] ?? S.ko;
 }
 
 // 사전 문자열의 {key}를 values 객체로 치환
-function sf(key: string, values: Record<string, string | number> = {}): string {
-  let str = slang()[key] ?? key;
+function sf(key: string, values: Record<string, string | number> = {}, langOverride?: SlackLang): string {
+  let str = slang(langOverride)[key] ?? key;
   for (const [k, v] of Object.entries(values)) {
     str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
   }
   return str;
 }
 
+function slackLocale(lang: SlackLang): string {
+  return lang === 'en' ? 'en-US' : lang === 'ja' ? 'ja-JP' : 'ko-KR';
+}
+
+
+export function buildScheduleSummary(mailTimes: string[], cancelTime: string, reportTimes: string[], expiryNoticeTime = '05:00'): string {
+  return [
+    `${sf('sched_mail_check')}(${mailTimes.join(', ')})`,
+    `${sf('sched_auto_renew')}(00:10)`,
+    `${sf('sched_auto_cancel')}(${cancelTime})`,
+    `${sf('sched_limbo')}(03:00)`,
+    `${sf('sched_expiry_mail')}(${expiryNoticeTime})`,
+    `${sf('sched_daily_report')}(${reportTimes.join(', ')})`,
+    `${sf('sched_monthly_report')}(${sf('sched_monthly_date')} 09:00)`,
+    `${sf('sched_daily_summary')}(08:30)`,
+  ].join(', ');
+}
 
 export class NotificationService {
   // === Slack ===
-  async sendSlack(message: string, urlOverride?: string): Promise<boolean> {
+  async sendSlack(message: string, urlOverride?: string, force = false): Promise<boolean> {
     const settings = getSettings();
-    if (!settings.slack_enabled) {
+    if (!force && !settings.slack_enabled) {
       logger.info('Slack 알림이 비활성화되어 있습니다 (skip)');
       return false;
     }
@@ -170,9 +224,10 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const msgLang = getSlackLanguage(settingsOverride);
+      const now = new Date().toLocaleString(slackLocale(msgLang), { timeZone: 'Asia/Tokyo' });
       const data = JSON.stringify({
-        text: sf('test_ok', { time: now }),
+        text: sf('test_ok', { time: now }, msgLang),
       });
       const protocol = (url.protocol === 'https:' ? https : http) as typeof https;
 
@@ -228,9 +283,10 @@ export class NotificationService {
 
     try {
       const url = new URL(webhookUrl);
-      const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const msgLang = getSlackLanguage(settingsOverride);
+      const now = new Date().toLocaleString(slackLocale(msgLang), { timeZone: 'Asia/Tokyo' });
       const data = JSON.stringify({
-        text: sf('test_ok', { time: now }),
+        text: sf('test_ok', { time: now }, msgLang),
       });
       const protocol = (url.protocol === 'https:' ? https : http) as typeof https;
 
@@ -332,7 +388,7 @@ export class NotificationService {
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
     yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const lines: string[] = [
       sf('daily_summary', { date: today }),
       sf('divider'),
@@ -385,7 +441,7 @@ export class NotificationService {
     
     let timeStr = '(알 수 없음)';
     if (mailDate) {
-      timeStr = new Date(mailDate).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      timeStr = new Date(mailDate).toLocaleString('ko-KR', { timeZone: 'Asia/Tokyo' });
     }
 
     const msg = sf('related_mail', { kws: kwsStr, time: timeStr, from, subject, link });
@@ -439,6 +495,78 @@ export class NotificationService {
     }
   }
 
+  private async sendEmailTo(recipients: string[], subject: string, htmlBody: string): Promise<boolean> {
+    const settings = getSettings();
+    const to = recipients.filter(Boolean).join(',');
+    if (!settings.smtp_host || !to) {
+      logger.warn('SMTP 설정 또는 긴급 알림 수신 이메일이 설정되지 않았습니다');
+      return false;
+    }
+
+    try {
+      const port = Number(settings.smtp_port) || 587;
+      const useImplicitSSL = port === 465;
+      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
+      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
+
+      const transporter = nodemailer.createTransport({
+        host: settings.smtp_host,
+        port,
+        secure: useImplicitSSL,
+        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
+        auth: settings.smtp_user ? { user: settings.smtp_user, pass: cleanPassword } : undefined,
+      });
+
+      await transporter.sendMail({
+        from: settings.smtp_user ? `Exocad Manager <${settings.smtp_user}>` : settings.smtp_host,
+        to,
+        subject,
+        html: htmlBody,
+      });
+      return true;
+    } catch (err: any) {
+      logger.error(`긴급 이메일 전송 실패: ${err.message}`);
+      return false;
+    }
+  }
+
+  async sendCriticalAutomationAlert(input: {
+    serial_number: string;
+    customer_name?: string;
+    action: string;
+    error?: string;
+    details: string;
+    trigger_id: string;
+  }): Promise<void> {
+    const settings = getSettings();
+    const subject = `[Exocad Manager][CRITICAL] ${input.action} - ${input.serial_number}`;
+    const text = [
+      '*CRITICAL automation alert*',
+      `Serial: ${input.serial_number}`,
+      input.customer_name ? `Customer: ${input.customer_name}` : '',
+      `Action: ${input.action}`,
+      `Trigger: ${input.trigger_id}`,
+      input.error ? `Error: ${input.error}` : '',
+      '',
+      input.details,
+    ].filter(Boolean).join('\n');
+
+    const tasks: Promise<unknown>[] = [];
+    if (settings.slack_alert_enabled !== false) {
+      tasks.push(this.sendSlack(text, undefined, true));
+    }
+
+    const recipients = settings.critical_alert_emails?.length
+      ? settings.critical_alert_emails
+      : (settings.report_email_to ? [settings.report_email_to] : []);
+    if (recipients.length > 0) {
+      const html = text.split('\n').map(line => `<div>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+      tasks.push(this.sendEmailTo(recipients, subject, html));
+    }
+
+    await Promise.all(tasks);
+  }
+
   // === Test Connection (SMTP) ===
   async testSmtpConnection(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
     // settingsOverride에 undefined 값이 있으면 DB 저장값을 덮어쓰는 버그 방지
@@ -463,10 +591,14 @@ export class NotificationService {
     if (!settings.report_email_to) {
       return { success: false, message: '리포트 수신 이메일을 입력해주세요.' };
     }
+    const parsedPort = Number(settings.smtp_port);
+    if (!settings.smtp_port || isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      return { success: false, message: `SMTP 포트가 올바르지 않습니다: "${settings.smtp_port}" (유효 범위: 1–65535)` };
+    }
 
     try {
       logger.info(`SMTP 연결 테스트 시작: ${settings.smtp_host}:${settings.smtp_port}`);
-      const port = Number(settings.smtp_port) || 587;
+      const port = parsedPort;
       const useImplicitSSL = port === 465;
       const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
 
@@ -615,9 +747,9 @@ export class NotificationService {
     ];
 
     for (const s of report.expiring_serials) {
-      const addOns = JSON.parse(s.add_ons);
-      const addonStr = addOns.length > 0 ? ` (Add-ons: ${addOns.map((a: any) => a.name).join(', ')})` : '';
-      lines.push(`• ${s.serial_number} | ${s.customer_name} | ${sf('expiry')}: ${s.expiry_date}${addonStr}`);
+      const modules = JSON.parse(s.modules || '[]') as string[];
+      const addonStr = modules.length > 0 ? ` (Add-ons: ${modules.join(', ')})` : '';
+      lines.push(`• ${s.serial_number} | ${s.customer?.name || ''} | ${sf('expiry')}: ${s.expiry_date}${addonStr}`);
     }
 
     return lines.join('\n');
@@ -635,13 +767,13 @@ export class NotificationService {
     `;
 
     for (const s of report.expiring_serials) {
-      const addOns = JSON.parse(s.add_ons);
-      const addonStr = addOns.map((a: any) => a.name).join(', ') || '-';
+      const modules = JSON.parse(s.modules || '[]') as string[];
+      const addonStr = modules.join(', ') || '-';
       html += `
         <tr>
           <td>${s.serial_number}</td>
-          <td>${s.customer_name}</td>
-          <td>${s.customer_email}</td>
+          <td>${s.customer?.name || ''}</td>
+          <td>${s.customer?.email || ''}</td>
           <td>${s.expiry_date}</td>
           <td>${addonStr}</td>
           <td>${s.notes}</td>

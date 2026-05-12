@@ -125,7 +125,7 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
         ...customerPart,
         serial_number: form.serial_number.trim(),
         purchase_date: form.purchase_date || undefined,
-        expiry_date:   form.expiry_date   || undefined,
+        expiry_date:   form.expiry_date   || null,
         status:        form.status as any,
         engine_build:  form.engine_build,
         version:       form.version,
@@ -181,7 +181,7 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
                 {t(lang, 'section_customer_info')}
                 {customer.kind === 'existing' && (
                   <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)', fontWeight: 400, textTransform: 'none' }}>
-                    (수정 시 고객 DB에 즉시 반영)
+                    {t(lang, 'customer_edit_immediate_note')}
                   </span>
                 )}
               </div>
@@ -235,7 +235,13 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
           <div>
             <label style={labelStyle}>{t(lang, 'label_status')}</label>
             <select value={form.status} onChange={e => setF('status', e.target.value)} style={inputStyle}>
-              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              {STATUSES.map(s => <option key={s} value={s}>{t(lang, ({
+                active: 'status_active',
+                'not-activated': 'status_not_activated',
+                expired: 'status_expired',
+                cancelled: 'status_cancelled',
+                broken: 'status_broken',
+              } as Record<string, string>)[s] as any)}</option>)}
             </select>
           </div>
 

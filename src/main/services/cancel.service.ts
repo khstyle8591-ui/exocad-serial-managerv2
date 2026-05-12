@@ -2,6 +2,7 @@ import { chromium, Browser, Page, BrowserContext } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { serialService } from './serial.service';
+import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
@@ -14,16 +15,48 @@ function getScreenshotDir(): string {
   return dir;
 }
 
+/** 30일 이상 된 스크린샷 파일 삭제. 스케줄러에서 호출. */
+export function cleanOldScreenshots(keepDays = 30): void {
+  try {
+    const dir = getScreenshotDir();
+    const cutoff = Date.now() - keepDays * 86_400_000;
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.png')) continue;
+      const fullPath = path.join(dir, file);
+      if (fs.statSync(fullPath).mtimeMs < cutoff) {
+        fs.unlinkSync(fullPath);
+        logger.info(`[screenshot] 오래된 파일 삭제: ${file}`);
+      }
+    }
+  } catch (err: any) {
+    logger.warn(`[screenshot] 정리 중 오류: ${err.message}`);
+  }
+}
+
 export class CancelService {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private isLoggedIn: boolean = false;
+  // isCancelling 대신 Promise 큐 사용.
+  // boolean 플래그는 AutoCancel(02:00)과 Limbo(03:00)가 겹칠 때 즉시 실패를 반환했으나,
+  // 큐는 앞선 작업 완료 후 순서대로 실행하여 false-positive Slack 알림 방지.
+  private cancelQueue: Promise<unknown> = Promise.resolve();
 
   // ============================================================
   // 단일 시리얼 cancel 처리
   // 전체 흐름: 로그인 → 라이선스 관리 페이지 → 검색 → 옵션 → cancel → 확인
   // ============================================================
   async cancelSubscription(serialNumber: string, headless: boolean = true): Promise<CancelResult> {
+    // 큐에 추가 — 현재 실행 중인 작업이 완료된 후 순서대로 실행됨.
+    // 에러가 발생해도 다음 큐 항목이 blocking되지 않도록 .catch(() => {}) 체이닝.
+    const op = this.cancelQueue
+      .catch(() => {})
+      .then(() => this._doCancel(serialNumber, headless));
+    this.cancelQueue = op.catch(() => {});
+    return op;
+  }
+
+  private async _doCancel(serialNumber: string, headless: boolean = true): Promise<CancelResult> {
     const settings = getSettings();
     let page: Page | null = null;
 
@@ -108,7 +141,7 @@ export class CancelService {
 
     } catch (err: any) {
       // 로그인 세션 만료 또는 페이지 로드 실패 대응
-      const currentUrl = page ? page.url() : '';
+      const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
       logger.error(`Cancel 실패 [${serialNumber}]: ${err.message}`);
       logger.warn(`\n (URL: ${currentUrl})`);
 
@@ -122,9 +155,9 @@ export class CancelService {
       ) {
         logger.warn(`세션 유효하지 않음 감지 → isLoggedIn = false 설정`);
         this.isLoggedIn = false;
-        // 브라우저도 재생성하여 섹츠 콜리띠 방지
-        if (this.context) { await this.context.close().catch(() => {}); this.context = null; }
+        // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
         if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+        this.context = null;
       }
 
       return { serial_number: serialNumber, success: false, error: err.message };
@@ -624,16 +657,17 @@ export class CancelService {
     const results: CancelResult[] = [];
 
     for (const serial of expiringSerials) {
-      // 갱신 요청이 있는 경우 cancel하지 않고 skip
-      if (serialService.hasPendingRenewal(serial.id)) {
-        logger.info(`Cancel 건너뜀: ${serial.serial_number} (갱신 요청 있음)`);
+      // fallback 경로: 이미 만료되었고 stop 요청이 있는 건만 마감 처리
+      if (!serial.renewal_stop_requested) {
+        logger.info(`Cancel 건너뜀: ${serial.serial_number} (stop 요청 없음)`);
         continue;
       }
 
       const result = await this.cancelSubscription(serial.serial_number, true); // headless: background
       if (result.success) {
         // DB에서 해당 시리얼의 상태를 'cancelled'로 변경
-        serialService.cancelSubscription(serial.id);
+        const updated = serialService.cancelSubscription(serial.id);
+        if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
       }
       results.push(result);
 
@@ -664,7 +698,7 @@ export class CancelService {
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
     // toISOString()은 UTC 기준이라 KST 09:00 실행 시 날짜가 어긋남 → KST 기준으로 변환
-    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     logger.info(`자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
 
@@ -673,16 +707,17 @@ export class CancelService {
     const results: CancelResult[] = [];
 
     for (const serial of targetSerials) {
-      // 갱신 요청이 있으면 skip
-      if (serialService.hasPendingRenewal(serial.id)) {
-        logger.info(`자동 cancel 건너뜀: ${serial.serial_number} (갱신 요청 있음)`);
+      // 반전 로직: stop 요청이 있는 건만 cancel
+      if (!serial.renewal_stop_requested) {
+        logger.info(`자동 cancel 건너뜀: ${serial.serial_number} (stop 요청 없음)`);
         continue;
       }
 
-      logger.info(`자동 cancel 실행: ${serial.serial_number} (만료일 ${serial.expiry_date}, 갱신 요청 없음)`);
+      logger.info(`자동 cancel 실행: ${serial.serial_number} (만료일 ${serial.expiry_date}, stop 요청 있음)`);
       const result = await this.cancelSubscription(serial.serial_number, true); // headless: background
       if (result.success) {
-        serialService.cancelSubscription(serial.id);
+        const updated = serialService.cancelSubscription(serial.id);
+        if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
       }
       results.push(result);
 
@@ -705,7 +740,7 @@ export class CancelService {
     const today = getTodayDateString();
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
-    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     logger.info(`[Dry-Run] 자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
 
@@ -731,26 +766,26 @@ export class CancelService {
     }
 
     for (const serial of targetSerials) {
-      const hasRenewal = serialService.hasPendingRenewal(serial.id);
+      const stopRequested = !!serial.renewal_stop_requested;
 
-      if (hasRenewal) {
-        // 갱신 요청 있음 → 실제 cancel에서 skip될 대상 (Playwright 불필요)
+      if (!stopRequested) {
+        // stop 요청 없음 → 실제 cancel에서 skip될 대상 (Playwright 불필요)
         results.push({
           serial_number: serial.serial_number,
-          customer_name: serial.customer_name,
+          customer_name: serial.customer?.name || '',
           expiry_date: serial.expiry_date,
           has_renewal: true,
         });
-        logger.info(`[Dry-Run] skip (갱신 요청 있음): ${serial.serial_number}`);
+        logger.info(`[Dry-Run] skip (stop 요청 없음): ${serial.serial_number}`);
         continue;
       }
 
-      // 갱신 요청 없음 → 실제 cancel 대상, Playwright 확인 실행
+      // stop 요청 있음 → 실제 cancel 대상, Playwright 확인 실행
       logger.info(`[Dry-Run] Playwright 확인 시작: ${serial.serial_number}`);
       const dryResult = await this.checkCancelDryRun(serial.serial_number);
       results.push({
         ...dryResult,
-        customer_name: serial.customer_name,
+        customer_name: serial.customer?.name || '',
         expiry_date: serial.expiry_date,
         has_renewal: false,
       });

@@ -1,19 +1,77 @@
 import { ipcMain, dialog } from 'electron';
 import { IPC_CHANNELS } from '../shared/types';
 import { serialService } from './services/serial.service';
+import { customerService } from './services/customer.service';
 import { excelService } from './services/excel.service';
 import { cancelService } from './services/cancel.service';
-import { emailMonitorService } from './services/email-monitor.service';
 import { notificationService } from './services/notification.service';
+import { detectLegacy, listLegacySerials, findMergeCandidatesForLegacy, importSerial } from './services/legacy-import.service';
+import { listLogs, getFailureLogs } from './services/activity-log.service';
 import {
   getPendingOrders, getAllOrders,
   updatePendingOrder, approvePendingOrder, rejectPendingOrder, deletePendingOrder,
-  pollNow, pollDryRun, getPollStatus, startPollingScheduler, stopPollingScheduler,
+  pollNow, pollDryRun, getPollStatus, startPollingScheduler, listGroupedOrders,
 } from './services/order.service';
-import { restartPreExpiryTask, startMailCheck } from './scheduler';
+import { listTemplates, getTemplate, upsertTemplate, deleteTemplate, previewTemplate } from './services/mail/template.service';
+import { sendTemplate as smtpSendTemplate, testSmtp, sendTestDryRun } from './services/mail/smtp.service';
+import { runStopLifecycleNoticeDryRun, sendStopRequestReceivedNotice } from './services/mail/lifecycle-notice.service';
+import { checkInboundNow, inboundDryRun, testMailConnection, listInboundMails, confirmStopRequestFromMail, sendMissingInfoTemplateForMail } from './services/mail/inbound.service';
+import { restartPreExpiryTask, runExpiryNoticeDryRun, sendDailyReportNow, startDailyReportTasks, startExpiryNoticeTask, startMailCheck } from './scheduler';
+import { runAutoRenewNow, runAutoCancelNow, runLimboFallbackNow } from './services/automation.service';
 import { getSettings, saveSettings } from './settings';
 import { logger } from './utils/logger';
-import type { SerialInput, AddOn, AppSettings } from '../shared/types';
+import { getWebhookStatus, startWebhookServer, stopWebhookServer } from './webhook-server';
+import type { SerialInput, AddOn, AppSettings, CustomerInput, LogFilter, MailTemplateUpsert } from '../shared/types';
+
+// 설정 import 시 허용된 키만 통과시키는 allowlist.
+// 외부 JSON 파일에서 임의 키가 DB에 주입되지 않도록 방어.
+const SETTINGS_ALLOWED_KEYS = new Set<keyof AppSettings>([
+  'mail_protocol',
+  'pop3_host', 'pop3_port', 'pop3_user', 'pop3_password', 'pop3_tls', 'pop3_keep_copy',
+  'imap_host', 'imap_port', 'imap_user', 'imap_password', 'imap_tls',
+  'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_tls',
+  'report_email_to', 'smtp_test_address',
+  'slack_webhook_url', 'slack_webhook_url_related', 'slack_enabled', 'slack_language',
+  'critical_alert_emails', 'slack_alert_enabled', 'alert_suppress_minutes',
+  'exocad_site_url', 'exocad_login_url', 'exocad_username', 'exocad_password',
+  'cancel_button_text', 'cancel_confirm_text', 'cancel_option_button_text',
+  'poll_sources',
+  'renewal_product_keywords', 'renewal_action_keywords', 'renewal_exclude_keywords',
+  'require_serial_format', 'mail_serial_pattern',
+  'missing_info_auto_reply_enabled', 'missing_info_template',
+  'renewal_keywords',
+  'mail_check_times',
+  'auto_cancel_enabled', 'auto_cancel_days_before', 'auto_cancel_time',
+  'app_language',
+  'dedicated_email',
+  'custom_product_code_rules',
+  'daily_report_times',
+  'expiry_notice_enabled',
+  'expiry_notice_time',
+  'expiry_notice_rules',
+  'expiry_notice_days',
+  'expiry_notice_renewal_template',
+  'expiry_notice_stop_template',
+  'stop_request_notice_enabled',
+  'stop_request_notice_template',
+  'cancel_complete_notice_enabled',
+  'cancel_complete_notice_template',
+]);
+
+function sanitizeSettingsImport(raw: unknown): Partial<AppSettings> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('설정 파일 형식 오류: JSON 객체여야 합니다');
+  }
+  const clean: Partial<AppSettings> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!SETTINGS_ALLOWED_KEYS.has(k as keyof AppSettings)) continue;
+    if (typeof v === 'string' && v.length > 4096) {
+      throw new Error(`설정값이 너무 깁니다: ${k} (최대 4096자)`);
+    }
+    (clean as any)[k] = v;
+  }
+  return clean;
+}
 
 export function registerIpcHandlers(): void {
   // === Serial CRUD ===
@@ -34,7 +92,12 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_DELETE, (_event, id: number) => {
-    return serialService.delete(id);
+    try {
+      const deleted = serialService.delete(id);
+      return { success: deleted };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_SEARCH, (_event, query: string) => {
@@ -43,6 +106,77 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_ADD_ADDON, (_event, id: number, addon: AddOn) => {
     return serialService.addAddon(id, addon);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_ACTIVATE, (_event, id: number) => {
+    return serialService.activate(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_SET_STOP_REQUESTED, async (_event, id: number, flag: boolean, triggerId?: string) => {
+    const before = serialService.getById(id);
+    const result = serialService.setStopRequested(id, flag, triggerId);
+    if (flag && before && before.renewal_stop_requested !== 1 && result) {
+      await sendStopRequestReceivedNotice(result).catch((err: any) =>
+        logger.error(`갱신 중단 요청 접수 메일 실패: ${err.message}`)
+      );
+    }
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_RENEW, (_event, id: number) => {
+    return serialService.renewManual(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_CANCEL_DB, (_event, id: number) => {
+    return serialService.cancelManual(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_REMOVE_MODULE, (_event, id: number, moduleName: string) => {
+    return serialService.removeModule(id, moduleName);
+  });
+
+  // === Customer CRUD ===
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_LIST, () => {
+    return customerService.list();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_GET_BY_ID, (_event, id: number) => {
+    return customerService.getById(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_CREATE, (_event, input: CustomerInput) => {
+    return customerService.create(input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_UPDATE, (_event, id: number, input: Partial<CustomerInput>) => {
+    return customerService.update(id, input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_DELETE, (_event, id: number) => {
+    return customerService.delete(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_SEARCH, (_event, query: string) => {
+    return customerService.search(query);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_MERGE_CANDIDATES, (_event, query: any) => {
+    return customerService.mergeCandidates(query);
+  });
+
+  // === Legacy Import ===
+  ipcMain.handle(IPC_CHANNELS.LEGACY_DETECT, () => detectLegacy());
+
+  ipcMain.handle(IPC_CHANNELS.LEGACY_LIST_SERIALS, (_event, filter?: any) => {
+    return listLegacySerials(filter);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.LEGACY_SUGGEST_MERGE, (_event, legacyRow: any) => {
+    return findMergeCandidatesForLegacy(legacyRow);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.LEGACY_IMPORT, (_event, input: any) => {
+    return importSerial(input);
   });
 
   // === 엑셀 템플릿 다운로드 ===
@@ -57,6 +191,22 @@ export function registerIpcHandlers(): void {
 
     try {
       excelService.generateTemplate(result.filePath);
+      return { success: true, filePath: result.filePath };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // === 엑셀 내보내기 ===
+  ipcMain.handle(IPC_CHANNELS.EXCEL_EXPORT_SERIALS, async (_event, serials: any[]) => {
+    const result = await dialog.showSaveDialog({
+      title: '엑셀 내보내기',
+      defaultPath: `serials_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
+    });
+    if (result.canceled || !result.filePath) return { success: false };
+    try {
+      excelService.exportSerials(serials, result.filePath);
       return { success: true, filePath: result.filePath };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -113,79 +263,10 @@ export function registerIpcHandlers(): void {
     return true;
   });
 
-  // === Renewal ===
-  ipcMain.handle(IPC_CHANNELS.RENEWAL_CHECK_EMAILS, async () => {
-    return emailMonitorService.checkForRenewalRequests();
-  });
-
-  ipcMain.handle(IPC_CHANNELS.RENEWAL_PROCESS, (_event, serialId: number) => {
-    return serialService.renewSerial(serialId, 'manual');
-  });
-
-  // Renewal Dry-Run: 이메일 스캔만 (DB 저장 없음)
-  ipcMain.handle(IPC_CHANNELS.RENEWAL_DRY_RUN, async () => {
-    return emailMonitorService.renewalDryRun();
-  });
-
-  // Mail Connection Test: POP3/IMAP 연결 상태 확인 (저장 전 form 값도 수락)
-  ipcMain.handle(IPC_CHANNELS.RENEWAL_TEST_CONNECTION, async (_event, settingsOverride?: any) => {
-    return emailMonitorService.testMailConnection(settingsOverride);
-  });
-
-
-  // === Reports ===
-  ipcMain.handle(IPC_CHANNELS.REPORT_DAILY, () => {
-    const todayLogs = serialService.getTodayLogs();
-    const today = new Date().toISOString().slice(0, 10);
-    return {
-      date: today,
-      new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-      renewals: todayLogs.filter(l => l.action === 'renewed').length,
-      cancellations: todayLogs.filter(l => l.action === 'cancelled').length,
-      failed_cancellations: [],
-      details: todayLogs,
-    };
-  });
-
-  ipcMain.handle(IPC_CHANNELS.REPORT_MONTHLY_EXPIRY, () => {
-    const now = new Date();
-    const targetMonth = now.getMonth() + 3; // 3개월 후 (getMonth()는 0-indexed이므로 +3)
-    const targetYear = now.getFullYear() + (targetMonth > 12 ? 1 : 0);
-    const adjustedMonth = targetMonth > 12 ? targetMonth - 12 : targetMonth;
-    const expiringSerials = serialService.getExpiringInMonth(targetYear, adjustedMonth);
-    return {
-      report_date: now.toISOString().slice(0, 10),
-      target_month: `${targetYear}-${String(adjustedMonth).padStart(2, '0')}`,
-      expiring_serials: expiringSerials,
-      total_count: expiringSerials.length,
-    };
-  });
-
-  ipcMain.handle(IPC_CHANNELS.REPORT_SEND, async (_event, type: 'daily' | 'monthly') => {
-    if (type === 'daily') {
-      const todayLogs = serialService.getTodayLogs();
-      const today = new Date().toISOString().slice(0, 10);
-      await notificationService.sendDailyReport({
-        date: today,
-        new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-        renewals: todayLogs.filter(l => l.action === 'renewed').length,
-        cancellations: todayLogs.filter(l => l.action === 'cancelled').length,
-        failed_cancellations: [],
-        details: todayLogs,
-      });
-    }
-    return true;
-  });
-
-  // SMTP Test Email
-  ipcMain.handle(IPC_CHANNELS.SMTP_TEST_EMAIL, async (_event, settingsOverride?: any) => {
-    return notificationService.testSmtpConnection(settingsOverride);
-  });
-
-  // Slack Webhook Test
-  ipcMain.handle(IPC_CHANNELS.SLACK_TEST_WEBHOOK, async (_event, settingsOverride?: any) => {
-    return notificationService.testSlackWebhook(settingsOverride);
-  });
+  // === Automation crons ===
+  ipcMain.handle(IPC_CHANNELS.AUTOMATION_RUN_AUTO_RENEW, async () => runAutoRenewNow());
+  ipcMain.handle(IPC_CHANNELS.AUTOMATION_RUN_AUTO_CANCEL, async () => runAutoCancelNow());
+  ipcMain.handle(IPC_CHANNELS.AUTOMATION_RUN_LIMBO, async () => runLimboFallbackNow());
 
   // === Settings ===
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, () => {
@@ -199,6 +280,8 @@ export function registerIpcHandlers(): void {
     try {
       startMailCheck();         // 메일 체크 스케줄 갱신
       restartPreExpiryTask();   // 자동 Cancel 스케줄 갱신
+      startDailyReportTasks();  // 일일 리포트 스케줄 갱신
+      startExpiryNoticeTask();  // 만료 예고 메일 스케줄 갱신
       startPollingScheduler();  // 주문 폴링 스케줄 갱신
       logger.info('설정 저장 후 모든 스케줄러 재시작 완료');
     } catch (err: any) {
@@ -208,22 +291,76 @@ export function registerIpcHandlers(): void {
     return getSettings();
   });
 
-  // === Logs ===
-  ipcMain.handle(IPC_CHANNELS.LOGS_GET, (_event, limit: number = 100, offset: number = 0) => {
-    return serialService.getLogs(limit, offset);
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_EXPORT, async () => {
+    const result = await dialog.showSaveDialog({
+      title: '설정 내보내기',
+      defaultPath: 'exocad-settings.json',
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false };
+    }
+
+    const fs = await import('fs/promises');
+    await fs.writeFile(result.filePath, JSON.stringify(getSettings(), null, 2), 'utf8');
+    return { success: true, filePath: result.filePath };
   });
 
-  ipcMain.handle(IPC_CHANNELS.LOGS_GET_TODAY, () => {
-    return serialService.getTodayLogs();
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_IMPORT, async () => {
+    const result = await dialog.showOpenDialog({
+      title: '설정 가져오기',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false };
+    }
+
+    const fs = await import('fs/promises');
+    const raw = await fs.readFile(result.filePaths[0], 'utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { success: false, error: '설정 파일이 올바른 JSON 형식이 아닙니다' };
+    }
+    let sanitized: Partial<AppSettings>;
+    try {
+      sanitized = sanitizeSettingsImport(parsed);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+    saveSettings(sanitized);
+    startMailCheck();
+    restartPreExpiryTask();
+    startDailyReportTasks();
+    startPollingScheduler();
+    return { success: true, settings: getSettings(true) };
+  });
+
+  // === Logs ===
+  ipcMain.handle(IPC_CHANNELS.LOGS_LIST, (_event, filter: LogFilter = {}) => {
+    return listLogs(filter);
   });
 
   // === Stats ===
-  ipcMain.handle(IPC_CHANNELS.STATS_GET, () => {
+  ipcMain.handle(IPC_CHANNELS.STATS_COUNTS, () => {
     return serialService.getStats();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.STATS_SERIES, (_event, granularity: 'day'|'month'|'year' = 'day', range: number = 30) => {
+    return serialService.getStatsSeries(granularity, range);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.STATS_FAILURES, () => {
+    return getFailureLogs(50);
   });
 
   // === 주문 폴링 & 대기함 ===
   ipcMain.handle(IPC_CHANNELS.ORDER_GET_PENDING, () => getAllOrders());
+  ipcMain.handle(IPC_CHANNELS.ORDER_LIST_GROUPED, () => listGroupedOrders());
 
   ipcMain.handle(IPC_CHANNELS.ORDER_APPROVE, (_event, id: number, options?: { serial_status?: string }) =>
     approvePendingOrder(id, options)
@@ -255,21 +392,98 @@ export function registerIpcHandlers(): void {
     return true;
   });
 
+  // === Notification ===
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_TEST_SLACK, (_event, settingsOverride?: any) =>
+    notificationService.testSlackWebhook(settingsOverride)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_SEND_DAILY_NOW, async () => {
+    await sendDailyReportNow();
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_LIST_REPORT_TIMES, () =>
+    getSettings().daily_report_times || ['10:00']
+  );
+
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_SET_REPORT_TIMES, (_event, times: string[]) => {
+    saveSettings({ daily_report_times: times });
+    startDailyReportTasks();
+    return getSettings().daily_report_times;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXPIRY_NOTICE_DRY_RUN, (_event, input: any) =>
+    runExpiryNoticeDryRun(input)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.STOP_LIFECYCLE_NOTICE_DRY_RUN, (_event, input: any) =>
+    runStopLifecycleNoticeDryRun(input)
+  );
+
   // === Webhook Server ===
-  let webhookRunning = false;
-  const webhookPort = 3000;
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_GET_STATUS, () => getWebhookStatus());
 
-  ipcMain.handle(IPC_CHANNELS.WEBHOOK_GET_STATUS, () => ({ running: webhookRunning, port: webhookPort }));
-
-  ipcMain.handle(IPC_CHANNELS.WEBHOOK_START, () => {
-    webhookRunning = true;
-    logger.info(`Webhook 서버 시작 (포트 ${webhookPort})`);
-    return { running: webhookRunning, port: webhookPort };
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_START, async () => {
+    return startWebhookServer();
   });
 
-  ipcMain.handle(IPC_CHANNELS.WEBHOOK_STOP, () => {
-    webhookRunning = false;
-    logger.info('Webhook 서버 중지');
-    return { running: webhookRunning, port: webhookPort };
+  ipcMain.handle(IPC_CHANNELS.WEBHOOK_STOP, async () => {
+    return stopWebhookServer();
   });
+
+  // === Mail — Inbound ===
+  ipcMain.handle(IPC_CHANNELS.MAIL_CHECK_INBOUND, () => checkInboundNow());
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_INBOUND_DRY_RUN, () => inboundDryRun());
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_CONNECTION, (_event, settingsOverride?: any) =>
+    testMailConnection(settingsOverride)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_LIST_INBOUND, (_event, filter?: any) =>
+    listInboundMails(filter)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_CONFIRM_STOP_REQUEST, (_event, id: number) =>
+    confirmStopRequestFromMail(id)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_SEND_MISSING_INFO_TEMPLATE, (_event, id: number) =>
+    sendMissingInfoTemplateForMail(id)
+  );
+
+  // === Mail Templates ===
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEMPLATE_LIST, () => listTemplates());
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEMPLATE_GET, (_event, code: string) =>
+    getTemplate(code) ?? null
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEMPLATE_UPSERT, (_event, input: MailTemplateUpsert) =>
+    upsertTemplate(input)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEMPLATE_DELETE, (_event, code: string) => {
+    deleteTemplate(code);
+    return true;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEMPLATE_PREVIEW, (_event, code: string, serialId: number) =>
+    previewTemplate(code, serialId)
+  );
+
+  // === Mail SMTP ===
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_SMTP, (_event, settingsOverride?: any) =>
+    testSmtp(settingsOverride)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAIL_SEND_TEST_DRY_RUN, (_event, settingsOverride?: any) =>
+    sendTestDryRun(settingsOverride)
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MAIL_SEND_TEMPLATE,
+    (_event, code: string, to: string, vars: any, options?: any) =>
+      smtpSendTemplate(code, to, vars, options)
+  );
 }

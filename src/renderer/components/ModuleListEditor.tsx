@@ -4,6 +4,8 @@
  * Manage a string[] list of module names (add / remove).
  */
 import React, { useState } from 'react';
+import { useLang } from '../App';
+import { t } from '../i18n';
 
 interface Props {
   modules: string[];
@@ -12,6 +14,7 @@ interface Props {
 }
 
 export default function ModuleListEditor({ modules, onChange, disabled = false }: Props) {
+  const { lang } = useLang();
   const [input, setInput] = useState('');
 
   const add = () => {
@@ -41,7 +44,7 @@ export default function ModuleListEditor({ modules, onChange, disabled = false }
             )}
           </span>
         ))}
-        {modules.length === 0 && <span style={{ fontSize: 12, color: 'var(--text3)' }}>모듈 없음</span>}
+        {modules.length === 0 && <span style={{ fontSize: 12, color: 'var(--text3)' }}>{t(lang, 'modules_empty')}</span>}
       </div>
       {!disabled && (
         <div style={{ display: 'flex', gap: 6 }}>
@@ -49,7 +52,7 @@ export default function ModuleListEditor({ modules, onChange, disabled = false }
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && add()}
-            placeholder="모듈명 입력 후 Enter"
+            placeholder={t(lang, 'modules_placeholder')}
             style={{
               flex: 1, padding: '5px 8px', border: '1px solid var(--border2)',
               borderRadius: 4, fontSize: 12, background: 'var(--bg3)', color: 'var(--text)',
@@ -57,7 +60,7 @@ export default function ModuleListEditor({ modules, onChange, disabled = false }
           />
           <button onClick={add} disabled={!input.trim()} className="btn btn-primary btn-sm"
             style={{ opacity: input.trim() ? 1 : 0.5 }}>
-            추가
+            {t(lang, 'add')}
           </button>
         </div>
       )}

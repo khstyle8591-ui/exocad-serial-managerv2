@@ -37,12 +37,12 @@ export default function SystemLogs() {
 
     const openMailPopup = async (id: number) => {
         setViewingMailId(id);
-        setMailBody('로딩 중...');
+        setMailBody(t(lang, 'system_mail_loading'));
         try {
             const body = await api.getCapturedMail(id);
             setMailBody(body);
         } catch (err) {
-            setMailBody('메일 내용을 불러올 수 없습니다.');
+            setMailBody(t(lang, 'system_mail_load_fail'));
         }
     };
 
@@ -59,8 +59,8 @@ export default function SystemLogs() {
                         overflow: 'auto', position: 'relative', boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
                     }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                            <h3 style={{ margin: 0 }}>메일 내용 보기 (ID: {viewingMailId})</h3>
-                            <button className="btn btn-secondary" onClick={() => setViewingMailId(null)}>닫기</button>
+                            <h3 style={{ margin: 0 }}>{t(lang, 'system_mail_view_title').replace('{id}', String(viewingMailId))}</h3>
+                            <button className="btn btn-secondary" onClick={() => setViewingMailId(null)}>{t(lang, 'close')}</button>
                         </div>
                         <div style={{
                             padding: 15, border: '1px solid #eee', borderRadius: 4, background: '#f9f9f9',
@@ -87,12 +87,12 @@ export default function SystemLogs() {
                 {/* === 상단: System Logs === */}
                 <div className="table-container" style={{ flex: 1, minHeight: 300 }}>
                     <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: 16, color: 'var(--text)' }}>
-                        🖥️ System Logs ( {systemLogs.length}건 )
+                        🖥️ {t(lang, 'system_logs_title_count').replace('{n}', String(systemLogs.length))}
                     </h3>
                     {loading ? (
                         <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'loading')}</div>
                     ) : systemLogs.length === 0 ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>해당 날짜 로그가 없습니다.</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'system_logs_empty_date')}</div>
                     ) : (
                         <div style={{ overflowX: 'auto', maxHeight: '40vh' }}>
                             <pre style={{ margin: 0, padding: 16, fontSize: 13, background: 'var(--bg4)', color: 'var(--text)', whiteSpace: 'pre-wrap', minHeight: '100%' }}>
@@ -105,13 +105,13 @@ export default function SystemLogs() {
                 {/* === 하단: 관련 메일 수신 알림 === */}
                 <div className="table-container" style={{ flex: 1, minHeight: 300, border: '1px solid var(--yellow)' }}>
                     <h3 style={{ margin: '0 0 10px 0', padding: '12px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: 16, color: 'var(--text)' }}>
-                        🔔 관련 메일 수신 알림 ( {relatedEmails.length}건 )
+                        🔔 {t(lang, 'related_emails_title_count').replace('{n}', String(relatedEmails.length))}
                     </h3>
-                    <p style={{ margin: '0 16px 10px', fontSize: 13, color: 'var(--text)' }}>제품 이름은 포함되어 있으나 갱신 키워드 또는 시리얼 포맷이 일치하지 않아 갱신 요청으로 분류되지 않은 메일입니다.</p>
+                    <p style={{ margin: '0 16px 10px', fontSize: 13, color: 'var(--text)' }}>{t(lang, 'related_emails_desc')}</p>
                     {loading ? (
                         <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'loading')}</div>
                     ) : relatedEmails.length === 0 ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>관련 메일 수신 기록이 없습니다.</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text)' }}>{t(lang, 'related_emails_empty')}</div>
                     ) : (
                         <div style={{ overflowX: 'auto', maxHeight: '40vh' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -139,7 +139,7 @@ export default function SystemLogs() {
                                                 <td style={{ padding: '8px 12px', whiteSpace: 'nowrap', color: 'var(--text)' }}>{timeStr}</td>
                                                 <td style={{ padding: '8px 12px' }}>
                                                     {detail}
-                                                    {mailId && <span style={{ marginLeft: 8, color: 'var(--accent)', textDecoration: 'underline', fontSize: 11 }}>[내용 보기]</span>}
+                                                    {mailId && <span style={{ marginLeft: 8, color: 'var(--accent)', textDecoration: 'underline', fontSize: 11 }}>{t(lang, 'view_content_bracket')}</span>}
                                                 </td>
                                             </tr>
                                         );

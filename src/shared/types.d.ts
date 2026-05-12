@@ -4,7 +4,7 @@ export interface Serial {
     customer_name: string;
     customer_email: string;
     purchase_date: string;
-    expiry_date: string;
+    expiry_date: string | null;
     status: 'active' | 'cancelled' | 'expired';
     add_ons: string;
     notes: string;
@@ -35,7 +35,7 @@ export interface SerialInput {
     customer_name: string;
     customer_email: string;
     purchase_date: string;
-    expiry_date: string;
+    expiry_date?: string | null;
     add_ons?: AddOn[];
     notes?: string;
 }
@@ -44,7 +44,7 @@ export interface ExcelSerialRow {
     customer_name: string;
     customer_email: string;
     purchase_date: string;
-    expiry_date: string;
+    expiry_date: string | null;
     add_ons?: string;
     notes?: string;
 }

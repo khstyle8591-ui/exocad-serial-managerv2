@@ -87,7 +87,7 @@ export default function RequestedOrder() {
         }
 
         const result = await window.electronAPI.approveOrder(order.id, { serial_status: targetStatus, ...customerPayload });
-        if (!result?.success) throw new Error(result?.error || `주문 ${order.id} 승인 실패`);
+        if (!result?.success) throw new Error(result?.error || t(lang, 'orders_approve_fail') + order.id);
         if (resolvedCustomerId === undefined && result.customer_id) {
           resolvedCustomerId = result.customer_id;
         }

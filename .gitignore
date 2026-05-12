@@ -5,3 +5,6 @@ dist/
 .env
 data/
 logs/
+.claude/
+*.log
+electron-startup-*.txt

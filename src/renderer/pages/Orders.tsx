@@ -70,9 +70,13 @@ export default function Orders() {
         const res = await api.updateDataOrder(updated.id, updated) as any;
         if (res.success) {
           const d = res.data;
-          alert(`데이터 업데이트 완료!\n\n시리얼: ${d.serial_number}\n고객명: ${d.customer_name}\n품명: ${d.version}\n만료일: ${d.expiry_date}`);
+          alert(t(lang, 'orders_update_success')
+            .replace('{serial}', d.serial_number)
+            .replace('{customer}', d.customer_name)
+            .replace('{version}', d.version)
+            .replace('{expiry}', d.expiry_date));
         } else {
-          alert(`데이터 업데이트 실패: ${res.error}`);
+          alert(t(lang, 'orders_update_fail').replace('{error}', res.error));
         }
       }
     } catch (e: any) {
@@ -192,10 +196,10 @@ export default function Orders() {
                       color: 'var(--red)', fontSize: 12, fontWeight: 700,
                       animation: 'pulse 1.5s infinite',
                     }}>
-                      🔴 중복 (DB 상태: {order.existing_status || '알수없음'})
+                      🔴 {t(lang, 'orders_duplicate_badge').replace('{status}', order.existing_status || t(lang, 'unknown'))}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--red)' }}>
-                      | 만료: {order.existing_expiry || '없음'} | 고객: {order.existing_customer_name || '없음'}
+                      {t(lang, 'orders_duplicate_details').replace('{expiry}', order.existing_expiry || t(lang, 'none')).replace('{customer}', order.existing_customer_name || t(lang, 'none'))}
                     </span>
                   </div>
                 )}
@@ -229,11 +233,11 @@ export default function Orders() {
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={() => setEditOrder({ order: { ...order }, mode: 'register' })}
-                    >Edit & Register</button>
+                    >{t(lang, 'orders_btn_edit_register')}</button>
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => setEditOrder({ order: { ...order }, mode: 'update' })}
-                    >Data Update</button>
+                    >{t(lang, 'orders_btn_data_update')}</button>
                     <button
                       className="btn btn-sm"
                       style={{ background: 'var(--red-dim)', color: 'var(--red)' }}
@@ -321,7 +325,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>{mode === 'update' ? 'Data Update' : t(lang, 'orders_modal_title')}</h3>
+          <h3>{mode === 'update' ? t(lang, 'orders_modal_update_title') : t(lang, 'orders_modal_title')}</h3>
           <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
         </div>
 
@@ -333,13 +337,13 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label>Status</label>
+              <label>{t(lang, 'label_status')}</label>
               <select value={form.serial_status || order.existing_status || 'active'} onChange={e => set('serial_status', e.target.value)}>
-                <option value="active">Active</option>
-                <option value="expired">Expired</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="not-activated">Not Activated</option>
-                <option value="broken">Broken</option>
+                <option value="active">{t(lang, 'status_active')}</option>
+                <option value="expired">{t(lang, 'status_expired')}</option>
+                <option value="cancelled">{t(lang, 'status_cancelled')}</option>
+                <option value="not-activated">{t(lang, 'status_not_activated')}</option>
+                <option value="broken">{t(lang, 'status_broken')}</option>
               </select>
             </div>
             <div className="form-group">
@@ -353,7 +357,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
               <input type="date" value={form.purchase_date} onChange={e => set('purchase_date', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>{t(lang, 'label_expiry_date')} {mode === 'update' && <span style={{fontSize: 10, fontWeight: 'normal'}}>(수정안함)</span>}</label>
+              <label>{t(lang, 'label_expiry_date')} {mode === 'update' && <span style={{fontSize: 10, fontWeight: 'normal'}}>{t(lang, 'orders_no_expiry_change')}</span>}</label>
               <input type="date" value={form.expiry_date} onChange={e => set('expiry_date', e.target.value)} />
             </div>
           </div>
@@ -391,7 +395,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>{t(lang, 'cancel')}</button>
-          <button className="btn btn-primary" onClick={handleApprove}>{mode === 'update' ? 'Update' : t(lang, 'orders_btn_edit_approve')}</button>
+          <button className="btn btn-primary" onClick={handleApprove}>{mode === 'update' ? t(lang, 'orders_btn_update') : t(lang, 'orders_btn_edit_approve')}</button>
         </div>
       </div>
     </div>

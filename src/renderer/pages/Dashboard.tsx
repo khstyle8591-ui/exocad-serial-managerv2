@@ -140,11 +140,11 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">{t(lang, 'nav_dashboard')}</div>
-          <div className="page-subtitle">시리얼 라이선스 현황 개요</div>
+          <div className="page-subtitle">{t(lang, 'dash_subtitle')}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary btn-sm" onClick={loadData}>
-            <RefreshIcon /> 새로고침
+            <RefreshIcon /> {t(lang, 'refresh')}
           </button>
           <button className="btn btn-secondary btn-sm" onClick={handleCheckEmails}>{t(lang, 'dash_btn_mail_check')}</button>
           <button className="btn btn-danger btn-sm"    onClick={handleProcessExpiring}>{t(lang, 'dash_btn_expiry_cancel')}</button>
@@ -182,32 +182,32 @@ export default function Dashboard() {
         <div className="stat-card total" onClick={() => setPage('serials', { filter: 'all' })}>
           <div className="label">{t(lang, 'dash_stat_total')}</div>
           <div className="value">{stats.total}</div>
-          <div className="sub">{stats.active}개 활성 · {stats.expired}개 만료</div>
+          <div className="sub">{t(lang, 'dash_active_expired_summary').replace('{active}', String(stats.active)).replace('{expired}', String(stats.expired))}</div>
         </div>
         <div className="stat-card green" onClick={() => setPage('serials', { filter: 'active' })}>
           <div className="label">{t(lang, 'dash_stat_active')}</div>
           <div className="value">{stats.active}</div>
-          <div className="sub">현재 사용중</div>
+          <div className="sub">{t(lang, 'dash_sub_active')}</div>
         </div>
         <div className="stat-card red" onClick={() => setPage('serials', { filter: 'cancelled' })}>
           <div className="label">{t(lang, 'dash_stat_cancelled')}</div>
           <div className="value">{stats.cancelled}</div>
-          <div className="sub">구독 취소됨</div>
+          <div className="sub">{t(lang, 'dash_sub_cancelled')}</div>
         </div>
         <div className="stat-card gray" onClick={() => setPage('serials', { filter: 'expired' })}>
           <div className="label">{t(lang, 'dash_stat_expired')}</div>
           <div className="value">{stats.expired}</div>
-          <div className="sub">갱신 필요</div>
+          <div className="sub">{t(lang, 'dash_sub_expired')}</div>
         </div>
         <div className="stat-card purple" onClick={() => setPage('serials', { filter: 'not-activated' })}>
           <div className="label">{t(lang, 'status_not_activated')}</div>
           <div className="value">{stats.notActivated}</div>
-          <div className="sub">미활성 라이선스</div>
+          <div className="sub">{t(lang, 'dash_sub_not_activated')}</div>
         </div>
         <div className="stat-card orange" onClick={() => setPage('serials', { filter: 'expiring' })}>
           <div className="label">{t(lang, 'dash_stat_expiring')}</div>
           <div className="value">{stats.expiringThisMonth}</div>
-          <div className="sub">이번 달 만료 예정</div>
+          <div className="sub">{t(lang, 'dash_sub_expiring')}</div>
         </div>
       </div>
 
@@ -219,7 +219,7 @@ export default function Dashboard() {
           borderRadius: 10, padding: '16px 18px',
         }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)', marginBottom: 14 }}>
-            상태별 현황
+            {t(lang, 'dash_status_breakdown')}
           </div>
           {statusBreakdown.map(item => {
             const pct = stats.total ? Math.round((item.count / stats.total) * 100) : 0;
@@ -251,7 +251,7 @@ export default function Dashboard() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
             <span style={{ color: 'var(--yellow)' }}><AlertIcon /></span>
-            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>60일 내 만료 예정</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>{t(lang, 'dash_expiring_soon')}</span>
             <span style={{
               marginLeft: 'auto', fontSize: 11,
               fontFamily: "'JetBrains Mono', monospace",
@@ -259,7 +259,7 @@ export default function Dashboard() {
             }}>{expiringSerials.length}</span>
           </div>
           {expiringSerials.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text3)', padding: '12px 0' }}>만료 예정 없음</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', padding: '12px 0' }}>{t(lang, 'dash_no_expiring_soon')}</div>
           ) : (
             <div style={{ overflow: 'auto', maxHeight: 200 }}>
               {expiringSerials.map((s: any) => {

@@ -170,8 +170,8 @@ export default function Serials() {
       const file = input.files?.[0];
       if (!file) return;
       const result = await api.bulkImport(file) as any;
-      if (result.imported > 0) alert(`${result.imported}건 임포트 완료`);
-      if (result.errors.length > 0) alert(`오류:\n${result.errors.join('\n')}`);
+      if (result.imported > 0) alert(t(lang, 'import_done_count').replace('{n}', String(result.imported)));
+      if (result.errors.length > 0) alert(t(lang, 'orders_poll_errors') + result.errors.join('\n'));
       loadSerials();
     };
     input.click();
@@ -185,7 +185,7 @@ export default function Serials() {
       setEditingSerial(null);
       loadSerials();
     } catch (err: any) {
-      alert(err.message || '저장 중 오류가 발생했습니다.');
+      alert(err.message || t(lang, 'save_fail'));
     }
   };
 
@@ -226,7 +226,7 @@ export default function Serials() {
   };
 
   const deleteSelected = () => {
-    if (!confirm(`${selected.size}개 항목을 삭제하시겠습니까?`)) return;
+    if (!confirm(t(lang, 'selected_delete_confirm').replace('{n}', String(selected.size)))) return;
     Promise.all([...selected].map(id => api.deleteSerial(id))).then(() => {
       setSelected(new Set());
       loadSerials();
@@ -274,7 +274,7 @@ export default function Serials() {
         <div>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{t(lang, 'page_title_serials')}</div>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-            전체 {serials.length}개 · 조회 {filtered.length}개
+            {t(lang, 'serials_count_summary').replace('{total}', String(serials.length)).replace('{shown}', String(filtered.length))}
           </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -282,7 +282,7 @@ export default function Serials() {
             <button onClick={deleteSelected} className="btn btn-sm" style={{
               background: 'var(--red-dim)', color: 'var(--red)', border: '1px solid rgba(240,82,82,0.3)',
             }}>
-              {selected.size}개 삭제
+              {t(lang, 'selected_delete_count').replace('{n}', String(selected.size))}
             </button>
           )}
           <button className="btn btn-secondary btn-sm" onClick={() => api.downloadTemplate()} title={t(lang, 'btn_download_template')}>
@@ -323,7 +323,7 @@ export default function Serials() {
           onChange={e => setFilterStatus(e.target.value)}
           style={{ ...inputStyle, width: 'auto', color: filterStatus !== 'all' ? 'var(--accent)' : 'var(--text2)' }}
         >
-          <option value="all">전체 상태</option>
+          <option value="all">{t(lang, 'status_all')}</option>
           {STATUSES.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
         {(search || filterStatus !== 'all') && (
@@ -418,7 +418,7 @@ export default function Serials() {
                             fontSize: 12, color: 'var(--accent)',
                             letterSpacing: '0.03em', cursor: 'pointer',
                           }}
-                          title="클릭하여 상세 정보 보기"
+                          title={t(lang, 'title_view_detail')}
                           onClick={() => { setDetailSerial(serial); setDetailTab('info'); }}
                         >
                           {serial.serial_number}
@@ -432,7 +432,7 @@ export default function Serials() {
                             opacity: copiedId === serial.id ? 1 : 0.5,
                             transition: 'all 0.1s',
                           }}
-                          title="복사"
+                          title={t(lang, 'title_copy')}
                         >
                           <CopyIcon />
                         </button>
@@ -587,7 +587,7 @@ export default function Serials() {
                     const addOns = JSON.parse(detailSerial.add_ons || '[]');
                     return addOns.length === 0 ? (
                       <div style={{ color: 'var(--text3)', textAlign: 'center', padding: '20px 0', fontSize: 13 }}>
-                        등록된 Add-on이 없습니다.
+                        {t(lang, 'no_addons')}
                       </div>
                     ) : (
                       <div style={{ marginBottom: 16 }}>

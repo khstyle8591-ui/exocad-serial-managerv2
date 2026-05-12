@@ -18,6 +18,11 @@ import cancelRouter from '../server/routes/cancel';
 import logsRouter from '../server/routes/logs';
 import reportsRouter from '../server/routes/reports';
 import webhookRouter from '../server/routes/webhook';
+import customersRouter from '../server/routes/customers';
+import mailTemplatesRouter from '../server/routes/mail-templates';
+import legacyRouter from '../server/routes/legacy';
+import mailRouter from '../server/routes/mail';
+import automationRouter from '../server/routes/automation';
 
 // ── 초기화 ───────────────────────────────────────────────────────────────────
 logger.init();
@@ -43,6 +48,11 @@ app.use('/api/cancel', cancelRouter);
 app.use('/api/logs', logsRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/webhook', webhookRouter);
+app.use('/api/customers', customersRouter);
+app.use('/api/mail-templates', mailTemplatesRouter);
+app.use('/api/legacy', legacyRouter);
+app.use('/api/mail', mailRouter);
+app.use('/api/automation', automationRouter);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

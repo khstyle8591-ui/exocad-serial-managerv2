@@ -4,9 +4,14 @@ import { initDatabase, closeDatabase } from './database';
 import { registerIpcHandlers } from './ipc-handlers';
 import { startScheduler, stopScheduler } from './scheduler';
 import { startPollingScheduler, stopPollingScheduler } from './services/order.service';
+import { seedBuiltinTemplates } from './services/mail/template.service';
 import { logger } from './utils/logger';
+import { stopWebhookServer } from './webhook-server';
+import { startApiServer, stopApiServer } from './api-server';
 
 let mainWindow: BrowserWindow | null = null;
+
+app.setName('Exocad Serial Manager');
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -46,17 +51,17 @@ app.whenReady().then(() => {
     ? [
       "default-src 'self'",
       "script-src 'self' 'unsafe-eval' 'unsafe-inline'",   // Vite HMR(eval) + React Fast Refresh(inline script)
-      "style-src 'self' 'unsafe-inline'",  // CSS-in-JS 대응
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",  // CSS-in-JS + Google Fonts
       "connect-src 'self' ws://localhost:5173 http://localhost:5173",
       "img-src 'self' data:",
-      "font-src 'self' data:",
+      "font-src 'self' data: https://fonts.gstatic.com",
     ].join('; ')
     : [
       "default-src 'self'",
       "script-src 'self'",
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data:",
-      "font-src 'self' data:",
+      "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self'",
     ].join('; ');
 
@@ -71,7 +76,9 @@ app.whenReady().then(() => {
   // ────────────────────────────────────────────────────────────────────────────
 
   initDatabase();
+  seedBuiltinTemplates();
   registerIpcHandlers();
+  startApiServer();
   createWindow();
   startScheduler();
   startPollingScheduler(); // URL 폴링 스케줄러 자동 시작
@@ -90,6 +97,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
+  await stopApiServer();
+  await stopWebhookServer();
   stopScheduler();
   stopPollingScheduler(); // URL 폴링 스케줄러 정리
   closeDatabase();

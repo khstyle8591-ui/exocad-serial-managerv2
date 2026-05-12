@@ -3,6 +3,7 @@ import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
 import { api } from '../api';
+import type { ExpiryNoticeRule, MailTemplate } from '../../shared/types';
 
 // ── UUID 단순 생성 ──────────────────────────────────────────────────────────
 function genId(): string {
@@ -28,6 +29,36 @@ function emptySource() {
     product_filter: '',
     last_polled: '',
   };
+}
+
+function normalizeExpiryRules(settings: any): ExpiryNoticeRule[] {
+  const rawRules = Array.isArray(settings.expiry_notice_rules) ? settings.expiry_notice_rules : [];
+  const fallbackTemplate = settings.expiry_notice_renewal_template || 'renewal_reminder';
+  const rules = rawRules
+    .map((rule: any) => ({
+      id: String(rule.id || genId()),
+      days_before: Number(rule.days_before),
+      renewal_template: String(rule.renewal_template || fallbackTemplate),
+    }))
+    .filter((rule: ExpiryNoticeRule) => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
+
+  if (rules.length > 0) return rules;
+
+  const legacyDays = Array.isArray(settings.expiry_notice_days) ? settings.expiry_notice_days : [90, 30, 10];
+  return legacyDays
+    .map((day: unknown) => Number(day))
+    .filter((day: number) => Number.isInteger(day) && day >= 0 && day <= 365)
+    .map((day: number) => ({ id: genId(), days_before: day, renewal_template: fallbackTemplate }));
+}
+
+function normalizeKeywordList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(String).map(v => v.trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map(v => v.trim()).filter(Boolean);
+  }
+  return [];
 }
 
 // ── 매뉴얼 팝업 컴포넌트 ─────────────────────────────────────────────────────
@@ -65,19 +96,20 @@ function ManualPopup({ title, content, onClose }: { title: string; content: Reac
 
 // ── 섹션 헤더 (제목 + 매뉴얼 버튼) ───────────────────────────────────────────
 function SectionHeader({ title, onManual }: { title: string; onManual: () => void }) {
+  const { lang } = useLang();
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
       <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{title}</h3>
       <button
         onClick={onManual}
-        title="사용 방법 보기"
+        title={t(lang, 'manual_tooltip')}
         style={{
           background: 'var(--bg4)', border: '1px solid var(--border2)', color: 'var(--text2)',
           borderRadius: 6, padding: '3px 10px', fontSize: 11.5, cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit',
         }}
       >
-        📖 Manual
+        📖 {t(lang, 'manual_title')}
       </button>
     </div>
   );
@@ -101,6 +133,21 @@ export default function Settings() {
   const [imapTls, setImapTls] = useState(true);
   const [smtpTls, setSmtpTls] = useState(false);
   const [slackEnabled, setSlackEnabled] = useState(true);
+  const [expiryNoticeEnabled, setExpiryNoticeEnabled] = useState(true);
+  const [stopRequestNoticeEnabled, setStopRequestNoticeEnabled] = useState(true);
+  const [cancelCompleteNoticeEnabled, setCancelCompleteNoticeEnabled] = useState(true);
+  const [mailTemplates, setMailTemplates] = useState<MailTemplate[]>([]);
+  const [expiryNoticeRules, setExpiryNoticeRules] = useState<ExpiryNoticeRule[]>([]);
+  const [expiryDryRunEmails, setExpiryDryRunEmails] = useState<Record<string, string>>({});
+  const [expiryDryRunResults, setExpiryDryRunResults] = useState<Record<string, string>>({});
+  const [expiryDryRunning, setExpiryDryRunning] = useState<Record<string, boolean>>({});
+  const [stopDryRunDays, setStopDryRunDays] = useState(30);
+  const [stopDryRunEmail, setStopDryRunEmail] = useState('');
+  const [stopDryRunResult, setStopDryRunResult] = useState<string | null>(null);
+  const [stopDryRunning, setStopDryRunning] = useState(false);
+  const [lifecycleDryRunEmails, setLifecycleDryRunEmails] = useState<Record<string, string>>({});
+  const [lifecycleDryRunResults, setLifecycleDryRunResults] = useState<Record<string, string>>({});
+  const [lifecycleDryRunning, setLifecycleDryRunning] = useState<Record<string, boolean>>({});
 
   // Cancel Dry-Run state
   const [cancelDryRunning, setCancelDryRunning] = useState(false);
@@ -114,6 +161,11 @@ export default function Settings() {
   const [connTesting, setConnTesting] = useState(false);
   const [connTestResult, setConnTestResult] = useState<any | null>(null);
   const [requireSerial, setRequireSerial] = useState(true);
+  const [productKeywords, setProductKeywords] = useState<string[]>([]);
+  const [actionKeywords, setActionKeywords] = useState<string[]>([]);
+  const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
+  const [keywordInputs, setKeywordInputs] = useState<Record<string, string>>({});
+  const [missingInfoAutoReply, setMissingInfoAutoReply] = useState(false);
 
   // SMTP Connection Test state
   const [smtpTesting, setSmtpTesting] = useState(false);
@@ -130,12 +182,13 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const data = await api.getSettings() as any;
+      const [data, templates] = await Promise.all([
+        api.getSettings() as Promise<any>,
+        api.listMailTemplates() as Promise<MailTemplate[]>,
+      ]);
       // Store all values in ref
       formVals.current = { ...data };
-      formVals.current.renewal_product_keywords_raw = (data.renewal_product_keywords || []).join(', ');
-      formVals.current.renewal_action_keywords_raw = (data.renewal_action_keywords || Object.values(data.renewal_keywords || [])).join(', ');
-      formVals.current.renewal_exclude_keywords_raw = (data.renewal_exclude_keywords || []).join(', ');
+      const loadedRules = normalizeExpiryRules(data);
       pollSourcesRef.current = data.poll_sources || [];
       // Set UI-controlling state
       setProtocol(data.mail_protocol || 'pop3');
@@ -144,11 +197,22 @@ export default function Settings() {
       setAppLanguage(data.app_language || 'ko');
       setSlackLanguage(data.slack_language || 'ko');
       setSlackEnabled(data.slack_enabled ?? true);
+      setExpiryNoticeEnabled(data.expiry_notice_enabled ?? true);
+      setStopRequestNoticeEnabled(data.stop_request_notice_enabled ?? true);
+      setCancelCompleteNoticeEnabled(data.cancel_complete_notice_enabled ?? true);
+      setExpiryNoticeRules(loadedRules);
+      setStopDryRunDays(loadedRules[0]?.days_before ?? 30);
+      setMailTemplates(templates || []);
       setPop3Tls(data.pop3_tls ?? true);
       setPop3KeepCopy(data.pop3_keep_copy ?? false);
       setImapTls(data.imap_tls ?? true);
       setSmtpTls(data.smtp_tls ?? false);
       setRequireSerial(data.require_serial_format ?? true);
+      setProductKeywords(normalizeKeywordList(data.renewal_product_keywords));
+      setActionKeywords(normalizeKeywordList(data.renewal_action_keywords?.length ? data.renewal_action_keywords : data.renewal_keywords));
+      setExcludeKeywords(normalizeKeywordList(data.renewal_exclude_keywords));
+      setKeywordInputs({});
+      setMissingInfoAutoReply(data.missing_info_auto_reply_enabled ?? false);
       // Increment key to reset all defaultValue inputs with new data
       setLoadKey(k => k + 1);
     } catch (err) {
@@ -163,12 +227,31 @@ export default function Settings() {
     formVals.current[key] = value;
   };
 
+  const setKeywordInput = (key: string, value: string) => {
+    setKeywordInputs(current => ({ ...current, [key]: value }));
+  };
+
+  const addKeyword = (key: string, list: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+    const value = (keywordInputs[key] || '').trim();
+    if (!value) return;
+    setter(current => current.some(item => item.toLowerCase() === value.toLowerCase()) ? current : [...current, value]);
+    setKeywordInput(key, '');
+  };
+
+  const removeKeyword = (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+    setter(current => current.filter(item => item !== value));
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      const productRaw: string = formVals.current.renewal_product_keywords_raw ?? '';
-      const actionRaw: string = formVals.current.renewal_action_keywords_raw ?? '';
-      const excludeRaw: string = formVals.current.renewal_exclude_keywords_raw ?? '';
+      const cleanedExpiryRules = expiryNoticeRules
+        .map(rule => ({
+          id: rule.id || genId(),
+          days_before: Number(rule.days_before),
+          renewal_template: rule.renewal_template || 'renewal_reminder',
+        }))
+        .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
       const finalSettings = {
         ...formVals.current,
         mail_protocol: protocol,
@@ -177,15 +260,22 @@ export default function Settings() {
         app_language: appLanguage,
         slack_language: slackLanguage,
         slack_enabled: slackEnabled,
+        expiry_notice_enabled: expiryNoticeEnabled,
+        stop_request_notice_enabled: stopRequestNoticeEnabled,
+        cancel_complete_notice_enabled: cancelCompleteNoticeEnabled,
         pop3_tls: pop3Tls,
         pop3_keep_copy: pop3KeepCopy,
         imap_tls: imapTls,
         smtp_tls: smtpTls,
         poll_sources: pollSourcesRef.current,
         require_serial_format: requireSerial,
-        renewal_product_keywords: productRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
-        renewal_action_keywords: actionRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
-        renewal_exclude_keywords: excludeRaw.split(',').map((s: string) => s.trim()).filter(Boolean),
+        renewal_product_keywords: productKeywords,
+        renewal_action_keywords: actionKeywords,
+        renewal_exclude_keywords: excludeKeywords,
+        missing_info_auto_reply_enabled: missingInfoAutoReply,
+        expiry_notice_rules: cleanedExpiryRules,
+        expiry_notice_days: cleanedExpiryRules.map(rule => rule.days_before),
+        expiry_notice_renewal_template: cleanedExpiryRules[0]?.renewal_template || 'renewal_reminder',
       };
       // Clean up temp keys
       delete finalSettings.renewal_keywords_raw;
@@ -202,7 +292,160 @@ export default function Settings() {
     }
   };
 
+  const updateExpiryRule = (id: string, patch: Partial<ExpiryNoticeRule>) => {
+    setExpiryNoticeRules(current => current.map(rule => rule.id === id ? { ...rule, ...patch } : rule));
+  };
+
+  const addExpiryRule = () => {
+    setExpiryNoticeRules(current => [
+      ...current,
+      { id: genId(), days_before: 30, renewal_template: current[0]?.renewal_template || 'renewal_reminder' },
+    ]);
+  };
+
+  const removeExpiryRule = (id: string) => {
+    setExpiryNoticeRules(current => current.filter(rule => rule.id !== id));
+  };
+
+  const runExpiryDryRun = async (rule: ExpiryNoticeRule) => {
+    const testEmail = (expiryDryRunEmails[rule.id] || '').trim();
+    setExpiryDryRunning(current => ({ ...current, [rule.id]: true }));
+    setExpiryDryRunResults(current => ({ ...current, [rule.id]: '' }));
+    try {
+      const result = await api.runExpiryNoticeDryRun({
+        days_before: rule.days_before,
+        template_code: rule.renewal_template,
+        test_email: testEmail,
+      }) as any;
+      setExpiryDryRunResults(current => ({
+        ...current,
+        [rule.id]: `${result.success ? 'OK' : 'FAIL'} - ${result.message}${result.sample_serial ? ` (${result.sample_serial})` : ''}`,
+      }));
+    } catch (err: any) {
+      setExpiryDryRunResults(current => ({ ...current, [rule.id]: `FAIL - ${err.message}` }));
+    } finally {
+      setExpiryDryRunning(current => ({ ...current, [rule.id]: false }));
+    }
+  };
+
+  const runStopTemplateDryRun = async () => {
+    setStopDryRunning(true);
+    setStopDryRunResult(null);
+    try {
+      const result = await api.runExpiryNoticeDryRun({
+        days_before: stopDryRunDays,
+        template_code: formVals.current.expiry_notice_stop_template || 'stop_expiry_reminder',
+        test_email: stopDryRunEmail,
+        use_stop_template: true,
+      }) as any;
+      setStopDryRunResult(`${result.success ? 'OK' : 'FAIL'} - ${result.message}${result.sample_serial ? ` (${result.sample_serial})` : ''}`);
+    } catch (err: any) {
+      setStopDryRunResult(`FAIL - ${err.message}`);
+    } finally {
+      setStopDryRunning(false);
+    }
+  };
+
+  const runLifecycleDryRun = async (
+    key: 'stop_request' | 'cancel_complete',
+    templateCode: string,
+  ) => {
+    const testEmail = (lifecycleDryRunEmails[key] || '').trim();
+    setLifecycleDryRunning(current => ({ ...current, [key]: true }));
+    setLifecycleDryRunResults(current => ({ ...current, [key]: '' }));
+    try {
+      const result = await api.runStopLifecycleNoticeDryRun({
+        kind: key,
+        template_code: templateCode,
+        test_email: testEmail,
+      }) as any;
+      setLifecycleDryRunResults(current => ({
+        ...current,
+        [key]: `${result.success ? 'OK' : 'FAIL'} - ${result.message}${result.sample_serial ? ` (${result.sample_serial})` : ''}`,
+      }));
+    } catch (err: any) {
+      setLifecycleDryRunResults(current => ({ ...current, [key]: `FAIL - ${err.message}` }));
+    } finally {
+      setLifecycleDryRunning(current => ({ ...current, [key]: false }));
+    }
+  };
+
   if (loading) return <div>{t(lang, 'loading')}</div>;
+
+  const KeywordCardEditor = ({
+    inputKey,
+    label,
+    hint,
+    placeholder,
+    values,
+    onChange,
+    danger = false,
+  }: {
+    inputKey: string;
+    label: string;
+    hint: string;
+    placeholder: string;
+    values: string[];
+    onChange: React.Dispatch<React.SetStateAction<string[]>>;
+    danger?: boolean;
+  }) => (
+    <div className="form-group" style={{ marginBottom: 16 }}>
+      <label style={{ fontWeight: 600, color: danger ? 'var(--red)' : undefined }}>{label}</label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+        <input
+          value={keywordInputs[inputKey] || ''}
+          onChange={e => setKeywordInput(inputKey, e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addKeyword(inputKey, values, onChange);
+            }
+          }}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          onClick={() => addKeyword(inputKey, values, onChange)}
+          className="btn btn-secondary"
+          style={{ whiteSpace: 'nowrap', padding: '7px 14px' }}
+        >
+          {t(lang, 'add')}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        {values.length === 0 ? (
+          <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>
+        ) : values.map(value => (
+          <span
+            key={value}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 9px',
+              borderRadius: 6,
+              border: `1px solid ${danger ? 'rgba(239,68,68,0.35)' : 'var(--border2)'}`,
+              background: danger ? 'var(--red-dim)' : 'var(--bg3)',
+              color: danger ? 'var(--red)' : 'var(--text)',
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {value}
+            <button
+              type="button"
+              onClick={() => removeKeyword(value, onChange)}
+              title={t(lang, 'delete')}
+              style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <small style={{ color: danger ? 'var(--red)' : 'var(--text)', fontSize: 12, display: 'block', marginTop: 6 }}>{hint}</small>
+    </div>
+  );
 
   // ── 매뉴얼 내용 정의 ────────────────────────────────────────────────────────
   const manuals: Record<string, { title: string; content: React.ReactNode }> = {
@@ -210,13 +453,13 @@ export default function Settings() {
       title: t(lang, 'section_language'),
       content: (
         <>
-          <p>앱 전체의 표시 언어를 변경합니다.</p>
+          <p>{t(lang, 'settings_manual_language')}</p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li><strong>한국어</strong> — 기본값</li>
-            <li><strong>English</strong> — 영어</li>
-            <li><strong>日本語</strong> — 일본어</li>
+            <li><strong>{t(lang, 'settings_manual_language_ko')}</strong></li>
+            <li><strong>{t(lang, 'settings_manual_language_en')}</strong></li>
+            <li><strong>{t(lang, 'settings_manual_language_ja')}</strong></li>
           </ul>
-          <p>저장 시 즉시 앱 전체에 반영됩니다. (재시작 불필요)</p>
+          <p>{t(lang, 'settings_manual_language_apply')}</p>
         </>
       ),
     },
@@ -224,15 +467,15 @@ export default function Settings() {
       title: t(lang, 'section_auto_cancel'),
       content: (
         <>
-          <p>만료일 N일 전에 <strong>갱신 요청이 없는</strong> 시리얼을 자동으로 Cancel합니다.</p>
-          <p><strong>동작 방식:</strong></p>
+          <p>{t(lang, 'settings_manual_autocancel_1')}</p>
+          <p><strong>{t(lang, 'settings_manual_behavior')}</strong></p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li>매일 오전 9시에 자동 체크</li>
-            <li>만료일이 정확히 "오늘 + N일" 인 active 시리얼 조회</li>
-            <li>갱신 요청(renewal request)이 있으면 → 건너뜀</li>
-            <li>갱신 요청 없으면 → Exocad 사이트 자동 Cancel 실행</li>
+            <li>{t(lang, 'settings_manual_autocancel_li1')}</li>
+            <li>{t(lang, 'settings_manual_autocancel_li2')}</li>
+            <li>{t(lang, 'settings_manual_autocancel_li3')}</li>
+            <li>{t(lang, 'settings_manual_autocancel_li4')}</li>
           </ul>
-          <p style={{ color: 'var(--red)', fontWeight: 600 }}>⚠️ Exocad 사이트 설정(로그인 정보)이 올바르게 입력되어 있어야 동작합니다.</p>
+          <p style={{ color: 'var(--red)', fontWeight: 600 }}>{t(lang, 'settings_manual_exocad_required')}</p>
         </>
       ),
     },
@@ -240,24 +483,24 @@ export default function Settings() {
       title: t(lang, 'section_mail_recv'),
       content: (
         <>
-          <p>고객이 보내는 갱신 요청 이메일을 자동 감지합니다.</p>
-          <p><strong>POP3 vs IMAP:</strong></p>
+          <p>{t(lang, 'settings_manual_mailrecv_1')}</p>
+          <p><strong>{t(lang, 'settings_manual_pop3_imap')}</strong></p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li><strong>POP3</strong> — 메일박스 전체 다운로드. 중복 처리 가능성 있음</li>
-            <li><strong>IMAP</strong> — 읽지 않은 메일만 처리. 처리 후 읽음 표시. <em>권장</em></li>
+            <li>{t(lang, 'settings_manual_pop3')}</li>
+            <li>{t(lang, 'settings_manual_imap')}</li>
           </ul>
-          <p><strong>Gmail 사용 시:</strong> IMAP 활성화 + 앱 비밀번호 사용 필요</p>
-          <p><strong>포트 기본값:</strong> POP3=995(TLS), IMAP=993(TLS)</p>
+          <p><strong>{t(lang, 'settings_manual_gmail_imap')}</strong></p>
+          <p><strong>{t(lang, 'settings_manual_ports')}</strong></p>
           <hr style={{ margin: '12px 0', borderColor: 'var(--border)' }} />
-          <p><strong>📮 앱 전용 이메일 주소 (Forward 감지)</strong></p>
-          <p>이 주소를 등록하면 다음 경우를 자동 감지합니다:</p>
+          <p><strong>{t(lang, 'settings_manual_dedicated_title')}</strong></p>
+          <p>{t(lang, 'settings_manual_dedicated_1')}</p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li>고객이 이 주소로 직접 갱신 요청 이메일 발송</li>
-            <li>다른 메일함에서 이 주소로 <strong>Forward</strong>된 메일</li>
-            <li>Gmail 자동 전달(auto-forward) 설정으로 도착한 메일</li>
+            <li>{t(lang, 'settings_manual_dedicated_li1')}</li>
+            <li>{t(lang, 'settings_manual_dedicated_li2')}</li>
+            <li>{t(lang, 'settings_manual_dedicated_li3')}</li>
           </ul>
-          <p style={{ color: 'var(--text)' }}>💡 갱신 키워드 없이도 이 주소가 수신 헤더에 있으면 갱신 요청으로 처리됩니다.</p>
-          <p><strong>탐색하는 헤더:</strong> <code>Delivered-To, X-Forwarded-To, X-Original-To, To, Cc, Resent-To</code></p>
+          <p style={{ color: 'var(--text)' }}>{t(lang, 'settings_manual_dedicated_note')}</p>
+          <p><strong>{t(lang, 'settings_manual_headers')}</strong> <code>Delivered-To, X-Forwarded-To, X-Original-To, To, Cc, Resent-To</code></p>
         </>
       ),
     },
@@ -265,13 +508,13 @@ export default function Settings() {
       title: t(lang, 'section_smtp'),
       content: (
         <>
-          <p>일일 보고서, 월별 만료 보고서 이메일 발송에 사용됩니다.</p>
+          <p>{t(lang, 'settings_manual_smtp_1')}</p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li><strong>Host</strong> — SMTP 서버 주소 (예: smtp.gmail.com)</li>
-            <li><strong>Port</strong> — 기본 587 (TLS=false), 465 (TLS=true)</li>
-            <li><strong>리포트 수신 이메일</strong> — 보고서를 받을 이메일 주소</li>
+            <li>{t(lang, 'settings_manual_smtp_host')}</li>
+            <li>{t(lang, 'settings_manual_smtp_port')}</li>
+            <li>{t(lang, 'settings_manual_smtp_report')}</li>
           </ul>
-          <p><strong>Gmail 사용 시:</strong> smtp.gmail.com / port 587 / 앱 비밀번호</p>
+          <p><strong>{t(lang, 'settings_manual_smtp_gmail')}</strong></p>
         </>
       ),
     },
@@ -279,13 +522,13 @@ export default function Settings() {
       title: t(lang, 'section_slack'),
       content: (
         <>
-          <p>Slack으로 알림을 받으려면 Webhook URL을 등록하세요.</p>
-          <p><strong>Webhook URL 발급 방법:</strong></p>
+          <p>{t(lang, 'settings_manual_slack_1')}</p>
+          <p><strong>{t(lang, 'settings_manual_webhook_how')}</strong></p>
           <ol style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li>Slack 앱 → <em>api.slack.com/apps</em> 접속</li>
-            <li>앱 생성 → Incoming Webhooks 활성화</li>
-            <li>채널 선택 → Webhook URL 복사</li>
-            <li>여기에 붙여넣기 후 저장</li>
+            <li>{t(lang, 'settings_manual_slack_li1')}</li>
+            <li>{t(lang, 'settings_manual_slack_li2')}</li>
+            <li>{t(lang, 'settings_manual_slack_li3')}</li>
+            <li>{t(lang, 'settings_manual_slack_li4')}</li>
           </ol>
         </>
       ),
@@ -294,16 +537,16 @@ export default function Settings() {
       title: t(lang, 'section_exocad'),
       content: (
         <>
-          <p>Exocad 파트너 사이트에서 Subscription Cancel을 자동화합니다.</p>
-          <p><strong>필수 설정 항목:</strong></p>
+          <p>{t(lang, 'settings_manual_exocad_1')}</p>
+          <p><strong>{t(lang, 'settings_manual_required_items')}</strong></p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li><strong>라이선스 관리 URL</strong> — 시리얼 목록이 있는 페이지</li>
-            <li><strong>로그인 URL</strong> — Align Tech SSO 로그인 페이지</li>
-            <li><strong>이메일 / 비밀번호</strong> — Exocad 파트너 계정</li>
-            <li><strong>Cancel 버튼 텍스트</strong> — 드롭다운에서 클릭할 항목 (예: "opt out upgrade")</li>
-            <li><strong>확인 팝업 텍스트</strong> — 확인 팝업의 버튼 텍스트 (예: "okay")</li>
+            <li>{t(lang, 'settings_manual_exocad_li1')}</li>
+            <li>{t(lang, 'settings_manual_exocad_li2')}</li>
+            <li>{t(lang, 'settings_manual_exocad_li3')}</li>
+            <li>{t(lang, 'settings_manual_exocad_li4')}</li>
+            <li>{t(lang, 'settings_manual_exocad_li5')}</li>
           </ul>
-          <p style={{ color: 'var(--yellow)' }}>💡 실제 사이트 버튼 텍스트와 정확히 일치해야 합니다.</p>
+          <p style={{ color: 'var(--yellow)' }}>{t(lang, 'settings_manual_exocad_note')}</p>
         </>
       ),
     },
@@ -311,16 +554,16 @@ export default function Settings() {
       title: t(lang, 'section_polling'),
       content: (
         <>
-          <p>주문 관리 사이트를 주기적으로 방문해 새 주문을 자동 수집합니다.</p>
-          <p><strong>설정 방법:</strong></p>
+          <p>{t(lang, 'settings_manual_polling_1')}</p>
+          <p><strong>{t(lang, 'settings_manual_how')}</strong></p>
           <ol style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li>"+ 폴링 소스 추가" 클릭</li>
-            <li>주문 목록 URL 입력 (로그인 필요 시 로그인 정보도 입력)</li>
-            <li>테이블 헤더 이름으로 필드 매핑 설정</li>
-            <li>폴링 간격 설정 (기본 60분)</li>
+            <li>{t(lang, 'settings_manual_polling_li1')}</li>
+            <li>{t(lang, 'settings_manual_polling_li2')}</li>
+            <li>{t(lang, 'settings_manual_polling_li3')}</li>
+            <li>{t(lang, 'settings_manual_polling_li4')}</li>
           </ol>
-          <p><strong>필드 매핑:</strong> 사이트 테이블의 컬럼 헤더 텍스트를 입력하면 자동으로 해당 열의 값을 추출합니다. (부분 일치)</p>
-          <p>수집된 주문은 <strong>대기 주문</strong> 메뉴에서 확인 후 수동 승인합니다.</p>
+          <p>{t(lang, 'settings_manual_field_mapping')}</p>
+          <p>{t(lang, 'settings_manual_polling_result')}</p>
         </>
       ),
     },
@@ -328,12 +571,12 @@ export default function Settings() {
       title: t(lang, 'section_other'),
       content: (
         <>
-          <p><strong>갱신 요청 키워드:</strong> 이메일 제목/본문에 이 키워드가 포함되면 갱신 요청으로 인식합니다.</p>
+          <p><strong>{t(lang, 'settings_manual_keywords')}</strong></p>
           <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
-            <li>기본값: renewal, renew, 갱신, 연장</li>
-            <li>쉼표(,)로 구분하여 여러 개 입력 가능</li>
+            <li>{t(lang, 'settings_manual_keywords_default')}</li>
+            <li>{t(lang, 'settings_manual_keywords_comma')}</li>
           </ul>
-          <p><strong>메일 체크 간격:</strong> 갱신 요청 메일을 몇 분마다 확인할지 설정합니다. (최소 5분)</p>
+          <p><strong>{t(lang, 'settings_manual_mail_interval')}</strong></p>
         </>
       ),
     },
@@ -353,7 +596,7 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <div className="page-title">{t(lang, 'page_title_settings')}</div>
-          <div className="page-subtitle">시스템 환경 설정</div>
+          <div className="page-subtitle">{t(lang, 'page_subtitle_settings')}</div>
         </div>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? t(lang, 'saving') : t(lang, 'btn_save_settings')}
@@ -459,7 +702,7 @@ export default function Settings() {
             {cancelDryResults !== null && (
               <div style={{ marginTop: 14, border: '1px solid #c4b5fd', borderRadius: 8, overflow: 'hidden' }}>
                 <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>
-                  🔍 Dry-Run 결과 ({cancelDryResults.length}건)
+                  🔍 {t(lang, 'cancel_dryrun_result_count').replace('{n}', String(cancelDryResults.length))}
                 </div>
                 {cancelDryResults.length === 0 ? (
                   <div style={{ padding: '16px 14px', color: 'var(--text)', fontSize: 13 }}>
@@ -645,38 +888,66 @@ export default function Settings() {
 
         {/* ── 갱신 & 제품 조건 설정 (다중 조건) ── */}
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #e5e7eb' }}>
-          <div className="form-group" style={{ marginBottom: 16 }}>
-            <label style={{ fontWeight: 600 }}>📦 제품 키워드 (Product Keywords) — 콤마(,) 구분</label>
-            <input
-              key={`kw-prod-${loadKey}`}
-              defaultValue={formVals.current.renewal_product_keywords_raw || ''}
-              onChange={e => setVal('renewal_product_keywords_raw', e.target.value)}
-              placeholder="exocad, exoplan"
+          <KeywordCardEditor
+            inputKey="product"
+            label={t(lang, 'renewal_product_keywords_label')}
+            hint={t(lang, 'renewal_product_keywords_hint')}
+            placeholder="exocad"
+            values={productKeywords}
+            onChange={setProductKeywords}
+          />
+          <KeywordCardEditor
+            inputKey="action"
+            label={t(lang, 'renewal_action_keywords_label')}
+            hint={t(lang, 'renewal_action_keywords_hint')}
+            placeholder={t(lang, 'renewal_action_keywords_placeholder')}
+            values={actionKeywords}
+            onChange={setActionKeywords}
+          />
+          <div style={{ borderLeft: '3px solid #fca5a5', background: 'var(--red-dim)', borderRadius: 4, padding: '10px 12px', marginBottom: 16 }}>
+            <KeywordCardEditor
+              inputKey="exclude"
+              label={t(lang, 'renewal_exclude_keywords_label')}
+              hint={t(lang, 'renewal_exclude_keywords_hint')}
+              placeholder={t(lang, 'renewal_exclude_keywords_placeholder')}
+              values={excludeKeywords}
+              onChange={setExcludeKeywords}
+              danger
             />
-            <small style={{ color: 'var(--text)', fontSize: 12 }}>이 단어가 본문 또는 제목에 포함되어야 관련 메일로 수집됩니다. (예: exocad, exoplan)</small>
           </div>
-          <div className="form-group" style={{ marginBottom: 16 }}>
-            <label style={{ fontWeight: 600 }}>🔑 액션 키워드 (Action Keywords) — 콤마(,) 구분</label>
-            <input
-              key={`kw-act-${loadKey}`}
-              defaultValue={formVals.current.renewal_action_keywords_raw || ''}
-              onChange={e => setVal('renewal_action_keywords_raw', e.target.value)}
-              placeholder="renewal, renew, 갱신, 연장"
-            />
-            <small style={{ color: 'var(--text)', fontSize: 12 }}>제품명과 함께 이 단어가 추가로 포함되어야 실제 '갱신 요청'으로 인식합니다. (예: 갱신, 연장)</small>
-          </div>
-          <div className="form-group" style={{ marginBottom: 16, borderLeft: '3px solid #fca5a5', paddingLeft: 12, background: 'var(--red-dim)', borderRadius: 4, padding: '10px 12px' }}>
-            <label style={{ fontWeight: 600, color: 'var(--red)' }}>🚫 제외 키워드 (Exclude Keywords) — 콤마(,) 구분</label>
-            <input
-              key={`kw-excl-${loadKey}`}
-              defaultValue={formVals.current.renewal_exclude_keywords_raw || ''}
-              onChange={e => setVal('renewal_exclude_keywords_raw', e.target.value)}
-              placeholder="Newsletter, 뉴스레터, 광고, unsubscribe"
-              style={{ marginTop: 6 }}
-            />
-            <small style={{ color: 'var(--red)', fontSize: 12, display: 'block', marginTop: 4 }}>
-              ⚠️ 이 키워드 중 하나라도 메일 제목/본문에 포함되면, 나머지 조건과 무관하게 <strong>완전히 제외</strong>됩니다. (갱신 및 관련 메일 알림 모두 건너뜀)
-            </small>
+          <div className="form-row" style={{ alignItems: 'flex-start', marginBottom: 16 }}>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label style={{ fontWeight: 600 }}>{t(lang, 'mail_serial_pattern_label' as any)}</label>
+              <input
+                key={`serial-pattern-${loadKey}`}
+                defaultValue={formVals.current.mail_serial_pattern || 'XXXXXXXX-XXXX-XXXXXXXX'}
+                onChange={e => setVal('mail_serial_pattern', e.target.value)}
+                placeholder="XXXXXXXX-XXXX-XXXXXXXX"
+                style={{ fontFamily: 'monospace' }}
+              />
+              <small style={{ color: 'var(--text)', fontSize: 12 }}>{t(lang, 'mail_serial_pattern_hint' as any)}</small>
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label style={{ fontWeight: 600 }}>{t(lang, 'missing_info_template_label' as any)}</label>
+              <select
+                key={`missing-template-${loadKey}`}
+                defaultValue={formVals.current.missing_info_template || 'missing_info_request'}
+                onChange={e => setVal('missing_info_template', e.target.value)}
+              >
+                {mailTemplates.map(template => (
+                  <option key={template.code} value={template.code}>{template.name} ({template.code})</option>
+                ))}
+              </select>
+              <label className="checkbox-row" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={missingInfoAutoReply}
+                  onChange={e => setMissingInfoAutoReply(e.target.checked)}
+                />
+                {t(lang, 'missing_info_auto_reply_label' as any)}
+              </label>
+              <small style={{ color: 'var(--text)', fontSize: 12 }}>{t(lang, 'missing_info_auto_reply_hint' as any)}</small>
+            </div>
           </div>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="checkbox-row" style={{ fontWeight: 600 }}>
@@ -685,9 +956,9 @@ export default function Settings() {
                 checked={requireSerial}
                 onChange={e => setRequireSerial(e.target.checked)}
               />
-              검색 필터: 메일 본문 내 시리얼 번호(ex: xxxxx-xxxx) 필수 여부
+              {t(lang, 'require_serial_label')}
             </label>
-            <small style={{ color: 'var(--text)', fontSize: 12, marginLeft: 22, display: 'block', marginTop: 4 }}>체크 시, 위 두 키워드가 있어도 시리얼 번호 형태가 없으면 갱신으로 수집하지 않습니다.</small>
+            <small style={{ color: 'var(--text)', fontSize: 12, marginLeft: 22, display: 'block', marginTop: 4 }}>{t(lang, 'require_serial_hint')}</small>
           </div>
         </div>
 
@@ -771,12 +1042,17 @@ export default function Settings() {
         {/* Renewal Dry-Run 결과 */}
         {renewalDryRunResult !== null && (
           <div style={{ marginTop: 14, border: '1px solid #d8b4fe', borderRadius: 8, overflow: 'hidden' }}>
+            {(() => {
+              const dryEntries = renewalDryRunResult.emails || renewalDryRunResult.entries || [];
+              const detected = renewalDryRunResult.matched ?? dryEntries.length;
+              return (
+                <>
             <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 13, color: 'var(--accent)', display: 'flex', gap: 12, alignItems: 'center' }}>
               <span>{t(lang, 'renewal_dryrun_result_title')}</span>
-              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text)' }}>({t(lang, 'renewal_dryrun_checked').replace('{n}', String(renewalDryRunResult.total_checked))} / {t(lang, 'renewal_dryrun_detected').replace('{n}', String(renewalDryRunResult.matched))})</span>
+              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text)' }}>({t(lang, 'renewal_dryrun_checked').replace('{n}', String(renewalDryRunResult.total_checked))} / {t(lang, 'renewal_dryrun_detected').replace('{n}', String(detected))})</span>
               {renewalDryRunResult.error && <span style={{ color: 'var(--red)', fontSize: 12 }}>❌ {renewalDryRunResult.error}</span>}
             </div>
-            {renewalDryRunResult.emails && renewalDryRunResult.emails.length === 0 ? (
+            {dryEntries.length === 0 ? (
               <div style={{ padding: '14px', color: 'var(--text)', fontSize: 13 }}>{t(lang, 'renewal_dryrun_empty')}</div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -786,7 +1062,7 @@ export default function Settings() {
                       <th style={thStyle}>From</th>
                       <th style={thStyle}>Subject</th>
                       <th style={thStyle}>Date</th>
-                      <th style={thStyle}>유형 (Type)</th>
+                      <th style={thStyle}>{t(lang, 'renewal_dryrun_col_type')}</th>
                       <th style={thStyle}>{t(lang, 'renewal_dryrun_col_keyword')}</th>
                       <th style={thStyle}>Dedicated</th>
                       <th style={thStyle}>{t(lang, 'renewal_dryrun_col_serial')}</th>
@@ -794,14 +1070,15 @@ export default function Settings() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(renewalDryRunResult.emails || []).map((em: any, i: number) => (
+                    {dryEntries.map((em: any, i: number) => (
                       <tr key={i} style={{ borderBottom: '1px solid #f3f4f6', background: em.serial_exists ? 'var(--green-dim)' : 'var(--yellow-dim)' }}>
                         <td style={{ ...tdStyle, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.from}</td>
                         <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em.subject}</td>
                         <td style={{ ...tdStyle, whiteSpace: 'nowrap', fontSize: 11 }}>{em.date ? new Date(em.date).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                         <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, fontSize: 11 }}>
-                          {em.is_renewal ? <span style={{ color: 'var(--green)' }}>갱신 요청</span> :
-                            em.is_related ? <span style={{ color: 'var(--yellow)' }}>단순 수신(알림)</span> : '—'}
+                          {em.classification === 'stop_request_candidate' ? <span style={{ color: 'var(--red)' }}>{t(lang, 'mail_classif_stop_candidate' as any)}</span> :
+                            em.is_renewal || em.classification === 'renewal_request' ? <span style={{ color: 'var(--green)' }}>{t(lang, 'renewal_type_request')}</span> :
+                            em.is_related ? <span style={{ color: 'var(--yellow)' }}>{t(lang, 'renewal_type_related')}</span> : '—'}
                         </td>
                         <td style={tdStyle}>
                           {(em.matched_keywords || []).map((kw: string, ki: number) => (
@@ -809,14 +1086,17 @@ export default function Settings() {
                           ))}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'center' }}>{em.is_dedicated ? '✅' : '—'}</td>
-                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11 }}>{em.serial_number || '—'}</td>
-                        <td style={{ ...tdStyle, textAlign: 'center' }}>{em.serial_number ? (em.serial_exists ? '✅' : <span style={{ color: 'var(--yellow)' }}>?</span>) : '—'}</td>
+                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11 }}>{em.serial_number || em.extracted_serial || '—'}</td>
+                        <td style={{ ...tdStyle, textAlign: 'center' }}>{(em.serial_number || em.extracted_serial) ? (em.serial_exists ? '✅' : <span style={{ color: 'var(--yellow)' }}>?</span>) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -850,13 +1130,12 @@ export default function Settings() {
           marginTop: 4, marginBottom: 8, padding: '10px 14px',
           background: 'var(--yellow-dim)', border: '1px solid #fed7aa', borderRadius: 8, fontSize: 12,
         }}>
-          <strong>💡 Gmail 사용 시 안내:</strong> Gmail은 일반 비밀번호 로그인이 더 이상 지원되지 않습니다.
-          <strong>"앱 비밀번호(App Password)"</strong>를 생성해서 이곳에 입력해야 합니다.{' '}
+          {t(lang, 'gmail_app_password_notice')}{' '}
           <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer"
             style={{ color: 'var(--yellow)', fontWeight: 700 }}>
-            → 앱 비밀번호 생성
+            {t(lang, 'gmail_app_password_link')}
           </a>
-          {' '}(구글 전 반드시 2단계 인증 활성화 필요)
+          {' '}{t(lang, 'gmail_app_password_2fa')}
         </div>
         <div className="form-group">
           <label>{t(lang, 'label_report_email')}</label>
@@ -932,13 +1211,13 @@ export default function Settings() {
         </div>
 
         <div className="form-group">
-          <label>기본 알림 Slack Webhook URL</label>
+          <label>{t(lang, 'slack_default_webhook_label')}</label>
           <input key={`slack-${loadKey}`} defaultValue={formVals.current.slack_webhook_url || ''} onChange={e => setVal('slack_webhook_url', e.target.value)} placeholder="https://hooks.slack.com/services/..." />
         </div>
 
         <div className="form-group" style={{ marginTop: 14 }}>
-          <label>관련 메일 수신(System Log) 전용 Slack Webhook URL (선택적)</label>
-          <input key={`slack-related-${loadKey}`} defaultValue={formVals.current.slack_webhook_url_related || ''} onChange={e => setVal('slack_webhook_url_related', e.target.value)} placeholder="https://hooks.slack.com/services/... (비워두면 기본 Webhook 사용)" />
+          <label>{t(lang, 'slack_related_webhook_label')}</label>
+          <input key={`slack-related-${loadKey}`} defaultValue={formVals.current.slack_webhook_url_related || ''} onChange={e => setVal('slack_webhook_url_related', e.target.value)} placeholder={t(lang, 'slack_related_webhook_placeholder')} />
         </div>
 
         {/* Slack 메시지 언어 선택 */}
@@ -996,6 +1275,7 @@ export default function Settings() {
                 try {
                   const res = await api.testSlack({
                     slack_webhook_url: formVals.current.slack_webhook_url,
+                    slack_language: slackLanguage,
                   }) as any;
                   if (resultDiv) {
                     resultDiv.style.display = 'block';
@@ -1014,11 +1294,11 @@ export default function Settings() {
                   }
                 } finally {
                   btn.disabled = false;
-                  btn.textContent = '기본 URL 테스트';
+                  btn.textContent = t(lang, 'slack_default_test');
                 }
               }}
             >
-              기본 URL 테스트
+              {t(lang, 'slack_default_test')}
             </button>
             <div
               className="slack-test-result"
@@ -1037,12 +1317,13 @@ export default function Settings() {
               onClick={async (e) => {
                 const btn = e.currentTarget;
                 btn.disabled = true;
-                btn.textContent = '테스트 중...';
+                btn.textContent = t(lang, 'testing');
                 const resultDiv = btn.parentElement?.querySelector('.slack-test-related-result') as HTMLElement;
                 if (resultDiv) resultDiv.style.display = 'none';
                 try {
                   const res = await api.testSlackRelated({
                     slack_webhook_url_related: formVals.current.slack_webhook_url_related,
+                    slack_language: slackLanguage,
                   }) as any;
                   if (resultDiv) {
                     resultDiv.style.display = 'block';
@@ -1061,11 +1342,11 @@ export default function Settings() {
                   }
                 } finally {
                   btn.disabled = false;
-                  btn.textContent = '관련 메일용 URL 테스트';
+                  btn.textContent = t(lang, 'slack_related_test');
                 }
               }}
             >
-              관련 메일용 URL 테스트
+              {t(lang, 'slack_related_test')}
             </button>
             <div
               className="slack-test-related-result"
@@ -1138,6 +1419,248 @@ export default function Settings() {
       {/* ─── 기타 설정 ───────────────────────────────────────────────────────── */}
       <div className="settings-section">
         <SectionHeader title={t(lang, 'section_scheduling')} onManual={() => setManualOpen('other')} />
+        <div className="form-group" style={{ marginBottom: 18 }}>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={expiryNoticeEnabled}
+              onChange={e => setExpiryNoticeEnabled(e.target.checked)}
+            />
+            {t(lang, 'label_expiry_notice_enabled')}
+          </label>
+          <small style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginTop: 4 }}>
+            {t(lang, 'expiry_notice_note')}
+          </small>
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 18, background: 'var(--bg3)' }}>
+          {expiryNoticeEnabled && (
+            <>
+            <div className="form-row">
+              <div className="form-group">
+                <label>{t(lang, 'label_expiry_notice_time')}</label>
+                <input
+                  key={`entime-${loadKey}`}
+                  type="time"
+                  defaultValue={formVals.current.expiry_notice_time || '05:00'}
+                  onChange={e => setVal('expiry_notice_time', e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label>{t(lang, 'label_expiry_notice_stop_template')}</label>
+                <select
+                  key={`enstop-${loadKey}`}
+                  defaultValue={formVals.current.expiry_notice_stop_template || 'stop_expiry_reminder'}
+                  onChange={e => setVal('expiry_notice_stop_template', e.target.value)}
+                >
+                  {mailTemplates.map(template => (
+                    <option key={template.code} value={template.code}>
+                      {template.name} ({template.code})
+                    </option>
+                  ))}
+                </select>
+                <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'expiry_notice_stop_hint')}</small>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+              {expiryNoticeRules.map((rule, index) => (
+                <div key={rule.id} style={{ border: '1px solid var(--border2)', borderRadius: 8, padding: 12, background: 'var(--bg2)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(220px, 1fr) minmax(190px, 1fr) auto auto', gap: 8, alignItems: 'end' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_days')}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={rule.days_before}
+                        onChange={e => updateExpiryRule(rule.id, { days_before: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_renewal_template')}</label>
+                      <select
+                        value={rule.renewal_template}
+                        onChange={e => updateExpiryRule(rule.id, { renewal_template: e.target.value })}
+                      >
+                        {mailTemplates.map(template => (
+                          <option key={template.code} value={template.code}>
+                            {template.name} ({template.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_test_email')}</label>
+                      <input
+                        type="email"
+                        value={expiryDryRunEmails[rule.id] || ''}
+                        onChange={e => setExpiryDryRunEmails(current => ({ ...current, [rule.id]: e.target.value }))}
+                        placeholder="test@example.com"
+                      />
+                    </div>
+                    <button
+                      className="btn btn-sm btn-secondary"
+                      disabled={!!expiryDryRunning[rule.id]}
+                      onClick={() => runExpiryDryRun(rule)}
+                    >
+                      {expiryDryRunning[rule.id] ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_dryrun')}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={expiryNoticeRules.length === 1}
+                      style={{ background: 'var(--red-dim)', color: 'var(--red)' }}
+                      onClick={() => removeExpiryRule(rule.id)}
+                    >
+                      {t(lang, 'delete')}
+                    </button>
+                  </div>
+                  {expiryDryRunResults[rule.id] && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: expiryDryRunResults[rule.id].startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
+                      {expiryDryRunResults[rule.id]}
+                    </div>
+                  )}
+                  <small style={{ color: 'var(--text3)', fontSize: 12 }}>
+                    {t(lang, 'expiry_notice_rule_label').replace('{n}', String(index + 1))}
+                  </small>
+                </div>
+              ))}
+              <button className="btn btn-sm btn-secondary" style={{ alignSelf: 'flex-start' }} onClick={addExpiryRule}>
+                {t(lang, 'expiry_notice_add_rule')}
+              </button>
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(190px, 1fr) auto', gap: 8, alignItems: 'end' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>{t(lang, 'label_expiry_notice_stop_dryrun_days')}</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={365}
+                    value={stopDryRunDays}
+                    onChange={e => setStopDryRunDays(Number(e.target.value))}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>{t(lang, 'label_expiry_notice_stop_test_email')}</label>
+                  <input
+                    type="email"
+                    value={stopDryRunEmail}
+                    onChange={e => setStopDryRunEmail(e.target.value)}
+                    placeholder="test@example.com"
+                  />
+                </div>
+                <button className="btn btn-sm btn-secondary" disabled={stopDryRunning} onClick={runStopTemplateDryRun}>
+                  {stopDryRunning ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_stop_dryrun')}
+                </button>
+              </div>
+              {stopDryRunResult && (
+                <div style={{ marginTop: 8, fontSize: 12, color: stopDryRunResult.startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
+                  {stopDryRunResult}
+                </div>
+              )}
+            </div>
+            </>
+          )}
+
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(280px, 1fr))', gap: 12 }}>
+              <div style={{ border: '1px solid var(--border2)', borderRadius: 8, padding: 12, background: 'var(--bg2)' }}>
+                <label className="checkbox-row" style={{ marginBottom: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={stopRequestNoticeEnabled}
+                    onChange={e => setStopRequestNoticeEnabled(e.target.checked)}
+                  />
+                  {t(lang, 'label_stop_request_notice_enabled')}
+                </label>
+                <div className="form-group">
+                  <label>{t(lang, 'label_stop_request_notice_template')}</label>
+                  <select
+                    key={`stopreqtmpl-${loadKey}`}
+                    defaultValue={formVals.current.stop_request_notice_template || 'stop_request_received'}
+                    onChange={e => setVal('stop_request_notice_template', e.target.value)}
+                  >
+                    {mailTemplates.map(template => (
+                      <option key={template.code} value={template.code}>
+                        {template.name} ({template.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'end' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>{t(lang, 'label_lifecycle_test_email')}</label>
+                    <input
+                      type="email"
+                      value={lifecycleDryRunEmails.stop_request || ''}
+                      onChange={e => setLifecycleDryRunEmails(current => ({ ...current, stop_request: e.target.value }))}
+                      placeholder="test@example.com"
+                    />
+                  </div>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    disabled={!!lifecycleDryRunning.stop_request}
+                    onClick={() => runLifecycleDryRun('stop_request', formVals.current.stop_request_notice_template || 'stop_request_received')}
+                  >
+                    {lifecycleDryRunning.stop_request ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_dryrun')}
+                  </button>
+                </div>
+                {lifecycleDryRunResults.stop_request && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: lifecycleDryRunResults.stop_request.startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
+                    {lifecycleDryRunResults.stop_request}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ border: '1px solid var(--border2)', borderRadius: 8, padding: 12, background: 'var(--bg2)' }}>
+                <label className="checkbox-row" style={{ marginBottom: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={cancelCompleteNoticeEnabled}
+                    onChange={e => setCancelCompleteNoticeEnabled(e.target.checked)}
+                  />
+                  {t(lang, 'label_cancel_complete_notice_enabled')}
+                </label>
+                <div className="form-group">
+                  <label>{t(lang, 'label_cancel_complete_notice_template')}</label>
+                  <select
+                    key={`cancelcompletetmpl-${loadKey}`}
+                    defaultValue={formVals.current.cancel_complete_notice_template || 'cancel_confirmation'}
+                    onChange={e => setVal('cancel_complete_notice_template', e.target.value)}
+                  >
+                    {mailTemplates.map(template => (
+                      <option key={template.code} value={template.code}>
+                        {template.name} ({template.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'end' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>{t(lang, 'label_lifecycle_test_email')}</label>
+                    <input
+                      type="email"
+                      value={lifecycleDryRunEmails.cancel_complete || ''}
+                      onChange={e => setLifecycleDryRunEmails(current => ({ ...current, cancel_complete: e.target.value }))}
+                      placeholder="test@example.com"
+                    />
+                  </div>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    disabled={!!lifecycleDryRunning.cancel_complete}
+                    onClick={() => runLifecycleDryRun('cancel_complete', formVals.current.cancel_complete_notice_template || 'cancel_confirmation')}
+                  >
+                    {lifecycleDryRunning.cancel_complete ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_dryrun')}
+                  </button>
+                </div>
+                {lifecycleDryRunResults.cancel_complete && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: lifecycleDryRunResults.cancel_complete.startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
+                    {lifecycleDryRunResults.cancel_complete}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         <div className="form-group">
           <label>{t(lang, 'label_mail_check_times')}</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1218,13 +1741,13 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
 
   const handlePollNow = async (sourceId?: string) => {
     setPolling(true);
-    setPollMsg('폴링 중...');
+    setPollMsg(t(lang, 'polling_now'));
     try {
       const result = await api.pollNow(sourceId) as any;
       setPollMsg(`${t(lang, 'poll_complete')}${result.found}${t(lang, 'poll_collected')}${result.errors.length > 0 ? `${t(lang, 'poll_error_count')}${result.errors.length}${t(lang, 'poll_error_suffix')}` : ''}`);
-      if (result.errors.length > 0) alert('오류:\n' + result.errors.join('\n'));
+      if (result.errors.length > 0) alert(t(lang, 'orders_poll_errors') + result.errors.join('\n'));
     } catch (e: any) {
-      setPollMsg(`오류: ${e.message}`);
+      setPollMsg(`${t(lang, 'orders_poll_error')}${e.message}`);
     } finally {
       setPolling(false);
     }
@@ -1280,7 +1803,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               onClick={e => e.stopPropagation()}
               onChange={e => updateSource(src.id, 'enabled', e.target.checked)}
             />
-            <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{src.name || '(이름 없음)'}</span>
+            <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{src.name || t(lang, 'polling_default_name')}</span>
             {src.last_polled && (
               <span style={{ fontSize: 11, color: 'var(--text)' }}>{t(lang, 'last_polled')}{src.last_polled.slice(0, 16).replace('T', ' ')}</span>
             )}
@@ -1310,7 +1833,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
             return (
               <div style={{ borderTop: '1px solid #e5e7eb', background: 'var(--bg3)' }}>
                 <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 12, color: 'var(--accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>🔍 Dry-Run 결과</span>
+                  <span>{t(lang, 'poll_dryrun_result')}</span>
                   {!dr.error && (
                     <span style={{ fontWeight: 400, color: 'var(--accent)', fontSize: 11 }}>
                       {dr.rows.length}{t(lang, 'poll_dryrun_summary')}{dr.would_insert}{t(lang, 'poll_dryrun_summary2')}{dr.already_fetched}{t(lang, 'poll_dryrun_summary3')}{dr.rows.filter((r: any) => r.filtered_out).length}{t(lang, 'poll_dryrun_summary4')}
@@ -1370,7 +1893,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               <div className="form-row">
                 <div className="form-group">
                   <label>{t(lang, 'label_source_name')}</label>
-                  <input value={src.name} onChange={e => updateSource(src.id, 'name', e.target.value)} placeholder="예: 카페24 주문관리" />
+                  <input value={src.name} onChange={e => updateSource(src.id, 'name', e.target.value)} placeholder={t(lang, 'poll_source_name_placeholder')} />
                 </div>
                 <div className="form-group">
                   <label>{t(lang, 'poll_schedule_label')}</label>
@@ -1416,7 +1939,7 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               <div style={{ ...sectionLabel, marginTop: 14 }}>{t(lang, 'section_login_info')}</div>
               <div className="form-group">
                 <label>{t(lang, 'label_login_page')}</label>
-                <input value={src.login_url} onChange={e => updateSource(src.id, 'login_url', e.target.value)} placeholder="https://admin.myshop.com/login (없으면 비워두세요)" />
+                <input value={src.login_url} onChange={e => updateSource(src.id, 'login_url', e.target.value)} placeholder={t(lang, 'poll_login_url_placeholder')} />
               </div>
               <div className="form-row">
                 <div className="form-group">
@@ -1436,31 +1959,31 @@ function PollSourcesSection({ initialSources, loadKey, onSourcesChange, onManual
               <div className="form-row">
                 <div className="form-group">
                   <label>{t(lang, 'label_serial_col')}</label>
-                  <input value={src.field_serial} onChange={e => updateSource(src.id, 'field_serial', e.target.value)} placeholder="시리얼, Serial, 라이선스" />
+                  <input value={src.field_serial} onChange={e => updateSource(src.id, 'field_serial', e.target.value)} placeholder={t(lang, 'poll_serial_placeholder')} />
                 </div>
                 <div className="form-group">
                   <label>{t(lang, 'label_customer_col')}</label>
-                  <input value={src.field_customer} onChange={e => updateSource(src.id, 'field_customer', e.target.value)} placeholder="고객명, 구매자, Customer" />
+                  <input value={src.field_customer} onChange={e => updateSource(src.id, 'field_customer', e.target.value)} placeholder={t(lang, 'poll_customer_placeholder')} />
                 </div>
               </div>
               <div className="form-row">
                 <div className="form-group">
                   <label>{t(lang, 'label_phone_col')}</label>
-                  <input value={src.field_phone} onChange={e => updateSource(src.id, 'field_phone', e.target.value)} placeholder="전화번호, 연락처, Phone" />
+                  <input value={src.field_phone} onChange={e => updateSource(src.id, 'field_phone', e.target.value)} placeholder={t(lang, 'poll_phone_placeholder')} />
                 </div>
                 <div className="form-group">
                   <label>{t(lang, 'label_product_col')}</label>
-                  <input value={src.field_product} onChange={e => updateSource(src.id, 'field_product', e.target.value)} placeholder="제품명, 상품명, Product" />
+                  <input value={src.field_product} onChange={e => updateSource(src.id, 'field_product', e.target.value)} placeholder={t(lang, 'poll_product_placeholder')} />
                 </div>
               </div>
               <div className="form-row">
                 <div className="form-group">
                   <label>{t(lang, 'label_purchase_col')}</label>
-                  <input value={src.field_purchase} onChange={e => updateSource(src.id, 'field_purchase', e.target.value)} placeholder="구매일, 결제일, Purchase" />
+                  <input value={src.field_purchase} onChange={e => updateSource(src.id, 'field_purchase', e.target.value)} placeholder={t(lang, 'poll_purchase_placeholder')} />
                 </div>
                 <div className="form-group">
                   <label>{t(lang, 'label_expiry_col')}</label>
-                  <input value={src.field_expiry} onChange={e => updateSource(src.id, 'field_expiry', e.target.value)} placeholder="만료일, Expiry, 종료일" />
+                  <input value={src.field_expiry} onChange={e => updateSource(src.id, 'field_expiry', e.target.value)} placeholder={t(lang, 'poll_expiry_placeholder')} />
                 </div>
               </div>
               <div className="form-group" style={{ marginTop: 10 }}>
