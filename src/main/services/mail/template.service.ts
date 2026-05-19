@@ -1,4 +1,5 @@
 import { getDb } from '../../database';
+import { getNowTimestampString } from '../../utils/date-utils';
 import { renderTemplate, type TemplateVars } from './renderer';
 import type { MailTemplate, MailTemplateUpsert } from '../../../shared/types';
 
@@ -152,7 +153,7 @@ export function getTemplate(code: string): MailTemplate | undefined {
 
 export function upsertTemplate(input: MailTemplateUpsert): MailTemplate {
   const db = getDb();
-  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const now = getNowTimestampString();
 
   if (input.id) {
     db.prepare(`

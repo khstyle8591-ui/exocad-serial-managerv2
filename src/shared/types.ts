@@ -177,6 +177,7 @@ export interface SerialInput {
   add_ons?: AddOn[];
   notes?: string;
   status?: Serial['status'];
+  renewal_stop_requested?: boolean | number;
 }
 
 /** Legacy AddOn — kept for backward compatibility */
@@ -251,6 +252,11 @@ export interface ExcelSerialRow {
   status: string;
   engine_build: string;
   version: string;
+  main_product: string;
+  modules: string;
+  dealer: string;
+  customer_manager: string;
+  renewal_stop_requested: string;
   notes: string;
   [key: string]: string;
 }
@@ -333,6 +339,9 @@ export interface CancelDryRunResult {
   serial_number: string;
   customer_name: string;
   expiry_date: string | null;
+  stop_requested: boolean;
+  cancel_skipped: boolean;
+  /** @deprecated Use cancel_skipped. Older UI used this as "skip because no stop request". */
   has_renewal: boolean;
   is_test_serial?: boolean;
   product_name?: string;
@@ -405,11 +414,13 @@ export interface AppSettings {
   imap_user: string;
   imap_password: string;
   imap_tls: boolean;
+  imap_mark_seen_after_check: boolean;
   smtp_host: string;
   smtp_port: number;
   smtp_user: string;
   smtp_password: string;
   smtp_tls: boolean;
+  smtp_from_name: string;
   report_email_to: string;
   smtp_test_address: string;
   slack_webhook_url: string;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { api } from '../api';
+import { api } from '../client';
 import { useLang } from '../App';
 import { t } from '../i18n';
 

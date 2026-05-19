@@ -343,7 +343,7 @@ export class EmailMonitorService {
       const list = await pop3.UIDL();
 
       if (!Array.isArray(list) || list.length === 0) {
-        logger.info('갱신 요청 메일 없음 (POP3)');
+        logger.info('No renewal request mail found (POP3)');
         return { processed: 0, errors: [] };
       }
 
@@ -361,7 +361,7 @@ export class EmailMonitorService {
           // 1일 이내 메일만 처리 — 날짜 파싱이 되면 오래된 메일에서 조기 종료
           if (!this.isWithin1Day(email.date)) {
             if (email.date) {
-              logger.info(`POP3: 1일 이전 메일 만남, 스캔 종료 (date=${email.date})`);
+              logger.info(`POP3: mail older than 1 day reached; stopping scan (date=${email.date})`);
               break; // 더 오래된 메일만 남았으므로 중단
             }
             continue; // 날짜 파싱 안되면 그냥 스킵
@@ -373,7 +373,7 @@ export class EmailMonitorService {
             processed += count;
           } else if (analysis.isRelated) {
             const mailId = this.saveCapturedEmail(email);
-            logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
+            logger.info(`[System Log] Related mail received (keyword matched, renewal conditions not met): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
             notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId, email.date);
           }
 
@@ -382,10 +382,10 @@ export class EmailMonitorService {
             try {
               await pop3.DELE(msgNum);
             } catch (deleErr: any) {
-              logger.warn(`POP3 DELE 실패 (msgNum=${msgNum}): ${deleErr.message}`);
+              logger.warn(`POP3 DELE failed (msgNum=${msgNum}): ${deleErr.message}`);
             }
           } else {
-            logger.info(`POP3: 메일 서버 보관 설정에 의해 삭제 건너뜀 (msgNum=${msgNum})`);
+            logger.info(`POP3: deletion skipped because keep-copy setting is enabled (msgNum=${msgNum})`);
           }
         } catch (err: any) {
           errors.push(`메일 처리 오류: ${err.message}`);
@@ -446,7 +446,7 @@ export class EmailMonitorService {
             }
 
             if (!uids || uids.length === 0) {
-              logger.info('갱신 요청 메일 없음 (IMAP)');
+              logger.info('No renewal request mail found (IMAP)');
               return done();
             }
 
@@ -474,7 +474,7 @@ export class EmailMonitorService {
                       processed += count;
                     } else if (analysis.isRelated) {
                       const mailId = this.saveCapturedEmail(email);
-                      logger.info(`[System Log] 관련 메일 수신 (키워드 매칭, 갱신 조건 미달): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
+                      logger.info(`[System Log] Related mail received (keyword matched, renewal conditions not met): from=${email.from}, subject=${email.subject} [mailId=${mailId}]`);
                       notificationService.sendRelatedMailSlack(email.from, email.subject, analysis.matchedGroups.product, mailId, email.date);
                     }
                   } catch (parseErr: any) {
@@ -519,7 +519,7 @@ export class EmailMonitorService {
 
     const sourceId = `email::${email.from}::${serialNumber}::${email.date}`;
     if (isAlreadyFetched(sourceId)) {
-      logger.info(`이메일 갱신 중복 스킵: ${serialNumber} (from: ${email.from})`);
+      logger.info(`Duplicate email renewal skipped: ${serialNumber} (from: ${email.from})`);
       return 0;
     }
 
@@ -551,7 +551,7 @@ export class EmailMonitorService {
       flag_duplicate: 0,
     });
 
-    logger.info(`이메일 갱신 요청 → 대기 주문 등록: ${serialNumber} (from: ${email.from}${note}${notFoundNote})`);
+    logger.info(`Email renewal request -> pending order registered: ${serialNumber} (from: ${email.from}${note}${notFoundNote})`);
     return 1;
   }
 
@@ -578,7 +578,7 @@ export class EmailMonitorService {
     const excludeKws = settings.renewal_exclude_keywords || [];
     const hasExcluded = excludeKws.some((kw: string) => kw.trim().length > 0 && searchText.includes(kw.toLowerCase().trim()));
     if (hasExcluded) {
-      logger.info(`[analyzeEmail] 제외 키워드 매칭 → 갱신 제외 (알림은 ${hasProductMatch ? '발송' : '없음'}): from=${email.from}, subject=${email.subject}`);
+      logger.info(`[analyzeEmail] exclude keyword matched -> renewal excluded (notification=${hasProductMatch ? 'sent' : 'none'}): from=${email.from}, subject=${email.subject}`);
       // 제품 키워드가 매칭된 경우에만 관련 메일 알림 전송 (갱신 처리는 하지 않음)
       return {
         isRenewal: false,
@@ -673,7 +673,7 @@ export class EmailMonitorService {
       const idx = bodyLower.indexOf(dedicated);
       const context = bodyLower.substring(Math.max(0, idx - 100), idx + dedicated.length + 100);
       if (nearPatterns.some(p => context.includes(p))) {
-        logger.info(`Dedicated email "${dedicated}" 본문 forward 패턴에서 발견`);
+        logger.info(`Dedicated email "${dedicated}" found in body forward pattern`);
         return true;
       }
     }
@@ -705,7 +705,16 @@ export class EmailMonitorService {
 
   // ─── 시리얼 넘버 추출 ────────────────────────────────────────────────────────
   private extractSerialNumber(email: ParsedEmail): string | null {
+    const settings = getSettings();
     const text = `${email.subject} ${email.body}`;
+    const configuredPattern = settings.mail_serial_pattern || 'XXXXXXXX-XXXX-XXXXXXXX';
+    const configuredRegex = this.serialPatternToRegex(configuredPattern);
+    const configuredMatch = text.match(configuredRegex);
+    if (configuredMatch) return configuredMatch[0].trim().toUpperCase();
+
+    if (settings.require_serial_format ?? true) {
+      return null;
+    }
 
     const patterns = [
       /(?:serial|시리얼|s\/n|SN)[:\s]*([A-Z0-9][-A-Z0-9]{3,})/i,
@@ -727,6 +736,13 @@ export class EmailMonitorService {
     }
 
     return null;
+  }
+
+  private serialPatternToRegex(pattern: string): RegExp {
+    const source = (pattern || 'XXXXXXXX-XXXX-XXXXXXXX').trim();
+    const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regexSource = escaped.replace(/x+/gi, match => `[A-Z0-9]{${match.length}}`);
+    return new RegExp(`\\b${regexSource}\\b`, 'i');
   }
 
   // ─── 공통: 파싱/저장 헬퍼 ───────────────────────────────────────────────────

@@ -21,6 +21,11 @@ function buildTransporter(settings: ReturnType<typeof getSettings>) {
   });
 }
 
+function buildFrom(settings: ReturnType<typeof getSettings>) {
+  const name = (settings.smtp_from_name || 'Exocad Manager').trim();
+  return settings.smtp_user ? { name, address: settings.smtp_user } : name;
+}
+
 export async function sendTemplate(
   code: string,
   to: string,
@@ -46,7 +51,7 @@ export async function sendTemplate(
   try {
     const transporter = buildTransporter(settings);
     await transporter.sendMail({
-      from: `Exocad Manager <${settings.smtp_user}>`,
+      from: buildFrom(settings),
       to,
       subject,
       text: bodyText,
@@ -118,7 +123,7 @@ export async function sendTestDryRun(
     const transporter = buildTransporter(settings);
     const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
     await transporter.sendMail({
-      from: `Exocad Manager <${settings.smtp_user}>`,
+      from: buildFrom(settings),
       to,
       subject: '[Exocad Manager] SMTP テストメール',
       text: `Exocad Manager SMTP 설정 테스트 메일입니다.\n발송 시각: ${now}`,

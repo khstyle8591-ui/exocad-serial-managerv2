@@ -124,8 +124,9 @@ export default function RequestedOrder() {
     };
     const candidates = await window.electronAPI.getCustomerMergeCandidates(query);
     setCandidateMap(current => ({ ...current, [key]: candidates }));
-    if (candidates[0]) {
-      setSelectedCustomerByKey(current => ({ ...current, [key]: candidates[0].customer.id }));
+    const strongCandidate = candidates.find(c => c.score >= 0.8 && c.matched_field !== 'name_partial');
+    if (strongCandidate) {
+      setSelectedCustomerByKey(current => ({ ...current, [key]: strongCandidate.customer.id }));
     }
   };
 
@@ -408,7 +409,9 @@ function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {
                   ['label_address', 'customer_address'],
                   ['requested_order_dealer_label', 'dealer'],
                   ['label_manager', 'sales_manager'],
+                  ['label_main_product', 'main_product'],
                   ['label_version', 'version'],
+                  ['product_code_label', 'product_code'],
                 ] as [string, keyof EditableOrder][]).map(([lk, fk]) => (
                   <label key={fk} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)' }}>
                     <span style={{ fontWeight: 700 }}>{t(lang, lk as any)}</span>

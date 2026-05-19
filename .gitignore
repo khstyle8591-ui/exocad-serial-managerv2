@@ -1,10 +1,16 @@
 node_modules/
 dist/
 *.db
+*.db-shm
+*.db-wal
 *.db-journal
 .env
 data/
+db-archive/
 logs/
 .claude/
 *.log
 electron-startup-*.txt
+src/renderer/**/*.js
+src/shared/*.js
+src/shared/*.d.ts

@@ -18,6 +18,7 @@ import { runStopLifecycleNoticeDryRun, sendStopRequestReceivedNotice } from './s
 import { checkInboundNow, inboundDryRun, testMailConnection, listInboundMails, confirmStopRequestFromMail, sendMissingInfoTemplateForMail } from './services/mail/inbound.service';
 import { restartPreExpiryTask, runExpiryNoticeDryRun, sendDailyReportNow, startDailyReportTasks, startExpiryNoticeTask, startMailCheck } from './scheduler';
 import { runAutoRenewNow, runAutoCancelNow, runLimboFallbackNow } from './services/automation.service';
+import { refreshSchedulersForSettingsChange } from './services/scheduler-refresh.service';
 import { getSettings, saveSettings } from './settings';
 import { logger } from './utils/logger';
 import { getWebhookStatus, startWebhookServer, stopWebhookServer } from './webhook-server';
@@ -28,8 +29,8 @@ import type { SerialInput, AddOn, AppSettings, CustomerInput, LogFilter, MailTem
 const SETTINGS_ALLOWED_KEYS = new Set<keyof AppSettings>([
   'mail_protocol',
   'pop3_host', 'pop3_port', 'pop3_user', 'pop3_password', 'pop3_tls', 'pop3_keep_copy',
-  'imap_host', 'imap_port', 'imap_user', 'imap_password', 'imap_tls',
-  'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_tls',
+  'imap_host', 'imap_port', 'imap_user', 'imap_password', 'imap_tls', 'imap_mark_seen_after_check',
+  'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_tls', 'smtp_from_name',
   'report_email_to', 'smtp_test_address',
   'slack_webhook_url', 'slack_webhook_url_related', 'slack_enabled', 'slack_language',
   'critical_alert_emails', 'slack_alert_enabled', 'alert_suppress_minutes',
@@ -117,7 +118,7 @@ export function registerIpcHandlers(): void {
     const result = serialService.setStopRequested(id, flag, triggerId);
     if (flag && before && before.renewal_stop_requested !== 1 && result) {
       await sendStopRequestReceivedNotice(result).catch((err: any) =>
-        logger.error(`갱신 중단 요청 접수 메일 실패: ${err.message}`)
+        logger.error(`Failed to send stop request receipt email: ${err.message}`)
       );
     }
     return result;
@@ -247,7 +248,7 @@ export function registerIpcHandlers(): void {
     return cancelService.processExpiredSerials();
   });
 
-  // 만료 N일 전 자동 cancel (갱신 요청 없을 때)
+  // 만료 N일 전 자동 cancel (갱신 중단 요청이 있을 때)
   ipcMain.handle(IPC_CHANNELS.CANCEL_PRE_EXPIRY_AUTO, async () => {
     return cancelService.processPreExpiryAutoCancel();
   });
@@ -274,21 +275,12 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SAVE, (_event, settings: Partial<AppSettings>) => {
+    const beforeSettings = getSettings(true);
     saveSettings(settings);
-    
-    // 설정 변경 후 관련 스케줄러들 즉시 재시작
-    try {
-      startMailCheck();         // 메일 체크 스케줄 갱신
-      restartPreExpiryTask();   // 자동 Cancel 스케줄 갱신
-      startDailyReportTasks();  // 일일 리포트 스케줄 갱신
-      startExpiryNoticeTask();  // 만료 예고 메일 스케줄 갱신
-      startPollingScheduler();  // 주문 폴링 스케줄 갱신
-      logger.info('설정 저장 후 모든 스케줄러 재시작 완료');
-    } catch (err: any) {
-      logger.error(`스케줄러 재시작 중 오류 발생: ${err.message}`);
-    }
+    const afterSettings = getSettings(true);
+    refreshSchedulersForSettingsChange(beforeSettings, afterSettings);
 
-    return getSettings();
+    return afterSettings;
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_EXPORT, async () => {
@@ -332,12 +324,11 @@ export function registerIpcHandlers(): void {
     } catch (err: any) {
       return { success: false, error: err.message };
     }
+    const beforeSettings = getSettings(true);
     saveSettings(sanitized);
-    startMailCheck();
-    restartPreExpiryTask();
-    startDailyReportTasks();
-    startPollingScheduler();
-    return { success: true, settings: getSettings(true) };
+    const afterSettings = getSettings(true);
+    refreshSchedulersForSettingsChange(beforeSettings, afterSettings);
+    return { success: true, settings: afterSettings };
   });
 
   // === Logs ===

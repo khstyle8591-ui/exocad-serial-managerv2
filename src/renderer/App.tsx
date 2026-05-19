@@ -13,7 +13,7 @@ import Customers from './pages/Customers';
 import Products from './pages/Products';
 import type { Language } from './i18n';
 import { t } from './i18n';
-import { api } from './api';
+import { api } from './client';
 
 interface LangCtx {
   lang: Language;

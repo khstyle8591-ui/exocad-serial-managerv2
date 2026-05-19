@@ -2,13 +2,14 @@ const { packager } = require('@electron/packager');
 const path = require('path');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
+const OUTPUT_DIR = path.resolve(PROJECT_ROOT, '..', 'ExocadBuild');
 
 const options = {
   dir: PROJECT_ROOT,
   name: 'Exocad Serial Manager',
   platform: 'win32',
   arch: 'x64',
-  out: 'C:\\Users\\pf-5y\\OneDrive\\Desktop\\Project\\ExocadBuild',
+  out: OUTPUT_DIR,
   overwrite: true,
   asar: false,
   ignore: [

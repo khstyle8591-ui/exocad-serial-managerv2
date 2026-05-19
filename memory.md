@@ -5,7 +5,7 @@
 ## Project Overview
 Exocad serial number management automation system. Originally a Windows Electron Desktop App, now fully migrated to a standalone **Express Web Server for GCP deployment**.
 
-- **Path**: `C:\Users\pf-5y\OneDrive\Desktop\Project\exocad-manager`
+- **Path**: `C:\Users\pf-5y\Desktop\Project\exocad-manager`
 - **Stack**: Express.js + React 18, TypeScript 5, Vite, better-sqlite3
 - **Tools**: Playwright (Chromium), node-pop3, imap, nodemailer, node-cron, xlsx, PM2, Certbot (HTTPS)
 - **Deployment Status**: ✅ Running on GCP (`geomedi-exocad.duckdns.org`, HTTPS enabled)
@@ -79,7 +79,7 @@ Exocad serial number management automation system. Originally a Windows Electron
 - `npm run tunnel` — Cloudflare public URL (cloudflared must be installed)
 - `npm run pm2:start` — 24/7 with PM2
 - `npm run playwright:install` — install Chromium for auto-cancel
-- Build check: `cmd /c "cd C:\Users\pf-5y\OneDrive\Desktop\Project\exocad-web-server && npx tsc -p tsconfig.server.json --noEmit 2>&1"`
+- Build check: run from the local `exocad-web-server` project folder with `npx tsc -p tsconfig.server.json --noEmit`
 
 ### exocad-manager (Electron)
 - `npm run dev` — run all (main + renderer + electron)

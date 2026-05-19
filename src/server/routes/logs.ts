@@ -48,7 +48,10 @@ router.post('/renewal-dry-run', async (_req: Request, res: Response) => {
         const relatedEmails: string[] = [];
 
         for (const line of lines) {
-            if (line.includes('[System Log] 관련 메일 수신')) {
+            if (
+                line.includes('[System Log] Related mail received') ||
+                line.includes('[System Log] 관련 메일 수신')
+            ) {
                 relatedEmails.push(line);
             } else {
                 systemLogs.push(line);

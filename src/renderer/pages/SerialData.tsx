@@ -142,7 +142,7 @@ export default function SerialData() {
             📥 {t(lang, 'excel_upload')}
           </button>
           <button onClick={handleExport} style={btnOutline} disabled={filtered.length === 0}>
-            📤 {t(lang, 'notification_export')}
+            {t(lang, 'btn_serial_db_download')}
           </button>
           <button onClick={() => { setEditTarget(null); setShowForm('create'); }} style={btnPrimary}>
             {t(lang, 'btn_new_register')}

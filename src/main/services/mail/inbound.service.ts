@@ -8,7 +8,7 @@ import { notificationService } from '../notification.service';
 import { sendStopRequestReceivedNotice } from './lifecycle-notice.service';
 import { sendTemplate } from './smtp.service';
 import { logger } from '../../utils/logger';
-import { getTimestampDaysAgo } from '../../utils/date-utils';
+import { getNowTimestampString, getTimestampDaysAgo } from '../../utils/date-utils';
 import type { MailConnectionResult, InboundMail } from '../../../shared/types';
 
 // ── Serial number lookup cache (TTL 60s, avoids repeated getAll() per email) ──
@@ -27,6 +27,7 @@ function getCachedSerials(): { serial_number: string }[] {
 interface ParsedEmail {
   messageId: string | null;
   from: string;
+  replyTo: string;
   to: string;
   cc: string;
   subject: string;
@@ -158,7 +159,7 @@ export async function sendMissingInfoTemplateForMail(id: number): Promise<{ succ
   const mail = db.prepare('SELECT * FROM inbound_mails WHERE id = ?').get(id) as InboundMail | undefined;
   if (!mail) return { success: false, message: '메일을 찾을 수 없습니다.' };
 
-  const to = extractFirstEmailAddress(mail.mail_from);
+  const to = resolveReplyAddressFromStoredMail(mail);
   if (!to) return { success: false, message: '발신자 이메일 주소를 찾을 수 없습니다.' };
 
   const result = await sendMissingInfoNotice(mail, to);
@@ -190,18 +191,19 @@ function saveInboundMail(
   },
 ): number | null {
   const db = getDb();
-  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const now = getNowTimestampString();
   try {
+    if (isDuplicate(email.messageId)) return null;
+
     const result = db.prepare(`
       INSERT INTO inbound_mails
         (message_id, mail_from, mail_to, subject, body, received_at,
          classification, matched_template, matched_keywords, extracted_serial, linked_serial_id,
          missing_fields, template_sent_at, processed, error)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(message_id) DO NOTHING
     `).run(
       email.messageId,
-      email.from,
+      resolveMailFrom(email),
       email.to,
       email.subject,
       email.body.slice(0, 20000),
@@ -258,17 +260,17 @@ async function processEmail(
       let error: string | undefined;
       const shouldAutoSend = getSettings().missing_info_auto_reply_enabled;
       if (shouldAutoSend && !isDuplicate(email.messageId)) {
-        const to = extractFirstEmailAddress(email.from);
+        const to = resolveReplyAddress(email);
         if (to) {
           const tempMail = {
-            mail_from: email.from,
+            mail_from: resolveMailFrom(email),
             subject: email.subject,
             extracted_serial: analysis.extractedSerial,
             missing_fields: JSON.stringify(analysis.missingFields),
           } as InboundMail;
           const sendResult = await sendMissingInfoNotice(tempMail, to);
           if (sendResult.success) {
-            templateSentAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            templateSentAt = getNowTimestampString();
           } else {
             error = sendResult.message;
           }
@@ -348,7 +350,7 @@ async function checkWithPop3(): Promise<{ processed: number; saved: number; erro
         const entry = list[i];
         const msgNum = Array.isArray(entry) ? String(entry[0]) : null;
         if (!msgNum) {
-          logger.warn(`[POP3] UIDL 항목 형식 이상 (index=${i}) — 건너뜀`);
+          logger.warn(`[POP3] invalid UIDL entry format (index=${i}); skipping`);
           continue;
         }
         const uid = Array.isArray(entry) ? String(entry[1] ?? entry[0]) : msgNum;
@@ -526,12 +528,12 @@ function checkWithImap(): Promise<{ processed: number; saved: number; errors: st
           fetch.once('error', (e: Error) => { errors.push(`메일 가져오기 오류: ${e.message}`); });
           fetch.once('end', async () => {
             await Promise.all(pending);
-            // 모든 처리 완료 후 일괄 읽음 처리 (성공·실패 무관하게 seen 마킹)
-            // 처리 실패한 메시지는 DB에 error 분류로 저장되어 있거나 message_id로 dedup 처리됨
-            if (uids.length > 0) {
+            // 테스트 운영 중에는 IMAP 서버의 unread 상태를 유지할 수 있다.
+            // unread 유지 시 같은 메일을 다시 스캔하지만 message_id unique index로 중복 저장은 방지된다.
+            if (settings.imap_mark_seen_after_check && uids.length > 0) {
               await new Promise<void>((res) => {
                 imap.addFlags(uids, ['\\Seen'], (err) => {
-                  if (err) logger.warn(`[inbound] IMAP addFlags 실패: ${err.message}`);
+                  if (err) logger.warn(`[inbound] IMAP addFlags failed: ${err.message}`);
                   res();
                 });
               });
@@ -704,6 +706,7 @@ async function parseEmail(raw: string, fallbackMsgId: string | null): Promise<Pa
   return {
     messageId: parsed.messageId || fallbackMsgId,
     from: parsed.from?.text || '',
+    replyTo: parsed.replyTo?.text || '',
     to: toText,
     cc: ccText,
     subject: parsed.subject || '',
@@ -732,13 +735,13 @@ function analyzeEmail(email: ParsedEmail): AnalysisResult {
   const stopKws = [
     'cancel', 'cancellation', 'stop renewal', 'do not renew', 'not renew', 'no renewal',
     'terminate', 'unsubscribe', 'opt out', '解約', '更新停止', '停止', 'キャンセル',
-    '갱신 중단', '갱신중단', '중단', '취소', '해지',
+    '更新中止', '中止', '갱신 중단', '갱신중단', '중단', '취소', '해지',
   ];
 
   // 키워드가 전혀 설정되지 않은 상태에서 dedicated_email도 없으면
   // 모든 메일이 요청으로 분류되는 오동작 방지
   if (!dedicated && productKws.length === 0 && actionKws.length === 0 && stopKws.length === 0) {
-    logger.warn('[analyzeEmail] product/action 키워드 미설정 — unclassified 처리 (설정에서 키워드를 구성하세요)');
+    logger.warn('[analyzeEmail] product/action keywords not configured; classifying as unclassified (configure keywords in settings)');
     return { classification: 'unclassified', extractedSerial: null, matchedKeywords: [], missingFields: [], isDedicated: false, evidence: [] };
   }
 
@@ -826,11 +829,16 @@ function isDedicatedEmailTarget(email: ParsedEmail): boolean {
 }
 
 function extractSerialNumber(email: ParsedEmail): string | null {
+  const settings = getSettings();
   const text = `${email.subject} ${email.body}`;
-  const configuredPattern = getSettings().mail_serial_pattern || 'XXXXXXXX-XXXX-XXXXXXXX';
+  const configuredPattern = settings.mail_serial_pattern || 'XXXXXXXX-XXXX-XXXXXXXX';
   const configuredRegex = serialPatternToRegex(configuredPattern);
   const configuredMatch = text.match(configuredRegex);
   if (configuredMatch) return configuredMatch[0].trim().toUpperCase();
+
+  if (settings.require_serial_format ?? true) {
+    return null;
+  }
 
   const patterns = [
     /(?:serial|시리얼|s\/n|SN)[:\s]*([A-Z0-9][-A-Z0-9]{3,})/i,
@@ -841,8 +849,9 @@ function extractSerialNumber(email: ParsedEmail): string | null {
     const m = text.match(pat);
     if (m) return m[1].trim();
   }
+  const lowerText = text.toLowerCase();
   for (const serial of getCachedSerials()) {
-    if (text.includes(serial.serial_number)) return serial.serial_number;
+    if (lowerText.includes(serial.serial_number.toLowerCase())) return serial.serial_number;
   }
   return null;
 }
@@ -850,13 +859,71 @@ function extractSerialNumber(email: ParsedEmail): string | null {
 function serialPatternToRegex(pattern: string): RegExp {
   const source = (pattern || 'XXXXXXXX-XXXX-XXXXXXXX').trim();
   const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regexSource = escaped.replace(/X+/g, match => `[A-Z0-9]{${match.length}}`);
+  const regexSource = escaped.replace(/x+/gi, match => `[A-Z0-9]{${match.length}}`);
   return new RegExp(`\\b${regexSource}\\b`, 'i');
 }
 
-function extractFirstEmailAddress(value: string): string | null {
-  const match = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match ? match[0] : null;
+function extractEmailAddresses(value: string): string[] {
+  const matches = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  return Array.from(new Set(matches.map(m => m.toLowerCase())));
+}
+
+function getInternalEmailSet(): Set<string> {
+  const settings = getSettings();
+  const configured = [
+    settings.pop3_user,
+    settings.imap_user,
+    settings.smtp_user,
+    settings.report_email_to,
+    settings.smtp_test_address,
+    settings.dedicated_email,
+  ];
+  return new Set(configured.flatMap(extractEmailAddresses));
+}
+
+function firstExternalEmail(values: string[], allowInternalFallback = true): string | null {
+  const internal = getInternalEmailSet();
+  const addresses = values.flatMap(extractEmailAddresses);
+  const external = addresses.find(addr => !internal.has(addr));
+  if (external) return external;
+  return allowInternalFallback ? addresses[0] ?? null : null;
+}
+
+function extractForwardedSenderAddress(body: string): string | null {
+  const lines = String(body || '').split(/\r?\n/).slice(0, 80);
+  const senderLinePatterns = [
+    /^\s*(from|sender|reply-to)\s*:/i,
+    /^\s*(보낸\s*사람|발신자|발신)\s*:/i,
+    /^\s*(差出人|送信者|返信先)\s*:/i,
+  ];
+
+  for (const line of lines) {
+    if (senderLinePatterns.some(pattern => pattern.test(line))) {
+      const found = firstExternalEmail([line], false);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function resolveReplyAddress(email: ParsedEmail): string | null {
+  return firstExternalEmail([email.replyTo, email.xForwardedFrom, email.from], false)
+    || extractForwardedSenderAddress(email.body)
+    || firstExternalEmail([email.body], false)
+    || firstExternalEmail([email.replyTo, email.xForwardedFrom, email.from]);
+}
+
+function resolveReplyAddressFromStoredMail(mail: InboundMail): string | null {
+  return firstExternalEmail([mail.mail_from], false)
+    || extractForwardedSenderAddress(mail.body)
+    || firstExternalEmail([mail.body], false)
+    || firstExternalEmail([mail.mail_from]);
+}
+
+function resolveMailFrom(email: ParsedEmail): string {
+  const replyAddress = resolveReplyAddress(email);
+  if (replyAddress) return replyAddress;
+  return email.from;
 }
 
 function parseMissingFields(raw: string | null | undefined): string[] {
@@ -869,8 +936,8 @@ function parseMissingFields(raw: string | null | undefined): string[] {
 }
 
 function missingFieldLabel(field: string): string {
-  if (field === 'serial') return '시리얼 번호';
-  if (field === 'stop_keyword') return '갱신 중단 의사';
+  if (field === 'serial') return 'シリアルナンバー';
+  if (field === 'stop_keyword') return '更新停止をご希望であることが分かる文面';
   return field;
 }
 
@@ -885,7 +952,7 @@ async function sendMissingInfoNotice(mail: InboundMail, to: string): Promise<{ s
       CUSTOMER_EMAIL: to,
       DETECTED_SERIAL: mail.extracted_serial || '',
       RECEIVED_SUBJECT: mail.subject || '',
-      MISSING_FIELDS: missingFields.map(missingFieldLabel).join(', ') || '필수 정보',
+      MISSING_FIELDS: missingFields.map(missingFieldLabel).join(', ') || '必要情報',
     },
     { actor: 'email' },
   );

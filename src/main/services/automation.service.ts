@@ -114,7 +114,7 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
       'system',
       'auto',
       {},
-      `Limbo cancel 실패: ${result.error || 'unknown error'}`,
+      `Limbo cancel failed: ${result.error || 'unknown error'}`,
       triggerId,
       'warn'
     );

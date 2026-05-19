@@ -26,7 +26,7 @@ import automationRouter from '../server/routes/automation';
 
 // ── 초기화 ───────────────────────────────────────────────────────────────────
 logger.init();
-logger.info('=== 서버 모드 시작 ===');
+logger.info('=== Server mode started ===');
 
 initDatabase();
 startScheduler();
@@ -82,7 +82,7 @@ httpServer.keepAliveTimeout = 65000;       // 65초 (nginx 기본값 60초보다
 httpServer.headersTimeout = 70000;         // 70초
 httpServer.timeout = 120000;               // 요청 자체 타임아웃 2분
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
-  logger.info(`HTTP  서버 실행 중: http://0.0.0.0:${HTTP_PORT}`);
+  logger.info(`HTTP server running: http://0.0.0.0:${HTTP_PORT}`);
 });
 
 // HTTPS 서버 (인증서 있을 때만 실행)
@@ -96,30 +96,30 @@ if (hasCerts) {
   httpsServer.headersTimeout = 70000;
   httpsServer.timeout = 120000;
   httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-    logger.info(`HTTPS 서버 실행 중: https://0.0.0.0:${HTTPS_PORT}`);
+    logger.info(`HTTPS server running: https://0.0.0.0:${HTTPS_PORT}`);
   });
 } else {
-  logger.warn(`SSL 인증서 없음 (${certDir}) — HTTP 전용 모드`);
+  logger.warn(`SSL certificate not found (${certDir}); HTTP-only mode`);
 }
 
-logger.info('모든 스케줄러 실행 중. Ctrl+C로 종료.');
+logger.info('All schedulers are running. Press Ctrl+C to exit.');
 
 // ── 종료 처리 ─────────────────────────────────────────────────────────────────
 const shutdown = () => {
-  logger.info('서버 종료 중...');
+  logger.info('Server shutting down...');
   httpServer.close(() => {
     httpsServer?.close(() => {
       stopScheduler();
       stopPollingScheduler();
       closeDatabase();
-      logger.info('서버 종료 완료');
+      logger.info('Server shutdown complete');
       process.exit(0);
     });
     if (!httpsServer) {
       stopScheduler();
       stopPollingScheduler();
       closeDatabase();
-      logger.info('서버 종료 완료');
+      logger.info('Server shutdown complete');
       process.exit(0);
     }
   });

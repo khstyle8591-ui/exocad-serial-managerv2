@@ -7,6 +7,11 @@ import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import type { DailyReport, MonthlyExpiryReport, Serial, CancelResult } from '../../shared/types';
 
+function buildSmtpFrom(settings: ReturnType<typeof getSettings>) {
+  const name = (settings.smtp_from_name || 'Exocad Manager').trim();
+  return settings.smtp_user ? { name, address: settings.smtp_user } : settings.smtp_host;
+}
+
 // ─── Slack 메시지 다국어 사전 ────────────────────────────────────────────────
 type SlackLang = 'ko' | 'en' | 'ja';
 
@@ -35,7 +40,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     renewal_none: '  (없음)',
     expiry: '만료',
     request_date: '접수',
-    has_renewal: ' 🟡갱신요청있음(skip)',
+    cancel_skipped: ' 🟡중단요청없음(skip)',
     cancel_result: '🔑 *Cancel 결과* — {serial}',
     status_ok: '✅ 성공 (검증됨: {status})',
     status_ok_unv: '✅ 성공 (미검증)',
@@ -73,7 +78,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     renewal_none: '  (none)',
     expiry: 'Expiry',
     request_date: 'Received',
-    has_renewal: ' 🟡has renewal(skip)',
+    cancel_skipped: ' 🟡no stop request(skip)',
     cancel_result: '🔑 *Cancel Result* — {serial}',
     status_ok: '✅ Success (verified: {status})',
     status_ok_unv: '✅ Success (unverified)',
@@ -111,7 +116,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     renewal_none: '  (なし)',
     expiry: '有効期限',
     request_date: '受付',
-    has_renewal: ' 🟡更新依頼あり(skip)',
+    cancel_skipped: ' 🟡更新停止依頼なし(skip)',
     cancel_result: '🔑 *キャンセル結果* — {serial}',
     status_ok: '✅ 成功 (確認済: {status})',
     status_ok_unv: '✅ 成功 (未確認)',
@@ -174,12 +179,12 @@ export class NotificationService {
   async sendSlack(message: string, urlOverride?: string, force = false): Promise<boolean> {
     const settings = getSettings();
     if (!force && !settings.slack_enabled) {
-      logger.info('Slack 알림이 비활성화되어 있습니다 (skip)');
+      logger.info('Slack notifications are disabled (skip)');
       return false;
     }
     const targetUrl = urlOverride || settings.slack_webhook_url;
     if (!targetUrl) {
-      logger.warn('Slack webhook URL이 설정되지 않았습니다');
+      logger.warn('Slack webhook URL is not configured');
       return false;
     }
 
@@ -191,7 +196,7 @@ export class NotificationService {
       const req = protocol.request(
         {
           hostname: url.hostname,
-          path: url.pathname,
+          path: url.pathname + url.search,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -204,7 +209,7 @@ export class NotificationService {
       );
 
       req.on('error', (err: Error) => {
-        logger.error(`Slack 전송 실패: ${err.message}`);
+        logger.error(`Slack send failed: ${err.message}`);
         resolve(false);
       });
 
@@ -235,7 +240,7 @@ export class NotificationService {
         const req = protocol.request(
           {
             hostname: url.hostname,
-            path: url.pathname,
+            path: url.pathname + url.search,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -245,17 +250,17 @@ export class NotificationService {
           },
           (res: import('http').IncomingMessage) => {
             if (res.statusCode === 200) {
-              logger.info('Slack Webhook 테스트 성공');
+              logger.info('Slack webhook test succeeded');
               resolve({ success: true, message: 'Slack 전송 성공! 채널을 확인하세요.' });
             } else {
-              logger.warn(`Slack Webhook 테스트 실패: HTTP ${res.statusCode}`);
+              logger.warn(`Slack webhook test failed: HTTP ${res.statusCode}`);
               resolve({ success: false, message: `HTTP ${res.statusCode} 오류. URL을 확인해주세요.` });
             }
           }
         );
 
         req.on('error', (err: Error) => {
-          logger.error(`Slack Webhook 테스트 오류: ${err.message}`);
+          logger.error(`Slack webhook test error: ${err.message}`);
           resolve({ success: false, message: `연결 실패: ${err.message}` });
         });
 
@@ -294,7 +299,7 @@ export class NotificationService {
         const req = protocol.request(
           {
             hostname: url.hostname,
-            path: url.pathname,
+            path: url.pathname + url.search,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -304,17 +309,17 @@ export class NotificationService {
           },
           (res: import('http').IncomingMessage) => {
             if (res.statusCode === 200) {
-              logger.info('Related Slack Webhook 테스트 성공');
+              logger.info('Related Slack webhook test succeeded');
               resolve({ success: true, message: 'Related Slack 전송 성공! 채널을 확인하세요.' });
             } else {
-              logger.warn(`Related Slack Webhook 테스트 실패: HTTP ${res.statusCode}`);
+              logger.warn(`Related Slack webhook test failed: HTTP ${res.statusCode}`);
               resolve({ success: false, message: `HTTP ${res.statusCode} 오류. URL을 확인해주세요.` });
             }
           }
         );
 
         req.on('error', (err: Error) => {
-          logger.error(`Related Slack Webhook 테스트 오류: ${err.message}`);
+          logger.error(`Related Slack webhook test error: ${err.message}`);
           resolve({ success: false, message: `연결 실패: ${err.message}` });
         });
 
@@ -384,7 +389,7 @@ export class NotificationService {
   // - 갱신의뢰 접수 현황
   // - 전일 작업 요약
   async sendDailySummarySlack(summary: {
-    cancelTargets: { serial_number: string; customer_name: string; expiry_date: string | null; has_renewal: boolean }[];
+    cancelTargets: { serial_number: string; customer_name: string; expiry_date: string | null; cancel_skipped: boolean }[];
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
     yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {
@@ -408,7 +413,7 @@ export class NotificationService {
       lines.push(sf('cancel_none'));
     } else {
       for (const t of summary.cancelTargets) {
-        const renewBadge = t.has_renewal ? sf('has_renewal') : '';
+        const renewBadge = t.cancel_skipped ? sf('cancel_skipped') : '';
         lines.push(`  • ${t.serial_number} | ${t.customer_name} | ${sf('expiry')}: ${t.expiry_date}${renewBadge}`);
       }
     }
@@ -458,7 +463,7 @@ export class NotificationService {
   async sendEmail(subject: string, htmlBody: string): Promise<boolean> {
     const settings = getSettings();
     if (!settings.smtp_host || !settings.report_email_to) {
-      logger.warn('SMTP 설정 또는 수신 이메일이 설정되지 않았습니다');
+      logger.warn('SMTP settings or recipient email are not configured');
       return false;
     }
 
@@ -481,16 +486,16 @@ export class NotificationService {
       });
 
       await transporter.sendMail({
-        from: settings.smtp_user ? `Exocad Manager <${settings.smtp_user}>` : settings.smtp_host,
+        from: buildSmtpFrom(settings),
         to: settings.report_email_to,
         subject,
         html: htmlBody,
       });
 
-      logger.info(`이메일 전송 완료: ${subject}`);
+      logger.info(`Email sent: ${subject}`);
       return true;
     } catch (err: any) {
-      logger.error(`이메일 전송 실패: ${err.message}`);
+      logger.error(`Email send failed: ${err.message}`);
       return false;
     }
   }
@@ -499,7 +504,7 @@ export class NotificationService {
     const settings = getSettings();
     const to = recipients.filter(Boolean).join(',');
     if (!settings.smtp_host || !to) {
-      logger.warn('SMTP 설정 또는 긴급 알림 수신 이메일이 설정되지 않았습니다');
+      logger.warn('SMTP settings or emergency alert recipient email are not configured');
       return false;
     }
 
@@ -518,14 +523,14 @@ export class NotificationService {
       });
 
       await transporter.sendMail({
-        from: settings.smtp_user ? `Exocad Manager <${settings.smtp_user}>` : settings.smtp_host,
+        from: buildSmtpFrom(settings),
         to,
         subject,
         html: htmlBody,
       });
       return true;
     } catch (err: any) {
-      logger.error(`긴급 이메일 전송 실패: ${err.message}`);
+      logger.error(`Emergency email send failed: ${err.message}`);
       return false;
     }
   }
@@ -597,7 +602,7 @@ export class NotificationService {
     }
 
     try {
-      logger.info(`SMTP 연결 테스트 시작: ${settings.smtp_host}:${settings.smtp_port}`);
+      logger.info(`SMTP connection test started: ${settings.smtp_host}:${settings.smtp_port}`);
       const port = parsedPort;
       const useImplicitSSL = port === 465;
       const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
@@ -623,17 +628,17 @@ export class NotificationService {
 
       // Send a test email
       await transporter.sendMail({
-        from: settings.smtp_user,
+        from: buildSmtpFrom(settings),
         to: settings.report_email_to,
         subject: '[Exocad Manager] SMTP 설정 테스트',
         text: '이 이메일은 Exocad Manager 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.',
         html: '<p>이 이메일은 <strong>Exocad Manager</strong> 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.</p>',
       });
 
-      logger.info('SMTP 연결 테스트 성공 및 테스트 메일 발송 완료');
+      logger.info('SMTP connection test succeeded and test email sent');
       return { success: true, message: 'SMTP 연결 성공 및 테스트 메일 발송 완료' };
     } catch (err: any) {
-      logger.error(`SMTP 연결 테스트 오류: ${err.message}`);
+      logger.error(`SMTP connection test error: ${err.message}`);
 
       // Gmail 530 / 535 인증 오류 → App Password 안내
       const msg: string = err.message || '';

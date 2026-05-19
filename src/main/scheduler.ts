@@ -9,7 +9,7 @@ import { sendCancelCompleteNotice } from './services/mail/lifecycle-notice.servi
 import { getSettings } from './settings';
 import { getDb } from './database';
 import { logger } from './utils/logger';
-import { getTodayDateString, getYesterdayDateString } from './utils/date-utils';
+import { getDateString, getTodayDateString, getYesterdayDateString } from './utils/date-utils';
 import type { DailyReport, CancelResult, ExpiryNoticeRule, SerialWithCustomer } from '../shared/types';
 
 let mailCheckTasks: cron.ScheduledTask[] = [];
@@ -65,7 +65,7 @@ function initDailyCancelResults(): void {
         .filter(r => r.date === today)
         .map(r => ({ serial_number: r.serial_number, success: r.success, error: r.error, verified: r.verified, verified_status: r.verified_status, screenshot_path: r.screenshot_path }));
       if (dailyCancelResults.length > 0) {
-        logger.info(`[스케줄러] 당일 취소 실패 이력 복원: ${dailyCancelResults.length}건`);
+        logger.info(`[Scheduler] Restored today's cancel failure history: ${dailyCancelResults.length}`);
       }
     }
   } catch { /* 저장 데이터 없음 */ }
@@ -96,7 +96,7 @@ function timeToCron(timeStr: string): string {
 }
 
 export function startScheduler(): void {
-  logger.info('스케줄러 시작');
+  logger.info('Scheduler started');
   initDailyCancelResults();
 
   // 앱 시작 시 즉시 1회 실행 — 장시간 오프라인 후 재시작 시 만료 상태 즉시 반영
@@ -121,27 +121,27 @@ export function startScheduler(): void {
   dailyCancelTask = cron.schedule('0 0 * * *', async () => {
     const settings = getSettings();
     if (!settings.auto_cancel_enabled) {
-      logger.info('만료 시리얼 cancel 작업 비활성화 되어있음 (skip)');
+      logger.info('Expired serial cancel task is disabled (skip)');
       return;
     }
 
-    logger.info('만료 시리얼 cancel 작업 시작');
+    logger.info('Expired serial cancel task started');
     try {
       const results = await cancelService.processExpiredSerials();
       dailyCancelResults.push(...results);
-      logger.info(`Cancel 작업 완료: 성공 ${results.filter(r => r.success).length}건, 실패 ${results.filter(r => !r.success).length}건`);
+      logger.info(`Cancel task completed: success=${results.filter(r => r.success).length}, failed=${results.filter(r => !r.success).length}`);
 
       // cancel 결과를 개별적으로 Slack으로 전송
       for (const result of results) {
         await notificationService.sendCancelResultSlack(result).catch(() => { });
       }
     } catch (err: any) {
-      logger.error(`Cancel 작업 오류: ${err.message}`);
+      logger.error(`Cancel task error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
   */
 
-  // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 요청 없으면)
+  // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 중단 요청이 있으면)
   startPreExpiryTask();
 
   // 3-b. 매일 00:10 KST — 만료된 시리얼 자동 갱신 (renewal_stop_requested = 0)
@@ -152,7 +152,7 @@ export function startScheduler(): void {
 
   // 5. 매월 10일 09:00에 3개월 후 만료 시리얼 리포트
   monthlyReportTask = cron.schedule('0 9 10 * *', async () => {
-    logger.info('월간 만료 예정 리포트 생성 시작');
+    logger.info('Monthly expiry report generation started');
     try {
       const now = new Date();
       // Date 객체의 자동 월 오버플로를 활용해 정확한 3개월 후 날짜 산출
@@ -165,30 +165,30 @@ export function startScheduler(): void {
       const targetMonthStr = `${targetYear}-${String(adjustedMonth).padStart(2, '0')}`;
 
       await notificationService.sendMonthlyExpiryReport({
-        report_date: now.toISOString().slice(0, 10),
+        report_date: getDateString(now),
         target_month: targetMonthStr,
         expiring_serials: expiringSerials,
         total_count: expiringSerials.length,
       });
 
-      logger.info(`월간 리포트 전송 완료: ${targetMonthStr} 만료 예정 ${expiringSerials.length}건`);
+      logger.info(`Monthly report sent: ${targetMonthStr}, expiring=${expiringSerials.length}`);
     } catch (err: any) {
-      logger.error(`월간 리포트 오류: ${err.message}`);
+      logger.error(`Monthly report error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
   limboCronTask = cron.schedule('0 3 * * *', async () => {
-    logger.info('[Limbo] 보정 시작');
+    logger.info('[Limbo] fallback started');
     try {
       const result = await runLimboFallbackNow();
       if (result.processed > 0) {
-        logger.info(`[Limbo] 완료: ${result.success}건 성공, ${result.failed}건 실패`);
+        logger.info(`[Limbo] completed: success=${result.success}, failed=${result.failed}`);
       } else {
-        logger.info('[Limbo] 보정 대상 없음');
+        logger.info('[Limbo] no fallback targets');
       }
     } catch (err: any) {
-      logger.error(`[Limbo] 오류: ${err.message}`);
+      logger.error(`[Limbo] error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -198,7 +198,7 @@ export function startScheduler(): void {
   // 8. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
   dailySummaryTask = cron.schedule('30 8 * * *', async () => {
-    logger.info('일일 요약 Slack 알림 시작');
+    logger.info('Daily summary Slack notification started');
     try {
       const settings = getSettings();
 
@@ -209,18 +209,18 @@ export function startScheduler(): void {
       const cancelTargetDateStr = cancelTargetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
       const cancelCandidates = serialService.getExpiringSerialsOnDate(cancelTargetDateStr);
       const cancelTargets = cancelCandidates.map(s => {
-        let has_renewal = true;
+        let cancel_skipped = true;
         try {
-          // hasStopRequested=1 → 취소 원함 → 갱신 안 됨 → has_renewal=false
-          has_renewal = !serialService.hasStopRequested(s.id);
+          // hasStopRequested=1 means customer requested renewal stop, so cancel should run.
+          cancel_skipped = !serialService.hasStopRequested(s.id);
         } catch (e: any) {
-          logger.warn(`[dailySummary] hasStopRequested(${s.id}) 오류: ${e.message}`);
+          logger.warn(`[dailySummary] hasStopRequested(${s.id}) error: ${e.message}`);
         }
         return {
           serial_number: s.serial_number,
           customer_name: s.customer?.name || '',
           expiry_date: s.expiry_date,
-          has_renewal,
+          cancel_skipped,
         };
       });
 
@@ -257,9 +257,9 @@ export function startScheduler(): void {
         yesterdayStats,
       });
 
-      logger.info('일일 요약 Slack 알림 전송 완료');
+      logger.info('Daily summary Slack notification sent');
     } catch (err: any) {
-      logger.error(`일일 요약 Slack 알림 오류: ${err.message}`);
+      logger.error(`Daily summary Slack notification error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -269,7 +269,7 @@ export function startScheduler(): void {
   const cancelTime = settings.auto_cancel_time || '09:00';
   const reportTimes = settings.daily_report_times?.length ? settings.daily_report_times : ['10:00'];
   const summary = buildScheduleSummary(mailTimes, cancelTime, reportTimes, settings.expiry_notice_time || '05:00');
-  logger.info(`[스케줄 요약] ${summary}`);
+  logger.info(`[Schedule Summary] ${summary}`);
   notificationService.sendSchedulerStartupSlack(summary).catch(() => {});
 }
 
@@ -282,16 +282,16 @@ function startPreExpiryTask(): void {
 
   const settings = getSettings();
   const cronExpr = timeToCron(settings.auto_cancel_time || '09:00');
-  logger.info(`만료 전 자동 cancel 스케줄: ${cronExpr} (auto_cancel_time: ${settings.auto_cancel_time})`);
+  logger.info(`Pre-expiry auto-cancel schedule: ${cronExpr} (auto_cancel_time: ${settings.auto_cancel_time})`);
 
   preExpiryCancelTask = cron.schedule(cronExpr, async () => {
-    logger.info('만료 전 자동 cancel 체크 시작');
+    logger.info('Pre-expiry auto-cancel check started');
     try {
       const results = await cancelService.processPreExpiryAutoCancel();
       if (results.length > 0) {
         dailyCancelResults.push(...results);
         persistDailyCancelResults();
-        logger.info(`만료 전 자동 cancel 완료: ${results.length}건`);
+        logger.info(`Pre-expiry auto-cancel completed: ${results.length}`);
 
         // cancel 결과를 개별적으로 Slack으로 전송
         for (const result of results) {
@@ -299,7 +299,7 @@ function startPreExpiryTask(): void {
         }
       }
     } catch (err: any) {
-      logger.error(`만료 전 자동 cancel 오류: ${err.message}`);
+      logger.error(`Pre-expiry auto-cancel error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -313,7 +313,7 @@ function startPreExpiryTask(): void {
   let h = parseInt(hStr, 10);
   const m = parseInt(mStr, 10);
   if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
-    logger.warn(`[Retry] auto_cancel_time 형식 오류 ("${settings.auto_cancel_time}") → 기본값 09:00 사용`);
+    logger.warn(`[Retry] invalid auto_cancel_time ("${settings.auto_cancel_time}") -> using default 09:00`);
     h = 9;
   }
   const retryH = (h + 2) % 24; // 2시간 후
@@ -323,7 +323,7 @@ function startPreExpiryTask(): void {
     await retryFailedCancellations();
   }, { timezone: 'Asia/Tokyo' });
 
-  logger.info(`실패 건 재시도 스케줄: ${retryCron} (자동 캔슬 2시간 후)`);
+  logger.info(`Failure retry schedule: ${retryCron} (2 hours after auto-cancel)`);
 }
 
 /**
@@ -332,7 +332,7 @@ function startPreExpiryTask(): void {
 async function retryFailedCancellations() {
   const failures = dailyCancelResults.filter(r => !r.success);
   if (failures.length === 0) {
-    logger.info('[Retry] 재시도할 실패 건이 없습니다.');
+    logger.info('[Retry] no failed items to retry.');
     return;
   }
 
@@ -342,14 +342,14 @@ async function retryFailedCancellations() {
   });
 
   if (actualFailures.length === 0) {
-    logger.info('[Retry] 이미 모두 처리되었거나 재시도할 대상이 없습니다.');
+    logger.info('[Retry] all items already handled or no retry targets.');
     return;
   }
 
-  logger.info(`[Retry] 장애/타임아웃 실패 건 재시도 시작 (${actualFailures.length}건)`);
+  logger.info(`[Retry] retrying error/timeout failures (${actualFailures.length})`);
   
   for (const fail of actualFailures) {
-    logger.info(`[Retry] 재시도 실행: ${fail.serial_number}`);
+    logger.info(`[Retry] retry started: ${fail.serial_number}`);
     try {
       const result = await cancelService.cancelSubscription(fail.serial_number, true);
       if (result.success) {
@@ -366,14 +366,14 @@ async function retryFailedCancellations() {
         fail.screenshot_path = result.screenshot_path;
         fail.error = undefined;
 
-        logger.info(`[Retry] 재시도 성공: ${fail.serial_number}`);
+        logger.info(`[Retry] retry succeeded: ${fail.serial_number}`);
         await notificationService.sendCancelResultSlack(result).catch(() => {});
       } else {
         fail.error = `[재시도 실패] ${result.error}`;
-        logger.warn(`[Retry] 재시도 역시 실패: ${fail.serial_number} - ${result.error}`);
+        logger.warn(`[Retry] retry failed again: ${fail.serial_number} - ${result.error}`);
       }
     } catch (err: any) {
-      logger.error(`[Retry] 재시도 중 에러: ${err.message}`);
+      logger.error(`[Retry] retry error: ${err.message}`);
     }
     // 연속 요청 방지
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -383,7 +383,7 @@ async function retryFailedCancellations() {
 
 // Settings 저장 후 호출하여 시각 변경을 즉시 반영
 export function restartPreExpiryTask(): void {
-  logger.info('만료 전 자동 cancel 스케줄 재시작');
+  logger.info('Pre-expiry auto-cancel schedule restarted');
   startPreExpiryTask();
 }
 
@@ -395,20 +395,20 @@ function startAutoRenewTask(): void {
   }
 
   autoRenewTask = cron.schedule('10 0 * * *', async () => {
-    logger.info('[AutoRenew] 자동 갱신 시작');
+    logger.info('[AutoRenew] auto-renew started');
     try {
       const result = await runAutoRenewNow();
       if (result.renewed > 0) {
-        logger.info(`[AutoRenew] 완료: ${result.renewed}건 갱신 (${result.serials.join(', ')})`);
+        logger.info(`[AutoRenew] completed: renewed=${result.renewed} (${result.serials.join(', ')})`);
       } else {
-        logger.info('[AutoRenew] 갱신 대상 없음');
+        logger.info('[AutoRenew] no renewal targets');
       }
     } catch (err: any) {
-      logger.error(`[AutoRenew] 오류: ${err.message}`);
+      logger.error(`[AutoRenew] error: ${err.message}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
-  logger.info('[AutoRenew] 스케줄 등록 완료: 00:10 KST');
+  logger.info('[AutoRenew] schedule registered: 00:10 KST');
 }
 
 export function startMailCheck(): void {
@@ -419,17 +419,17 @@ export function startMailCheck(): void {
   mailCheckTasks = [];
 
   const runMailCheck = async () => {
-    logger.info('수신 메일 체크 시작');
+    logger.info('Inbound mail check started');
     try {
       const result = await checkInboundNow();
       if (result.saved > 0 || result.processed > 0) {
-        logger.info(`수신 처리 완료: 저장 ${result.saved}건, 갱신의뢰 ${result.processed}건`);
+        logger.info(`Inbound processing completed: saved=${result.saved}, renewal_requests=${result.processed}`);
       }
       if (result.errors.length > 0) {
-        logger.warn(`메일 처리 오류: ${result.errors.join(', ')}`);
+        logger.warn(`Mail processing errors: ${result.errors.join(', ')}`);
       }
     } catch (err: any) {
-      logger.error(`메일 체크 오류: ${err.message}`);
+      logger.error(`Mail check error: ${err.message}`);
     }
   };
 
@@ -442,7 +442,7 @@ export function startMailCheck(): void {
     mailCheckTasks.push(task);
   }
 
-  logger.info(`메일 체크 스케줄 설정 완료: ${times.join(', ')}`);
+  logger.info(`Mail check schedule registered: ${times.join(', ')}`);
 }
 
 function normalizeExpiryNoticeRules(settings: ReturnType<typeof getSettings>): ExpiryNoticeRule[] {
@@ -510,7 +510,7 @@ export function startExpiryNoticeTask(): void {
 
   const settings = getSettings();
   if (settings.expiry_notice_enabled === false) {
-    logger.info('[ExpiryNotice] 만료 예고 메일 비활성화');
+    logger.info('[ExpiryNotice] expiry notice email disabled');
     return;
   }
 
@@ -518,7 +518,7 @@ export function startExpiryNoticeTask(): void {
   logger.info(`[ExpiryNotice] 스케줄: ${cronExpr} (time: ${settings.expiry_notice_time || '05:00'})`);
 
   expiryNoticeTask = cron.schedule(cronExpr, async () => {
-    logger.info('[ExpiryNotice] 만료 예고 메일 발송 시작');
+    logger.info('[ExpiryNotice] expiry notice email started');
     const now = new Date();
     const rules = normalizeExpiryNoticeRules(settings);
     const stopTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
@@ -542,12 +542,12 @@ export function startExpiryNoticeTask(): void {
           );
 
           if (result.success) {
-            logger.info(`[ExpiryNotice] D-${rule.days_before} 메일 발송: ${serial.serial_number} → ${serial.customer.email} (${code})`);
+            logger.info(`[ExpiryNotice] D-${rule.days_before} email sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
           } else {
-            logger.error(`[ExpiryNotice] D-${rule.days_before} 발송 실패: ${serial.serial_number} - ${result.message}`);
+            logger.error(`[ExpiryNotice] D-${rule.days_before} send failed: ${serial.serial_number} - ${result.message}`);
           }
         } catch (err: any) {
-          logger.error(`[ExpiryNotice] 발송 실패: ${serial.serial_number} - ${err.message}`);
+          logger.error(`[ExpiryNotice] send failed: ${serial.serial_number} - ${err.message}`);
         }
       }
     }
@@ -643,19 +643,19 @@ export function startDailyReportTasks(): void {
   for (const time of times) {
     const cronExpr = timeToCron(time);
     const task = cron.schedule(cronExpr, async () => {
-      logger.info(`일일 리포트 생성 시작 (${time}, 어제 데이터 기준)`);
+      logger.info(`Daily report generation started (${time}, based on yesterday's data)`);
       try {
         await sendDailyReportForDate(getYesterdayDateString());
-        logger.info('일일 리포트 전송 완료');
+        logger.info('Daily report sent');
       } catch (err: any) {
-        logger.error(`일일 리포트 오류: ${err.message}`);
+        logger.error(`Daily report error: ${err.message}`);
       }
     }, { timezone: 'Asia/Tokyo' });
 
     dailyReportTasks.push(task);
   }
 
-  logger.info(`일일 리포트 스케줄 설정 완료: ${times.join(', ')}`);
+  logger.info(`Daily report schedule registered: ${times.join(', ')}`);
 }
 
 export function stopScheduler(): void {
@@ -669,5 +669,5 @@ export function stopScheduler(): void {
   if (monthlyReportTask) monthlyReportTask.stop();
   if (dailySummaryTask) dailySummaryTask.stop();
   if (retryCancelTask) retryCancelTask.stop();
-  logger.info('스케줄러 중지');
+  logger.info('Scheduler stopped');
 }

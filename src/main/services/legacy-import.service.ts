@@ -267,7 +267,7 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
       action: 'legacy_imported',
       actor: 'manual',
       diff: { legacy_id: [null, input.legacy_id] },
-      details: `레거시 이관: serial=${legacyRow.serial_number}, legacy_id=${input.legacy_id}`,
+      details: `Legacy import: serial=${legacyRow.serial_number}, legacy_id=${input.legacy_id}`,
       trigger_id: `legacy:${input.legacy_id}`,
       severity: 'info',
     });

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import {
     getAllOrders,
+    listGroupedOrders,
     updatePendingOrder,
     approvePendingOrder,
     updateDataFromPendingOrder,
@@ -17,6 +18,11 @@ const router = Router();
 // GET /api/orders
 router.get('/', (_req: Request, res: Response) => {
     res.json(getAllOrders());
+});
+
+// GET /api/orders/grouped
+router.get('/grouped', (_req: Request, res: Response) => {
+    res.json(listGroupedOrders());
 });
 
 // GET /api/orders/poll-status

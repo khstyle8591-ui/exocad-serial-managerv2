@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import { api } from '../api';
+import { api } from '../client';
 
 interface Serial {
   id: number;

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { logger } from './utils/logger';
 
 let db: Database.Database;
 
@@ -18,7 +19,16 @@ function resolveElectronUserDataPath(): string | null {
 
 export function getDbPath(): string {
   if (process.env.DB_PATH) return process.env.DB_PATH;
-  const dataDir = resolveElectronUserDataPath() ?? path.join(process.cwd(), 'data');
+
+  const electronUserDataPath = resolveElectronUserDataPath();
+  if (!electronUserDataPath) {
+    throw new Error(
+      'DB_PATH is required outside the Electron desktop app. ' +
+      'Set DB_PATH to the SQLite database file before running server, GCP, migration, or maintenance scripts.'
+    );
+  }
+
+  const dataDir = electronUserDataPath;
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
@@ -196,10 +206,54 @@ function migrateInboundClassificationConstraint(): void {
   console.log('[DB] Migration complete: inbound_mails classifications updated');
 }
 
+function ensureInboundMessageIdUniqueIndex(): void {
+  const index = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE name='idx_inbound_msgid' AND type='index'")
+    .get() as { sql: string | null } | undefined;
+
+  if (index?.sql?.includes('WHERE message_id IS NOT NULL')) {
+    console.log('[DB] Rebuilding inbound_mails message_id unique index...');
+    db.exec('DROP INDEX IF EXISTS idx_inbound_msgid;');
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_msgid
+      ON inbound_mails(message_id);
+  `);
+}
+
+function createPendingOrderSourceUniqueIndex(): void {
+  const duplicate = db
+    .prepare(`
+      SELECT source_id, COUNT(*) AS cnt
+      FROM pending_orders
+      WHERE source_id != ''
+      GROUP BY source_id
+      HAVING cnt > 1
+      LIMIT 1
+    `)
+    .get() as { source_id: string; cnt: number } | undefined;
+
+  if (duplicate) {
+    console.warn(
+      `[DB] pending_orders.source_id has duplicates; unique index skipped. ` +
+      `Example: ${duplicate.source_id} (${duplicate.cnt} rows)`
+    );
+    return;
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_source_id_unique
+      ON pending_orders(source_id)
+      WHERE source_id != '';
+  `);
+}
+
 export function initDatabase(): Database.Database {
   const renamed = detectAndRenameLegacy();
 
   const dbPath = getDbPath();
+  logger.info(`[DB] Using path: ${dbPath}`);
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -207,6 +261,8 @@ export function initDatabase(): Database.Database {
   createTables();
   migrateSeverityConstraint();
   migrateInboundClassificationConstraint();
+  ensureInboundMessageIdUniqueIndex();
+  createPendingOrderSourceUniqueIndex();
 
   // 레거시 DB 존재 알림 (settings에 기록 — 첫 실행만)
   if (renamed || fs.existsSync(getLegacyDbPath())) {

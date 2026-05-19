@@ -11,6 +11,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   resolve: {
+    extensions: ['.tsx', '.ts', '.jsx', '.js', '.mjs', '.mts', '.json'],
     alias: {
       '@shared': path.resolve(__dirname, 'src/shared'),
     },

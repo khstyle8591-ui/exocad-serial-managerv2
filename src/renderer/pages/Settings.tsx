@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
-import { api } from '../api';
+import { api } from '../client';
 import type { ExpiryNoticeRule, MailTemplate } from '../../shared/types';
 
 // ── UUID 단순 생성 ──────────────────────────────────────────────────────────
@@ -115,6 +115,93 @@ function SectionHeader({ title, onManual }: { title: string; onManual: () => voi
   );
 }
 
+function KeywordCardEditor({
+  inputKey,
+  label,
+  hint,
+  placeholder,
+  values,
+  onChange,
+  inputValue,
+  onInputChange,
+  onAdd,
+  onRemove,
+  lang,
+  danger = false,
+}: {
+  inputKey: string;
+  label: string;
+  hint: string;
+  placeholder: string;
+  values: string[];
+  onChange: React.Dispatch<React.SetStateAction<string[]>>;
+  inputValue: string;
+  onInputChange: (key: string, value: string) => void;
+  onAdd: (key: string, list: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => void;
+  onRemove: (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => void;
+  lang: Language;
+  danger?: boolean;
+}) {
+  return (
+    <div className="form-group" style={{ marginBottom: 16 }}>
+      <label style={{ fontWeight: 600, color: danger ? 'var(--red)' : undefined }}>{label}</label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+        <input
+          value={inputValue}
+          onChange={e => onInputChange(inputKey, e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onAdd(inputKey, values, onChange);
+            }
+          }}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          onClick={() => onAdd(inputKey, values, onChange)}
+          className="btn btn-secondary"
+          style={{ whiteSpace: 'nowrap', padding: '7px 14px' }}
+        >
+          {t(lang, 'add')}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        {values.length === 0 ? (
+          <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>
+        ) : values.map(value => (
+          <span
+            key={value}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 9px',
+              borderRadius: 6,
+              border: `1px solid ${danger ? 'rgba(239,68,68,0.35)' : 'var(--border2)'}`,
+              background: danger ? 'var(--red-dim)' : 'var(--bg3)',
+              color: danger ? 'var(--red)' : 'var(--text)',
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {value}
+            <button
+              type="button"
+              onClick={() => onRemove(value, onChange)}
+              title={t(lang, 'delete')}
+              style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <small style={{ color: danger ? 'var(--red)' : 'var(--text)', fontSize: 12, display: 'block', marginTop: 6 }}>{hint}</small>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { lang, setLang } = useLang();
   const [loading, setLoading] = useState(true);
@@ -131,6 +218,7 @@ export default function Settings() {
   const [pop3Tls, setPop3Tls] = useState(true);
   const [pop3KeepCopy, setPop3KeepCopy] = useState(false);
   const [imapTls, setImapTls] = useState(true);
+  const [imapMarkSeen, setImapMarkSeen] = useState(false);
   const [smtpTls, setSmtpTls] = useState(false);
   const [slackEnabled, setSlackEnabled] = useState(true);
   const [expiryNoticeEnabled, setExpiryNoticeEnabled] = useState(true);
@@ -206,6 +294,7 @@ export default function Settings() {
       setPop3Tls(data.pop3_tls ?? true);
       setPop3KeepCopy(data.pop3_keep_copy ?? false);
       setImapTls(data.imap_tls ?? true);
+      setImapMarkSeen(data.imap_mark_seen_after_check ?? false);
       setSmtpTls(data.smtp_tls ?? false);
       setRequireSerial(data.require_serial_format ?? true);
       setProductKeywords(normalizeKeywordList(data.renewal_product_keywords));
@@ -266,6 +355,7 @@ export default function Settings() {
         pop3_tls: pop3Tls,
         pop3_keep_copy: pop3KeepCopy,
         imap_tls: imapTls,
+        imap_mark_seen_after_check: imapMarkSeen,
         smtp_tls: smtpTls,
         poll_sources: pollSourcesRef.current,
         require_serial_format: requireSerial,
@@ -371,81 +461,6 @@ export default function Settings() {
   };
 
   if (loading) return <div>{t(lang, 'loading')}</div>;
-
-  const KeywordCardEditor = ({
-    inputKey,
-    label,
-    hint,
-    placeholder,
-    values,
-    onChange,
-    danger = false,
-  }: {
-    inputKey: string;
-    label: string;
-    hint: string;
-    placeholder: string;
-    values: string[];
-    onChange: React.Dispatch<React.SetStateAction<string[]>>;
-    danger?: boolean;
-  }) => (
-    <div className="form-group" style={{ marginBottom: 16 }}>
-      <label style={{ fontWeight: 600, color: danger ? 'var(--red)' : undefined }}>{label}</label>
-      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-        <input
-          value={keywordInputs[inputKey] || ''}
-          onChange={e => setKeywordInput(inputKey, e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              addKeyword(inputKey, values, onChange);
-            }
-          }}
-          placeholder={placeholder}
-        />
-        <button
-          type="button"
-          onClick={() => addKeyword(inputKey, values, onChange)}
-          className="btn btn-secondary"
-          style={{ whiteSpace: 'nowrap', padding: '7px 14px' }}
-        >
-          {t(lang, 'add')}
-        </button>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-        {values.length === 0 ? (
-          <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>
-        ) : values.map(value => (
-          <span
-            key={value}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '6px 9px',
-              borderRadius: 6,
-              border: `1px solid ${danger ? 'rgba(239,68,68,0.35)' : 'var(--border2)'}`,
-              background: danger ? 'var(--red-dim)' : 'var(--bg3)',
-              color: danger ? 'var(--red)' : 'var(--text)',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {value}
-            <button
-              type="button"
-              onClick={() => removeKeyword(value, onChange)}
-              title={t(lang, 'delete')}
-              style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
-      <small style={{ color: danger ? 'var(--red)' : 'var(--text)', fontSize: 12, display: 'block', marginTop: 6 }}>{hint}</small>
-    </div>
-  );
 
   // ── 매뉴얼 내용 정의 ────────────────────────────────────────────────────────
   const manuals: Record<string, { title: string; content: React.ReactNode }> = {
@@ -729,7 +744,7 @@ export default function Settings() {
                       </thead>
                       <tbody>
                         {cancelDryResults.map((r: any, i: number) => {
-                          const isSkipped = r.has_renewal;
+                          const isSkipped = r.cancel_skipped ?? r.has_renewal;
                           const allOk = !isSkipped && r.login_ok && r.serial_found && r.option_btn_found && r.cancel_item_found && r.cancel_item_clicked;
                           const hasError = r.error && !isSkipped;
                           const rowBg = isSkipped ? '#fefce8' : allOk ? '#f0fdf4' : '#fef2f2';
@@ -842,10 +857,14 @@ export default function Settings() {
                 <input key={`imappw-${loadKey}`} type="password" defaultValue={formVals.current.imap_password || ''} onChange={e => setVal('imap_password', e.target.value)} />
               </div>
             </div>
-            <div className="form-group" style={{ marginBottom: 8 }}>
+            <div className="form-group" style={{ display: 'flex', gap: 24, marginBottom: 8 }}>
               <label className="checkbox-row">
                 <input type="checkbox" checked={imapTls} onChange={e => setImapTls(e.target.checked)} />
                 {t(lang, 'label_tls')}
+              </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={imapMarkSeen} onChange={e => setImapMarkSeen(e.target.checked)} />
+                {t(lang, 'label_imap_mark_seen')}
               </label>
             </div>
             <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'imap_note')}</small>
@@ -895,6 +914,11 @@ export default function Settings() {
             placeholder="exocad"
             values={productKeywords}
             onChange={setProductKeywords}
+            inputValue={keywordInputs.product || ''}
+            onInputChange={setKeywordInput}
+            onAdd={addKeyword}
+            onRemove={removeKeyword}
+            lang={lang}
           />
           <KeywordCardEditor
             inputKey="action"
@@ -903,6 +927,11 @@ export default function Settings() {
             placeholder={t(lang, 'renewal_action_keywords_placeholder')}
             values={actionKeywords}
             onChange={setActionKeywords}
+            inputValue={keywordInputs.action || ''}
+            onInputChange={setKeywordInput}
+            onAdd={addKeyword}
+            onRemove={removeKeyword}
+            lang={lang}
           />
           <div style={{ borderLeft: '3px solid #fca5a5', background: 'var(--red-dim)', borderRadius: 4, padding: '10px 12px', marginBottom: 16 }}>
             <KeywordCardEditor
@@ -912,6 +941,11 @@ export default function Settings() {
               placeholder={t(lang, 'renewal_exclude_keywords_placeholder')}
               values={excludeKeywords}
               onChange={setExcludeKeywords}
+              inputValue={keywordInputs.exclude || ''}
+              onInputChange={setKeywordInput}
+              onAdd={addKeyword}
+              onRemove={removeKeyword}
+              lang={lang}
               danger
             />
           </div>
@@ -985,6 +1019,7 @@ export default function Settings() {
                     imap_host: f.imap_host, imap_port: f.imap_port,
                     imap_user: f.imap_user, imap_password: f.imap_password,
                     imap_tls: imapTls,
+                    imap_mark_seen_after_check: imapMarkSeen,
                   };
                   const res = await api.testMailConnection(settingsOverride);
                   setConnTestResult(res);
@@ -1124,6 +1159,16 @@ export default function Settings() {
             <input key={`smtppw-${loadKey}`} type="password" defaultValue={formVals.current.smtp_password || ''} onChange={e => setVal('smtp_password', e.target.value)} />
           </div>
         </div>
+        <div className="form-group">
+          <label>{t(lang, 'label_smtp_from_name' as any)}</label>
+          <input
+            key={`smtpfrom-${loadKey}`}
+            defaultValue={formVals.current.smtp_from_name || 'Exocad Manager'}
+            onChange={e => setVal('smtp_from_name', e.target.value)}
+            placeholder="Exocad Manager"
+          />
+          <small style={{ color: 'var(--text)', fontSize: 12 }}>{t(lang, 'smtp_from_name_hint' as any)}</small>
+        </div>
 
         {/* Gmail App Password 안내 */}
         <div style={{
@@ -1163,6 +1208,7 @@ export default function Settings() {
                 const settingsOverride = {
                   smtp_host: f.smtp_host, smtp_port: f.smtp_port,
                   smtp_user: f.smtp_user, smtp_password: f.smtp_password,
+                  smtp_from_name: f.smtp_from_name,
                   smtp_tls: smtpTls,
                   report_email_to: f.report_email_to,
                 };

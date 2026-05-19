@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang, useNav } from '../App';
 import { t } from '../i18n';
-import { api } from '../api';
+import { api } from '../client';
 
 interface Stats {
   total: number;

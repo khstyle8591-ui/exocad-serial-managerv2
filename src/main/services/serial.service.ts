@@ -1,6 +1,6 @@
 import { getDb } from '../database';
 import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
-import { findOrCreateCustomer, getCustomerById } from './customer.service';
+import { findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
 import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs } from './activity-log.service';
 import type {
   Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
@@ -59,6 +59,10 @@ function toModulesJson(input: SerialInput): string {
   return '[]';
 }
 
+function toSqliteBoolean(value: boolean | number | undefined): number {
+  return value === true || value === 1 ? 1 : 0;
+}
+
 // ── Read ───────────────────────────────────────────────────────────────────────
 
 export class SerialService {
@@ -84,7 +88,7 @@ export class SerialService {
 
   getBySerialNumber(serialNumber: string): SerialWithCustomer | undefined {
     const row = getDb()
-      .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE s.serial_number = ?`)
+      .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE LOWER(s.serial_number) = LOWER(?)`)
       .get(serialNumber) as any | undefined;
     return row ? parseSerialRow(row) : undefined;
   }
@@ -113,13 +117,15 @@ export class SerialService {
     const customer_id = resolveCustomerId(input);
     const now = getNowTimestampString();
     const modulesJson = toModulesJson(input);
+    const stopRequested = toSqliteBoolean(input.renewal_stop_requested);
 
     const result = db
       .prepare(
         `INSERT INTO serials
           (serial_number, customer_id, purchase_date, expiry_date, status,
-           engine_build, version, main_product, modules, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           engine_build, version, main_product, modules, notes, renewal_stop_requested,
+           stop_requested_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.serial_number,
@@ -132,12 +138,14 @@ export class SerialService {
         input.main_product || '',
         modulesJson,
         input.notes || '',
+        stopRequested,
+        stopRequested ? now : null,
         now,
         now
       );
 
     this.logActivity(result.lastInsertRowid as number, 'registered', 'manual',
-      {}, `시리얼 ${input.serial_number} 등록`);
+      {}, `Serial registered: ${input.serial_number}`);
     return this.getById(result.lastInsertRowid as number)!;
   }
 
@@ -146,7 +154,11 @@ export class SerialService {
     const existing = this.getById(id);
     if (!existing) return undefined;
 
-    // Update customer flat fields if provided (backward compat with order.service)
+    let currentCustomerId = existing.customer_id;
+
+    // Update customer flat fields if provided (backward compat with order.service).
+    // If the incoming customer name differs, move only this serial to the resolved
+    // customer instead of overwriting the previously linked customer record.
     if (
       input.customer_name !== undefined ||
       input.customer_email !== undefined ||
@@ -155,8 +167,29 @@ export class SerialService {
       input.customer_manager !== undefined ||
       input.dealer !== undefined
     ) {
-      const { updateCustomer } = require('./customer.service') as typeof import('./customer.service');
-      updateCustomer(existing.customer_id, {
+      const incomingName = input.customer_name?.trim();
+      const existingName = existing.customer.name?.trim() ?? '';
+      const shouldResolveDifferentCustomer = !!incomingName && incomingName !== existingName;
+
+      if (input.customer_id != null) {
+        currentCustomerId = input.customer_id;
+      } else if (shouldResolveDifferentCustomer) {
+        currentCustomerId = findOrCreateCustomer({
+          name: incomingName,
+          email: input.customer_email,
+          phone: input.customer_phone,
+          address: input.customer_address,
+          sales_manager: input.customer_manager,
+          dealer: input.dealer,
+        }).id;
+      }
+
+      if (currentCustomerId !== existing.customer_id) {
+        db.prepare('UPDATE serials SET customer_id = ?, updated_at = ? WHERE id = ?')
+          .run(currentCustomerId, getNowTimestampString(), id);
+      }
+
+      updateCustomer(currentCustomerId, {
         name: input.customer_name,
         email: input.customer_email,
         phone: input.customer_phone,
@@ -167,7 +200,7 @@ export class SerialService {
     }
 
     // Update serial FK to a different customer if customer_id provided
-    if (input.customer_id != null && input.customer_id !== existing.customer_id) {
+    if (input.customer_id != null && input.customer_id !== currentCustomerId) {
       db.prepare('UPDATE serials SET customer_id = ?, updated_at = ? WHERE id = ?')
         .run(input.customer_id, getNowTimestampString(), id);
     }
@@ -176,7 +209,7 @@ export class SerialService {
     const values: unknown[] = [];
 
     if (input.serial_number !== undefined && input.serial_number !== existing.serial_number) {
-      const conflict = db.prepare('SELECT id FROM serials WHERE serial_number = ? AND id != ?')
+      const conflict = db.prepare('SELECT id FROM serials WHERE LOWER(serial_number) = LOWER(?) AND id != ?')
         .get(input.serial_number, id);
       if (conflict) throw new Error(`시리얼 번호 '${input.serial_number}'는 이미 사용 중입니다.`);
       fields.push('serial_number = ?'); values.push(input.serial_number);
@@ -190,6 +223,11 @@ export class SerialService {
     else if (input.add_ons !== undefined) { fields.push('modules = ?'); values.push(JSON.stringify(input.add_ons.map((a: AddOn) => a.name))); }
     if (input.notes !== undefined) { fields.push('notes = ?'); values.push(input.notes); }
     if (input.status !== undefined) { fields.push('status = ?'); values.push(input.status); }
+    if (input.renewal_stop_requested !== undefined) {
+      const nextStop = toSqliteBoolean(input.renewal_stop_requested);
+      fields.push('renewal_stop_requested = ?'); values.push(nextStop);
+      fields.push('stop_requested_at = ?'); values.push(nextStop ? getNowTimestampString() : null);
+    }
 
     if (fields.length > 0) {
       fields.push('updated_at = ?');
@@ -230,7 +268,7 @@ export class SerialService {
 
     this.logActivity(id, 'activated', 'manual',
       { status: ['not-activated', 'active'], expiry_date: [existing.expiry_date, expiryStr] },
-      `수동 활성화: expiry → ${expiryStr}`);
+      `Manual activation: expiry -> ${expiryStr}`);
     return this.getById(id);
   }
 
@@ -249,14 +287,14 @@ export class SerialService {
         'UPDATE serials SET renewal_stop_requested = 1, stop_requested_at = ?, updated_at = ? WHERE id = ?'
       ).run(now, now, id);
       this.logActivity(id, 'stop_requested', 'manual',
-        { renewal_stop_requested: [0, 1] }, '갱신 중단 요청',
+        { renewal_stop_requested: [0, 1] }, 'Renewal stop requested',
         trigger_id);
     } else {
       db.prepare(
         'UPDATE serials SET renewal_stop_requested = 0, stop_requested_at = NULL, updated_at = ? WHERE id = ?'
       ).run(now, id);
       this.logActivity(id, 'stop_cleared', 'manual',
-        { renewal_stop_requested: [1, 0] }, '갱신 중단 해제');
+        { renewal_stop_requested: [1, 0] }, 'Renewal stop request cleared');
     }
     return this.getById(id);
   }
@@ -307,7 +345,7 @@ export class SerialService {
     if (clearStopFlag && existing.renewal_stop_requested === 1) {
       renewDiff.renewal_stop_requested = [1, 0];
     }
-    this.logActivity(id, 'renewed', source, renewDiff, `만료일 갱신: ${existing.expiry_date} → ${newExpiry} (${source})`);
+    this.logActivity(id, 'renewed', source, renewDiff, `Expiry renewed: ${existing.expiry_date} -> ${newExpiry} (${source})`);
     return this.getById(id);
   }
 
@@ -347,7 +385,7 @@ export class SerialService {
 
       const renewDiff: Record<string, unknown> = { expiry_date: [existing.expiry_date, newExpiry] };
       if (existing.renewal_stop_requested) renewDiff.renewal_stop_requested = [1, 0];
-      this.logActivity(id, 'renewed', actor, renewDiff, `만료일 갱신: ${existing.expiry_date} → ${newExpiry}`);
+      this.logActivity(id, 'renewed', actor, renewDiff, `Expiry renewed: ${existing.expiry_date} -> ${newExpiry}`);
 
       db.exec('COMMIT');
       return this.getById(id);
@@ -365,7 +403,7 @@ export class SerialService {
     const now = getNowTimestampString();
     db.prepare("UPDATE serials SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now, id);
     this.logActivity(id, 'cancelled', 'manual',
-      { status: [existing.status, 'cancelled'] }, 'DB-only 취소');
+      { status: [existing.status, 'cancelled'] }, 'DB-only cancellation');
     return this.getById(id);
   }
 
@@ -404,7 +442,7 @@ export class SerialService {
     const now = getNowTimestampString();
     db.prepare('UPDATE serials SET modules = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(modules), now, id);
-    this.logActivity(id, 'addon_added', 'manual', {}, `모듈 추가: ${addon.name}`);
+    this.logActivity(id, 'addon_added', 'manual', {}, `Module added: ${addon.name}`);
     return this.getById(id);
   }
 
@@ -476,29 +514,52 @@ export class SerialService {
         try {
           const customerId = resolveCustomerId(s);
           const modulesJson = toModulesJson(s);
+          const existing = db.prepare('SELECT id FROM serials WHERE serial_number = ?')
+            .get(s.serial_number) as { id: number } | undefined;
 
-          db.prepare(
-            `INSERT INTO serials
-              (serial_number, customer_id, purchase_date, expiry_date, status,
-               engine_build, version, main_product, modules, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(serial_number) DO UPDATE SET
-               customer_id = excluded.customer_id,
-               purchase_date = excluded.purchase_date,
-               expiry_date = excluded.expiry_date,
-               engine_build = excluded.engine_build,
-               version = excluded.version,
-               main_product = excluded.main_product,
-               modules = excluded.modules,
-               notes = excluded.notes,
-               updated_at = excluded.updated_at`
-          ).run(
-            s.serial_number, customerId,
-            s.purchase_date || null, s.expiry_date || null,
-            s.status || 'active',
-            s.engine_build || '', s.version || '', s.main_product || '',
-            modulesJson, s.notes || '', now, now
-          );
+          if (existing) {
+            const fields = [
+              'customer_id = ?', 'purchase_date = ?', 'expiry_date = ?',
+              'engine_build = ?', 'version = ?', 'main_product = ?',
+              'modules = ?', 'notes = ?',
+            ];
+            const values: unknown[] = [
+              customerId, s.purchase_date || null, s.expiry_date || null,
+              s.engine_build || '', s.version || '', s.main_product || '',
+              modulesJson, s.notes || '',
+            ];
+
+            if (s.status !== undefined) {
+              fields.push('status = ?');
+              values.push(s.status);
+            }
+
+            if (s.renewal_stop_requested !== undefined) {
+              const stopRequested = toSqliteBoolean(s.renewal_stop_requested);
+              fields.push('renewal_stop_requested = ?', 'stop_requested_at = ?');
+              values.push(stopRequested, stopRequested ? now : null);
+            }
+
+            fields.push('updated_at = ?');
+            values.push(now, existing.id);
+            db.prepare(`UPDATE serials SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+          } else {
+            const stopRequested = toSqliteBoolean(s.renewal_stop_requested);
+            db.prepare(
+              `INSERT INTO serials
+                (serial_number, customer_id, purchase_date, expiry_date, status,
+                 engine_build, version, main_product, modules, notes, renewal_stop_requested,
+                 stop_requested_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).run(
+              s.serial_number, customerId,
+              s.purchase_date || null, s.expiry_date || null,
+              s.status || 'active',
+              s.engine_build || '', s.version || '', s.main_product || '',
+              modulesJson, s.notes || '', stopRequested,
+              stopRequested ? now : null, now, now
+            );
+          }
 
           const row = db.prepare('SELECT id FROM serials WHERE serial_number = ?')
             .get(s.serial_number) as { id: number };
@@ -513,7 +574,7 @@ export class SerialService {
 
     // logActivity는 트랜잭션 커밋 후 별도 실행 — upsert 성공/실패 결과와 독립
     for (const { id, serial_number } of importedIds) {
-      this.logActivity(id, 'bulk_imported', 'manual', {}, `벌크 임포트: ${serial_number}`);
+      this.logActivity(id, 'bulk_imported', 'manual', {}, `Bulk import: ${serial_number}`);
     }
 
     return { imported: importedIds.length, errors };

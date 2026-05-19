@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import SerialForm from '../components/SerialForm';
 import { useLang, useNav } from '../App';
 import { t } from '../i18n';
-import { api } from '../api';
+import { api } from '../client';
 
 interface Serial {
   id: number;
@@ -22,6 +22,7 @@ interface Serial {
 }
 
 type SortDir = 'asc' | 'desc';
+type SpecialFilter = 'expiring' | null;
 
 // ── SVG icons ──────────────────────────────────────────────────────────────────
 const SearchIcon = () => (
@@ -69,6 +70,7 @@ export default function Serials() {
   const [serials, setSerials]           = useState<Serial[]>([]);
   const [search, setSearch]             = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [specialFilter, setSpecialFilter] = useState<SpecialFilter>(null);
   const [showForm, setShowForm]         = useState(false);
   const [editingSerial, setEditingSerial] = useState<Serial | null>(null);
   const [detailSerial, setDetailSerial] = useState<Serial | null>(null);
@@ -89,18 +91,28 @@ export default function Serials() {
 
       if (params?.filter) {
         const filter = params.filter;
-        if (filter === 'active')        data = data.filter(s => s.status === 'active');
-        else if (filter === 'cancelled') data = data.filter(s => s.status === 'cancelled');
-        else if (filter === 'expired')   data = data.filter(s => s.status === 'expired');
-        else if (filter === 'not-activated') data = data.filter(s => s.status === 'not-activated');
-        else if (filter === 'expiring') {
-          const now         = new Date();
-          const todayStr    = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-          const lastDay     = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-          const endOfMonth  = lastDay.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-          data = data.filter(s => s.status === 'active' && s.expiry_date >= todayStr && s.expiry_date <= endOfMonth);
+        if (filter === 'active') {
+          setFilterStatus('active');
+          setSpecialFilter(null);
+        } else if (filter === 'cancelled') {
+          setFilterStatus('cancelled');
+          setSpecialFilter(null);
+        } else if (filter === 'expired') {
+          setFilterStatus('expired');
+          setSpecialFilter(null);
+        } else if (filter === 'not-activated') {
+          setFilterStatus('not-activated');
+          setSpecialFilter(null);
+        } else if (filter === 'expiring') {
+          setFilterStatus('all');
+          setSpecialFilter('expiring');
+        } else {
+          setFilterStatus('all');
+          setSpecialFilter(null);
         }
-        if (filter !== 'all') setFilterStatus(filter);
+      } else {
+        setFilterStatus('all');
+        setSpecialFilter(null);
       }
 
       setSerials(data);
@@ -113,6 +125,11 @@ export default function Serials() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const endOfMonth = lastDay.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
     return serials
       .filter(s => {
         if (q && !s.serial_number.toLowerCase().includes(q) &&
@@ -121,13 +138,16 @@ export default function Serials() {
                  !s.customer_email.toLowerCase().includes(q) &&
                  !s.customer_phone.toLowerCase().includes(q)) return false;
         if (filterStatus !== 'all' && s.status !== filterStatus) return false;
+        if (specialFilter === 'expiring') {
+          return s.status === 'active' && s.expiry_date >= todayStr && s.expiry_date <= endOfMonth;
+        }
         return true;
       })
       .sort((a: any, b: any) => {
         const va = a[sortBy] || '', vb = b[sortBy] || '';
         return sortDir === 'asc' ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
       });
-  }, [serials, search, filterStatus, sortBy, sortDir]);
+  }, [serials, search, filterStatus, specialFilter, sortBy, sortDir]);
 
   const handleSort = (col: string) => {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -175,6 +195,15 @@ export default function Serials() {
       loadSerials();
     };
     input.click();
+  };
+
+  const handleExport = async () => {
+    const result = await api.exportSerials(filtered as any[]) as any;
+    if (result.success) {
+      alert(result.filePath ? t(lang, 'export_done_path').replace('{path}', result.filePath) : t(lang, 'export_done'));
+    } else if (result.error) {
+      alert(t(lang, 'export_failed').replace('{error}', result.error));
+    }
   };
 
   const handleFormSave = async (input: any) => {
@@ -291,6 +320,9 @@ export default function Serials() {
           <button className="btn btn-secondary btn-sm" onClick={handleBulkImport}>
             {t(lang, 'btn_excel_upload')}
           </button>
+          <button className="btn btn-secondary btn-sm" onClick={handleExport} disabled={filtered.length === 0}>
+            {t(lang, 'btn_serial_db_download')}
+          </button>
           <button className="btn btn-primary btn-sm" onClick={() => { setEditingSerial(null); setShowForm(true); }}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <PlusIcon /> {t(lang, 'btn_new_register')}
@@ -320,15 +352,15 @@ export default function Serials() {
         </div>
         <select
           value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value)}
-          style={{ ...inputStyle, width: 'auto', color: filterStatus !== 'all' ? 'var(--accent)' : 'var(--text2)' }}
+          onChange={e => { setFilterStatus(e.target.value); setSpecialFilter(null); }}
+          style={{ ...inputStyle, width: 'auto', color: filterStatus !== 'all' || specialFilter ? 'var(--accent)' : 'var(--text2)' }}
         >
           <option value="all">{t(lang, 'status_all')}</option>
           {STATUSES.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
-        {(search || filterStatus !== 'all') && (
+        {(search || filterStatus !== 'all' || specialFilter) && (
           <button
-            onClick={() => { setSearch(''); setFilterStatus('all'); loadSerials(); }}
+            onClick={() => { setSearch(''); setFilterStatus('all'); setSpecialFilter(null); }}
             className="btn btn-ghost btn-sm"
           >
             {t(lang, 'reset')}

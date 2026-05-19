@@ -14,7 +14,11 @@ const os = require('os');
 // ── Resolve DB path ────────────────────────────────────────────────────────
 const DB_PATH =
   process.env.DB_PATH ||
-  path.join(os.homedir(), 'AppData', 'Roaming', 'Exocad Serial Manager', 'exocad.db');
+  path.join(
+    process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+    'Exocad Serial Manager',
+    'exocad.db'
+  );
 
 console.log('[seed] Using DB:', DB_PATH);
 

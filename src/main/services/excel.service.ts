@@ -1,5 +1,36 @@
 import * as XLSX from 'xlsx';
 import type { SerialInput, SerialWithCustomer, ExcelSerialRow } from '../../shared/types';
+import { getDateString, getTodayDateString } from '../utils/date-utils';
+
+const SERIAL_EXCEL_HEADERS = [
+  'serial_number', 'customer_name', 'customer_email', 'customer_phone',
+  'customer_address', 'dealer', 'customer_manager', 'purchase_date',
+  'expiry_date', 'status', 'engine_build', 'version', 'main_product',
+  'modules', 'renewal_stop_requested', 'notes',
+];
+
+const SERIAL_EXCEL_LABELS = [
+  '시리얼 넘버 (필수)', '고객명', '이메일', '전화번호',
+  '주소', '딜러', '담당자', '구매일 (YYYY-MM-DD)',
+  '만료일 (YYYY-MM-DD)', '상태', '엔진빌드', '버전', '메인 제품',
+  '모듈 (쉼표로 구분)', '갱신 중단 요청 (Y/N)', '비고',
+];
+
+const SERIAL_EXCEL_SAMPLE = [
+  'EXO-2024-001', '홍길동 치과', 'hong@example.com', '010-1234-5678',
+  '서울시 강남구 테헤란로 123', 'Dealer KR', '김담당', '2024-01-15',
+  '2025-01-15', 'active', '4.0.1', '24.01', 'DentalCAD',
+  'ChairsideCAD, exoplan', 'N', '샘플 데이터',
+];
+
+const SERIAL_EXCEL_COLS = [
+  { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 16 },
+  { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 16 },
+  { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+  { wch: 18 }, { wch: 28 }, { wch: 18 }, { wch: 24 },
+];
+
+const VALID_SERIAL_STATUSES = new Set(['active', 'cancelled', 'expired', 'not-activated', 'broken']);
 
 export class ExcelService {
   parseExcelFile(filePath: string): { serials: SerialInput[]; errors: string[] } {
@@ -34,22 +65,7 @@ export class ExcelService {
           continue;
         }
 
-        let addOns: { name: string; added_date: string }[] = [];
-        if (row.add_ons) {
-          try {
-            const addOnsVal = String(row.add_ons).trim();
-            if (addOnsVal.startsWith('[')) {
-              addOns = JSON.parse(addOnsVal);
-            } else if (addOnsVal !== '') {
-              addOns = addOnsVal.split(/[,\/]/).map((name: string) => ({
-                name: name.trim(),
-                added_date: new Date().toISOString().slice(0, 10),
-              }));
-            }
-          } catch {
-            errors.push(`행 ${rowNum}: add_ons 파싱 실패`);
-          }
-        }
+        const modules = this.parseModules(row.modules ?? row.add_ons, rowNum, errors);
 
         serials.push({
           serial_number: String(row.serial_number).trim(),
@@ -58,11 +74,15 @@ export class ExcelService {
           customer_address: String(row.customer_address || '').trim(),
           customer_phone: String(row.customer_phone || '').trim(),
           customer_manager: String(row.customer_manager || '').trim(),
-          purchase_date: this.normalizeDate(row.purchase_date) || new Date().toISOString().slice(0, 10),
+          dealer: String(row.dealer || '').trim(),
+          purchase_date: this.normalizeDate(row.purchase_date) || getTodayDateString(),
           expiry_date: this.normalizeDate(row.expiry_date) || '',
+          status: this.normalizeStatus(row.status),
           engine_build: String(row.engine_build || '').trim(),
           version: String(row.version || '').trim(),
-          add_ons: addOns,
+          main_product: String(row.main_product || '').trim(),
+          modules,
+          renewal_stop_requested: this.normalizeBoolean(row.renewal_stop_requested),
           notes: String(row.notes || '').trim(),
         });
       }
@@ -101,17 +121,7 @@ export class ExcelService {
           errors.push(`행 ${rowNum}: serial_number 누락`);
           continue;
         }
-        let addOns: { name: string; added_date: string }[] = [];
-        if (row.add_ons) {
-          try {
-            const addOnsVal = String(row.add_ons).trim();
-            if (addOnsVal.startsWith('[')) {
-              addOns = JSON.parse(addOnsVal);
-            } else if (addOnsVal !== '') {
-              addOns = addOnsVal.split(/[,\/]/).map(n => ({ name: n.trim(), added_date: new Date().toISOString().slice(0, 10) }));
-            }
-          } catch { errors.push(`행 ${rowNum}: add_ons 파싱 실패`); }
-        }
+        const modules = this.parseModules(row.modules ?? row.add_ons, rowNum, errors);
         serials.push({
           serial_number: String(row.serial_number).trim(),
           customer_name: String(row.customer_name || '').trim(),
@@ -119,11 +129,15 @@ export class ExcelService {
           customer_address: String(row.customer_address || '').trim(),
           customer_phone: String(row.customer_phone || '').trim(),
           customer_manager: String(row.customer_manager || '').trim(),
-          purchase_date: this.normalizeDate(row.purchase_date) || new Date().toISOString().slice(0, 10),
+          dealer: String(row.dealer || '').trim(),
+          purchase_date: this.normalizeDate(row.purchase_date) || getTodayDateString(),
           expiry_date: this.normalizeDate(row.expiry_date) || '',
+          status: this.normalizeStatus(row.status),
           engine_build: String(row.engine_build || '').trim(),
           version: String(row.version || '').trim(),
-          add_ons: addOns,
+          main_product: String(row.main_product || '').trim(),
+          modules,
+          renewal_stop_requested: this.normalizeBoolean(row.renewal_stop_requested),
           notes: String(row.notes || '').trim(),
         });
       }
@@ -135,50 +149,47 @@ export class ExcelService {
 
   generateTemplate(outputPath: string): void {
     const wb = XLSX.utils.book_new();
-    const headerRow = ['serial_number', 'customer_name', 'customer_email', 'customer_address', 'customer_phone', 'customer_manager', 'purchase_date', 'expiry_date', 'engine_build', 'version', 'add_ons', 'notes'];
-    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
-    const sampleRow = ['EXO-2024-001', '홍길동 치과', 'hong@example.com', '서울시 강남구 테헤란로 123', '010-1234-5678', '김담당', '2024-01-15', '2025-01-15', '4.0.1', '24.01', 'DentalCAD, ChairsideCAD', '샘플 데이터'];
-    const ws = XLSX.utils.aoa_to_sheet([headerRow, labelRow, sampleRow]);
-    ws['!cols'] = [
-      { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 30 }, { wch: 16 }, { wch: 12 },
-      { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 24 }, { wch: 20 },
-    ];
+    const ws = XLSX.utils.aoa_to_sheet([SERIAL_EXCEL_HEADERS, SERIAL_EXCEL_LABELS, SERIAL_EXCEL_SAMPLE]);
+    ws['!cols'] = SERIAL_EXCEL_COLS;
     XLSX.utils.book_append_sheet(wb, ws, 'Serials');
     XLSX.writeFile(wb, outputPath);
   }
 
   exportSerials(serials: SerialWithCustomer[], outputPath: string): void {
     const wb = XLSX.utils.book_new();
-    const headers = [
-      'serial_number', 'status', 'customer_name', 'customer_email',
-      'customer_phone', 'customer_address', 'sales_manager', 'dealer',
-      'purchase_date', 'expiry_date', 'main_product', 'engine_build',
-      'version', 'modules', 'renewal_stop', 'notes',
-    ];
-    const rows = serials.map(s => [
-      s.serial_number,
-      s.status,
-      s.customer?.name ?? '',
-      s.customer?.email ?? '',
-      s.customer?.phone ?? '',
-      s.customer?.address ?? '',
-      s.customer?.sales_manager ?? '',
-      s.customer?.dealer ?? '',
-      s.purchase_date ?? '',
-      s.expiry_date ?? '',
-      s.main_product ?? '',
-      s.engine_build ?? '',
-      s.version ?? '',
-      (() => { try { return (JSON.parse(s.modules || '[]') as string[]).join(', '); } catch { return ''; } })(),
-      s.renewal_stop_requested ? 'Y' : '',
-      s.notes ?? '',
-    ]);
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = [
-      { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 16 },
-      { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
-      { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 28 }, { wch: 10 }, { wch: 20 },
-    ];
+    const rows = serials.map((s: any) => {
+      const modules = (() => {
+        const raw = s.modules ?? s.add_ons ?? '[]';
+        try {
+          const parsed = JSON.parse(raw || '[]');
+          if (!Array.isArray(parsed)) return '';
+          return parsed.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ');
+        } catch {
+          return typeof raw === 'string' ? raw : '';
+        }
+      })();
+
+      return [
+        s.serial_number,
+        s.customer?.name ?? s.customer_name ?? '',
+        s.customer?.email ?? s.customer_email ?? '',
+        s.customer?.phone ?? s.customer_phone ?? '',
+        s.customer?.address ?? s.customer_address ?? '',
+        s.customer?.dealer ?? s.dealer ?? '',
+        s.customer?.sales_manager ?? s.customer_manager ?? '',
+        s.purchase_date ?? '',
+        s.expiry_date ?? '',
+        s.status ?? '',
+        s.engine_build ?? '',
+        s.version ?? '',
+        s.main_product ?? '',
+        modules,
+        s.renewal_stop_requested ? 'Y' : 'N',
+        s.notes ?? '',
+      ];
+    });
+    const ws = XLSX.utils.aoa_to_sheet([SERIAL_EXCEL_HEADERS, ...rows]);
+    ws['!cols'] = SERIAL_EXCEL_COLS;
     XLSX.utils.book_append_sheet(wb, ws, 'Serials');
     XLSX.writeFile(wb, outputPath);
   }
@@ -186,10 +197,8 @@ export class ExcelService {
   /** 템플릿을 Buffer로 반환 — 웹서버 HTTP 스트리밍용 */
   generateTemplateBuffer(): Buffer {
     const wb = XLSX.utils.book_new();
-    const headerRow = ['serial_number', 'customer_name', 'customer_email', 'customer_address', 'customer_phone', 'customer_manager', 'purchase_date', 'expiry_date', 'engine_build', 'version', 'add_ons', 'notes'];
-    const labelRow = ['시리얼 넘버 (필수)', '고객명', '이메일', '주소', '전화번호', '담당자', '구매일 (YYYY-MM-DD)', '만료일 (YYYY-MM-DD)', '엔진빌드', '버전', 'Add-ons (쉼표로 구분)', '비고'];
-    const sampleRow = ['EXO-2024-001', '홍길동 치과', 'hong@example.com', '서울시 강남구 테헤란로 123', '010-1234-5678', '김담당', '2024-01-15', '2025-01-15', '4.0.1', '24.01', 'DentalCAD, ChairsideCAD', '샘플 데이터'];
-    const ws = XLSX.utils.aoa_to_sheet([headerRow, labelRow, sampleRow]);
+    const ws = XLSX.utils.aoa_to_sheet([SERIAL_EXCEL_HEADERS, SERIAL_EXCEL_LABELS, SERIAL_EXCEL_SAMPLE]);
+    ws['!cols'] = SERIAL_EXCEL_COLS;
     XLSX.utils.book_append_sheet(wb, ws, 'Serials');
     return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
   }
@@ -213,7 +222,7 @@ export class ExcelService {
 
     try {
       const d = new Date(str);
-      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      if (!isNaN(d.getTime())) return getDateString(d);
     } catch { /* ignore */ }
 
     return null;
@@ -258,12 +267,44 @@ export class ExcelService {
       customer_address: getVal(['customer_address', '주소', 'Address', 'address', '納品先']),
       customer_phone: getVal(['customer_phone', '전화번호', 'Phone', 'phone', '연락처']),
       customer_manager: getVal(['customer_manager', '담당자', 'Manager', 'manager']),
+      dealer: getVal(['dealer', '딜러', 'Dealer']),
       purchase_date: getVal(['purchase_date', '구매일 (YYYY-MM-DD)', '구매일', 'Purchase Date', 'purchase', '구매날짜', '入荷일', '入荷日']),
       engine_build: getVal(['engine_build', '엔진빌드', 'Engine Build', 'engine']),
       version: getVal(['version', '버전', 'Version', '品名']),
+      main_product: getVal(['main_product', '메인 제품', 'Main Product', 'main product', '제품명']),
+      modules: getVal(['modules', '모듈 (쉼표로 구분)', '모듈', 'Modules', 'Module']),
       add_ons: getVal(['add_ons', 'Add-ons (쉼표로 구분)', 'Add-ons', 'addons', '애드온']),
+      status: getVal(['status', '상태', 'Status']),
+      renewal_stop_requested: getVal(['renewal_stop_requested', '갱신 중단 요청 (Y/N)', '갱신 중단 요청', 'Renewal Stop Requested', 'Stop']),
       notes: getVal(['notes', '비고', 'Notes', '메모']),
     };
+  }
+
+  private parseModules(value: any, rowNum: number, errors: string[]): string[] {
+    const raw = String(value || '').trim();
+    if (!raw) return [];
+    try {
+      if (raw.startsWith('[')) {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean);
+      }
+      return raw.split(/[,\/]/).map(name => name.trim()).filter(Boolean);
+    } catch {
+      errors.push(`행 ${rowNum}: modules 파싱 실패`);
+      return [];
+    }
+  }
+
+  private normalizeStatus(value: any): SerialInput['status'] | undefined {
+    const status = String(value || '').trim();
+    return VALID_SERIAL_STATUSES.has(status) ? status as SerialInput['status'] : undefined;
+  }
+
+  private normalizeBoolean(value: any): boolean | undefined {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return undefined;
+    return ['1', 'true', 'y', 'yes', '예', '네', '중단', 'stop'].includes(normalized);
   }
 
 }

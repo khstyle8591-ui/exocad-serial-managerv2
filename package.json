@@ -22,7 +22,7 @@
     "start": "electron dist/main/main/index.js",
     "package": "npm run build && node scripts/package.js",
     "dist": "npm run build && electron-builder",
-    "postinstall": "node -e \"try{require('@electron/rebuild').rebuild()}catch(e){}\"",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "dev:server": "cross-env HTTP_PORT=3001 node dist/main/server.js",
     "dev:web": "concurrently \"npm run dev:server\" \"npm run dev:renderer\""
   },

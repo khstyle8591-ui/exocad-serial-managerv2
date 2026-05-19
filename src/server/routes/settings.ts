@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getSettings, saveSettings } from '../../main/settings';
-import { restartPreExpiryTask, runExpiryNoticeDryRun, startDailyReportTasks, startExpiryNoticeTask, startMailCheck } from '../../main/scheduler';
-import { startPollingScheduler } from '../../main/services/order.service';
+import { runExpiryNoticeDryRun } from '../../main/scheduler';
 import { notificationService } from '../../main/services/notification.service';
-import { emailMonitorService } from '../../main/services/email-monitor.service';
+import { testMailConnection } from '../../main/services/mail/inbound.service';
 import { runStopLifecycleNoticeDryRun } from '../../main/services/mail/lifecycle-notice.service';
+import { refreshSchedulersForSettingsChange } from '../../main/services/scheduler-refresh.service';
 import type { AppSettings } from '../../shared/types';
 
 const router = Router();
@@ -16,13 +16,11 @@ router.get('/', (_req: Request, res: Response) => {
 
 // POST /api/settings
 router.post('/', (req: Request, res: Response) => {
+    const beforeSettings = getSettings(true);
     saveSettings(req.body as Partial<AppSettings>);
-    restartPreExpiryTask();
-    startMailCheck();
-    startDailyReportTasks();
-    startExpiryNoticeTask();
-    startPollingScheduler();
-    res.json(getSettings());
+    const afterSettings = getSettings(true);
+    refreshSchedulersForSettingsChange(beforeSettings, afterSettings);
+    res.json(afterSettings);
 });
 
 // POST /api/settings/test-smtp
@@ -45,7 +43,7 @@ router.post('/test-slack-related', async (req: Request, res: Response) => {
 
 // POST /api/settings/test-mail-connection
 router.post('/test-mail-connection', async (req: Request, res: Response) => {
-    const result = await emailMonitorService.testMailConnection(req.body);
+    const result = await testMailConnection(req.body);
     res.json(result);
 });
 

@@ -1,7 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import type { Customer, SerialWithCustomer } from '../../shared/types';
+import type { Customer, CustomerInput, SerialWithCustomer } from '../../shared/types';
+
+const EMPTY_CUSTOMER: CustomerInput = {
+  name: '',
+  email: '',
+  phone: '',
+  address: '',
+  dealer: '',
+  sales_manager: '',
+  notes: '',
+};
 
 export default function Customers() {
   const { lang } = useLang();
@@ -10,6 +20,10 @@ export default function Customers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch]   = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState<CustomerInput>(EMPTY_CUSTOMER);
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -50,6 +64,50 @@ export default function Customers() {
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  const setField = <K extends keyof CustomerInput>(key: K, value: CustomerInput[K]) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const openCreate = () => {
+    setForm(EMPTY_CUSTOMER);
+    setFormError('');
+    setShowCreate(true);
+  };
+
+  const closeCreate = () => {
+    if (saving) return;
+    setShowCreate(false);
+    setFormError('');
+  };
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) {
+      setFormError(t(lang, 'customer_name_required'));
+      return;
+    }
+
+    setSaving(true);
+    setFormError('');
+    try {
+      const created = await window.electronAPI.createCustomer({
+        name: form.name.trim(),
+        email: form.email?.trim() ?? '',
+        phone: form.phone?.trim() ?? '',
+        address: form.address?.trim() ?? '',
+        dealer: form.dealer?.trim() ?? '',
+        sales_manager: form.sales_manager?.trim() ?? '',
+        notes: form.notes?.trim() ?? '',
+      });
+      setCustomers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setShowCreate(false);
+      setForm(EMPTY_CUSTOMER);
+    } catch (err: any) {
+      setFormError(err?.message ?? t(lang, 'save_fail'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'loading')}</div>;
   }
@@ -62,26 +120,29 @@ export default function Customers() {
           <div className="page-title">{t(lang, 'nav_customers')}</div>
           <div className="page-subtitle">{t(lang, 'page_subtitle_customers').replace('{n}', String(customers.length))}</div>
         </div>
-        <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text3)' }}>
-            <svg width={13} height={13} viewBox="0 0 16 16" fill="none">
-              <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
-              <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-            </svg>
-          </span>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={t(lang, 'customers_search_placeholder')}
-            style={{
-              background: 'var(--bg3)', border: '1px solid var(--border2)',
-              borderRadius: 7, padding: '7px 10px 7px 30px',
-              color: 'var(--text)', fontSize: 12.5, outline: 'none',
-              width: 200,
-            }}
-            onFocus={e => (e.target as HTMLElement).style.borderColor = 'var(--accent)'}
-            onBlur={e  => (e.target as HTMLElement).style.borderColor = 'var(--border2)'}
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text3)' }}>
+              <svg width={13} height={13} viewBox="0 0 16 16" fill="none">
+                <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={t(lang, 'customers_search_placeholder')}
+              style={{
+                background: 'var(--bg3)', border: '1px solid var(--border2)',
+                borderRadius: 7, padding: '7px 10px 7px 30px',
+                color: 'var(--text)', fontSize: 12.5, outline: 'none',
+                width: 200,
+              }}
+              onFocus={e => (e.target as HTMLElement).style.borderColor = 'var(--accent)'}
+              onBlur={e  => (e.target as HTMLElement).style.borderColor = 'var(--border2)'}
+            />
+          </div>
+          <button onClick={openCreate} style={primaryBtn}>{t(lang, 'customer_add')}</button>
         </div>
       </div>
 
@@ -169,6 +230,136 @@ export default function Customers() {
           {t(lang, 'no_data')}
         </div>
       )}
+
+      {showCreate && (
+        <div style={overlay}>
+          <div style={modal}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>
+                {t(lang, 'customer_add_title')}
+              </h2>
+              <button onClick={closeCreate} disabled={saving} style={closeBtn}>✕</button>
+            </div>
+
+            {formError && <div style={errorBox}>{formError}</div>}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={labelStyle}>{t(lang, 'label_customer_name')} <span style={{ color: '#fc8181' }}>*</span></label>
+                <input value={form.name} onChange={e => setField('name', e.target.value)} style={inputStyle} autoFocus />
+              </div>
+              <div>
+                <label style={labelStyle}>{t(lang, 'label_email')}</label>
+                <input value={form.email ?? ''} onChange={e => setField('email', e.target.value)} style={inputStyle} placeholder="example@email.com" />
+              </div>
+              <div>
+                <label style={labelStyle}>{t(lang, 'label_phone')}</label>
+                <input value={form.phone ?? ''} onChange={e => setField('phone', e.target.value)} style={inputStyle} placeholder="010-0000-0000" />
+              </div>
+              <div>
+                <label style={labelStyle}>{t(lang, 'label_dealer')}</label>
+                <input value={form.dealer ?? ''} onChange={e => setField('dealer', e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>{t(lang, 'label_manager')}</label>
+                <input value={form.sales_manager ?? ''} onChange={e => setField('sales_manager', e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={labelStyle}>{t(lang, 'label_address')}</label>
+                <input value={form.address ?? ''} onChange={e => setField('address', e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={labelStyle}>{t(lang, 'label_notes')}</label>
+                <textarea value={form.notes ?? ''} onChange={e => setField('notes', e.target.value)} style={{ ...inputStyle, height: 72, resize: 'vertical' }} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <button onClick={closeCreate} disabled={saving} style={secondaryBtn}>{t(lang, 'cancel')}</button>
+              <button onClick={handleCreate} disabled={saving} style={primaryBtn}>
+                {saving ? t(lang, 'saving') : t(lang, 'save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const primaryBtn: React.CSSProperties = {
+  padding: '7px 14px',
+  borderRadius: 7,
+  background: 'var(--accent)',
+  color: '#0d1117',
+  border: 'none',
+  cursor: 'pointer',
+  fontWeight: 600,
+  fontSize: 12.5,
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: '8px 18px',
+  borderRadius: 6,
+  background: 'var(--bg3)',
+  border: '1px solid var(--border2)',
+  cursor: 'pointer',
+  fontSize: 13,
+  color: 'var(--text)',
+};
+
+const overlay: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(0,0,0,0.65)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 1000,
+};
+
+const modal: React.CSSProperties = {
+  background: 'var(--bg2)',
+  borderRadius: 12,
+  width: 560,
+  padding: '22px 26px',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+  border: '1px solid var(--border2)',
+};
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: 12,
+  fontWeight: 600,
+  color: 'var(--text2)',
+  marginBottom: 5,
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '7px 10px',
+  border: '1px solid var(--border2)',
+  borderRadius: 6,
+  fontSize: 13,
+  boxSizing: 'border-box',
+  background: 'var(--bg3)',
+  color: 'var(--text)',
+};
+
+const errorBox: React.CSSProperties = {
+  background: 'rgba(220,38,38,0.15)',
+  border: '1px solid rgba(220,38,38,0.4)',
+  borderRadius: 6,
+  padding: '8px 12px',
+  color: '#fc8181',
+  fontSize: 13,
+  marginBottom: 12,
+};
+
+const closeBtn: React.CSSProperties = {
+  border: 'none',
+  background: 'none',
+  fontSize: 18,
+  cursor: 'pointer',
+  color: 'var(--text3)',
+};

@@ -25,11 +25,11 @@ export function cleanOldScreenshots(keepDays = 30): void {
       const fullPath = path.join(dir, file);
       if (fs.statSync(fullPath).mtimeMs < cutoff) {
         fs.unlinkSync(fullPath);
-        logger.info(`[screenshot] 오래된 파일 삭제: ${file}`);
+        logger.info(`[screenshot] deleted old file: ${file}`);
       }
     }
   } catch (err: any) {
-    logger.warn(`[screenshot] 정리 중 오류: ${err.message}`);
+    logger.warn(`[screenshot] cleanup error: ${err.message}`);
   }
 }
 
@@ -106,7 +106,7 @@ export class CancelService {
         await page.goto(settings.exocad_site_url, { waitUntil: 'domcontentloaded' });
         // networkidle을 추가 대기하여 React 컴포넌트 마운트 및 API 응답 완료 보장
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
-          logger.warn('networkidle 타임아웃 — searchSerial에서 직접 element 대기로 진행');
+          logger.warn('networkidle timeout; continuing with direct element wait in searchSerial');
         });
       }
 
@@ -115,7 +115,7 @@ export class CancelService {
 
       // ─── 4단계: 제품명 읽기 (cancel 버튼 결정용) ───
       const productName = await this.getProductNameFromRow(page);
-      logger.info(`제품명 감지: "${productName}"`);
+      logger.info(`Product name detected: "${productName}"`);
 
       // ─── 5단계: 옵션 버튼(⋮) 클릭 → 드롭다운 열기 ───
       await this.clickOptionButton(page, serialNumber, settings);
@@ -130,7 +130,7 @@ export class CancelService {
       const verification = await this.verifyCancelResult(page, serialNumber);
       const screenshotPath = await this.captureResultScreenshot(page, serialNumber);
 
-      logger.info(`Subscription cancelled 완료: ${serialNumber} (verified: ${verification.verified}, status: ${verification.status})`);
+      logger.info(`Subscription cancellation completed: ${serialNumber} (verified: ${verification.verified}, status: ${verification.status})`);
       return {
         serial_number: serialNumber,
         success: true,
@@ -142,7 +142,7 @@ export class CancelService {
     } catch (err: any) {
       // 로그인 세션 만료 또는 페이지 로드 실패 대응
       const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
-      logger.error(`Cancel 실패 [${serialNumber}]: ${err.message}`);
+      logger.error(`Cancel failed [${serialNumber}]: ${err.message}`);
       logger.warn(`\n (URL: ${currentUrl})`);
 
       // 명시적으로 로그인 페이지에 있는 경우만 세션 초기화
@@ -153,7 +153,7 @@ export class CancelService {
         currentUrl.includes('signin') ||
         (currentUrl && !currentUrl.includes('exocad.com'))
       ) {
-        logger.warn(`세션 유효하지 않음 감지 → isLoggedIn = false 설정`);
+        logger.warn('Invalid session detected; setting isLoggedIn=false');
         this.isLoggedIn = false;
         // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
         if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
@@ -175,7 +175,7 @@ export class CancelService {
   // 필드: 이메일 + 비밀번호 → "Log in" 버튼 클릭
   // ============================================================
   private async login(page: Page, settings: any): Promise<void> {
-    logger.info('Exocad 사이트 로그인 시작');
+    logger.info('Exocad site login started');
 
     // domcontentloaded로 을못하지 않게 진입 (스킠다론 테스트와 동일 방식)
     await page.goto(settings.exocad_login_url, { waitUntil: 'domcontentloaded' });
@@ -219,7 +219,7 @@ export class CancelService {
     ).first();
     await loginButton.waitFor({ state: 'visible', timeout: 5000 });
     await loginButton.click();
-    logger.info('[login] 로그인 버튼 클릭 → SSO 리다이렉트 대기...');
+    logger.info('[login] login button clicked; waiting for SSO redirect...');
 
     // ── SSO 리다이렉트 완료 대기 ────────────────────────────────────────────
     // networkidle은 SSO 리다이렉트 중 도달 불가능 → 30초 타임아웃 발생
@@ -229,20 +229,20 @@ export class CancelService {
       (url) => !url.href.includes('myaccount-us.aligntech.com') && !url.href.includes('/u/login'),
       { timeout: 45000 }
     ).catch(async () => {
-      logger.warn('[login] waitForURL 타임아웃 — 10초 추가 대기');
+      logger.warn('[login] waitForURL timeout; waiting 10 seconds more');
       await page.waitForTimeout(10000);
     });
     await page.waitForTimeout(3000);
 
     // 로그인 성공 여부 확인
     const currentUrl = page.url();
-    logger.info(`[login] 현재 URL: ${currentUrl}`);
+    logger.info(`[login] current URL: ${currentUrl}`);
     if (currentUrl.includes('/u/login') || currentUrl.includes('signin')) {
       throw new Error('로그인 실패: 이메일 또는 비밀번호를 확인하세요');
     }
 
     this.isLoggedIn = true;
-    logger.info(`로그인 성공 (현재 URL: ${currentUrl})`);
+    logger.info(`Login succeeded (current URL: ${currentUrl})`);
   }
 
   // ============================================================
@@ -251,7 +251,7 @@ export class CancelService {
   // 동작: 시리얼 넘버 입력 → Enter
   // ============================================================
   private async searchSerial(page: Page, serialNumber: string): Promise<void> {
-    logger.info(`시리얼 검색 시작: ${serialNumber}`);
+    logger.info(`Serial search started: ${serialNumber}`);
 
     // ── Step 1: search-input이 DOM에 등장할 때까지 대기 ─────────────────────
     // React SPA는 JS 실행 → 컴포넌트 마운트 → data fetch 완료 후 input이 렌더됨.
@@ -259,10 +259,10 @@ export class CancelService {
     const searchInput = page.locator('[data-testid="search-input"]').first();
     try {
       await searchInput.waitFor({ state: 'visible', timeout: 40000 });
-      logger.info(`[searchSerial] search-input 감지 완료`);
+      logger.info('[searchSerial] search-input detected');
     } catch (err: any) {
       const url = page.url();
-      logger.error(`[searchSerial] search-input 대기 타임아웃 (현재 URL: ${url})`);
+      logger.error(`[searchSerial] search-input wait timeout (current URL: ${url})`);
       if (url.includes('login') || url.includes('aligntech.com')) {
         this.isLoggedIn = false;
         throw new Error('로그인 세션이 만료되었습니다. 다시 로그인 절차가 필요합니다.');
@@ -291,7 +291,7 @@ export class CancelService {
     // ── Step 5: fill() 결과 검증 → 불일치 시 React nativeInputValueSetter fallback ──
     let currentValue = await searchInput.inputValue().catch(() => '');
     if (currentValue !== serialNumber) {
-      logger.warn(`[searchSerial] fill() 불일치 (got: "${currentValue}") → pressSequentially 시도`);
+      logger.warn(`[searchSerial] fill() mismatch (got: "${currentValue}") -> trying pressSequentially`);
       await searchInput.click({ clickCount: 3 });
       await page.waitForTimeout(200);
       await page.keyboard.press('Delete');
@@ -302,7 +302,7 @@ export class CancelService {
       // pressSequentially 후에도 불일치면 JS nativeInputValueSetter로 강제 입력
       currentValue = await searchInput.inputValue().catch(() => '');
       if (currentValue !== serialNumber) {
-        logger.warn(`[searchSerial] pressSequentially도 불일치 → JS nativeInputValueSetter fallback`);
+        logger.warn('[searchSerial] pressSequentially mismatch -> JS nativeInputValueSetter fallback');
         await page.evaluate((args: { selector: string; value: string }) => {
           const el = document.querySelector(args.selector) as HTMLInputElement | null;
           if (!el) return;
@@ -323,22 +323,22 @@ export class CancelService {
 
         currentValue = await searchInput.inputValue().catch(() => '');
         if (currentValue !== serialNumber) {
-          logger.error(`[searchSerial] 모든 입력 방법 실패 — 현재 값: "${currentValue}"`);
+          logger.error(`[searchSerial] all input methods failed; current value: "${currentValue}"`);
           throw new Error(`search-input에 시리얼 번호 입력 실패 (got: "${currentValue}")`);
         } else {
-          logger.info(`[searchSerial] JS nativeInputValueSetter 성공: "${currentValue}"`);
+          logger.info(`[searchSerial] JS nativeInputValueSetter succeeded: "${currentValue}"`);
         }
       } else {
-        logger.info(`[searchSerial] pressSequentially 성공: "${currentValue}"`);
+        logger.info(`[searchSerial] pressSequentially succeeded: "${currentValue}"`);
       }
     } else {
-      logger.info(`[searchSerial] fill() 성공: "${currentValue}"`);
+      logger.info(`[searchSerial] fill() succeeded: "${currentValue}"`);
     }
 
     // ── Step 6: Enter로 검색 실행 ───────────────────────────────────────────
     await searchInput.press('Enter');
     await page.keyboard.press('Enter'); // 확실한 트리거를 위해 직접 Enter 키 입력 추가
-    logger.info(`[searchSerial] Enter 입력 완료 → 검색 결과 대기`);
+    logger.info('[searchSerial] Enter pressed; waiting for search results');
 
     // ── Step 7: 검색 결과 대기 ──────────────────────────────────────────────
     // networkidle 대신 실제 결과 row가 DOM에 나타날 때까지 대기.
@@ -348,15 +348,15 @@ export class CancelService {
         'tbody tr, [data-testid="menu-button"], [role="row"]',
         { timeout: 20000 }
       );
-      logger.info(`[searchSerial] 검색 결과 row 감지 완료`);
+      logger.info('[searchSerial] search result row detected');
     } catch {
       // 결과가 없을 수도 있으므로 fallback으로 네트워크 안정화 대기
-      logger.warn(`[searchSerial] 결과 row 감지 실패 → networkidle fallback 대기`);
+      logger.warn('[searchSerial] result row not detected -> waiting for networkidle fallback');
       await page.waitForLoadState('networkidle').catch(() => { });
       await page.waitForTimeout(2000);
     }
 
-    logger.info(`시리얼 검색 완료: ${serialNumber}`);
+    logger.info(`Serial search completed: ${serialNumber}`);
   }
 
   // ============================================================
@@ -370,7 +370,7 @@ export class CancelService {
   //   B. 비어있으면: CSS 클래스 자동 감지 (기존 동작, 하위 호환)
   // ============================================================
   private async clickOptionButton(page: Page, serialNumber: string, settings: any): Promise<void> {
-    logger.info(`옵션 버튼 클릭: ${serialNumber}`);
+    logger.info(`Clicking option button: ${serialNumber}`);
 
     // ── 1순위: data-testid="menu-button" (확인된 Exocad 사이트 HTML) ──────────
     // 시리얼 번호가 있는 행(tr 또는 div[role="row"])에서 menu-button을 찾음
@@ -385,7 +385,7 @@ export class CancelService {
 
     // ── 2순위: 검색 결과가 단일 행이면 페이지 내 첫 번째 menu-button 사용 ──────
     if (!found) {
-      logger.info('행 기반 탐색 실패 → 페이지 내 첫 번째 menu-button 시도');
+      logger.info('Row-based lookup failed -> trying first menu-button on page');
       optionButton = page.locator('[data-testid="menu-button"]').first();
       found = await optionButton.isVisible({ timeout: 3000 }).catch(() => false);
     }
@@ -394,7 +394,7 @@ export class CancelService {
     if (!found) {
       const optionButtonText = (settings.cancel_option_button_text || '').trim();
       if (optionButtonText) {
-        logger.info(`menu-button 없음 → aria-label 탐색 ("${optionButtonText}")`);
+        logger.info(`menu-button not found -> trying aria-label lookup ("${optionButtonText}")`);
         optionButton = page.locator(
           `[aria-label*="${optionButtonText}" i], button:has-text("${optionButtonText}")`
         ).first();
@@ -410,7 +410,7 @@ export class CancelService {
 
     // 드롭다운 메뉴가 열리는 것을 대기
     await page.waitForTimeout(1500);
-    logger.info('옵션 버튼 클릭 완료 → 드롭다운 열림');
+    logger.info('Option button clicked; dropdown opened');
   }
 
   // ============================================================
@@ -447,7 +447,7 @@ export class CancelService {
         return Array.from(targetCells).map(c => c.textContent?.trim() || '');
       });
 
-      logger.info(`[getProductNameFromRow] 감지된 셀 텍스트: ${JSON.stringify(productNames)}`);
+      logger.info(`[getProductNameFromRow] detected cell text: ${JSON.stringify(productNames)}`);
 
       const productKeywords = ['chairside', 'dentalcad', 'exoplan'];
       for (const text of productNames) {
@@ -473,7 +473,7 @@ export class CancelService {
 
       return allCellTexts.find(t => t.length > 0) || '';
     } catch (err: any) {
-      logger.warn(`제품명 읽기 실패: ${err.message}`);
+      logger.warn(`Failed to read product name: ${err.message}`);
       return '';
     }
   }
@@ -487,7 +487,7 @@ export class CancelService {
   // ============================================================
   private async clickCancelInDropdown(page: Page, settings: any, productName: string = ''): Promise<void> {
     const cancelLabel = this.resolveCancelButtonLabel(productName, settings);
-    logger.info(`드롭다운에서 "${cancelLabel}" 클릭 (제품: ${productName || 'unknown'})`);
+    logger.info(`Clicking "${cancelLabel}" in dropdown (product: ${productName || 'unknown'})`);
 
     // ── TrustArc 쿠키 배너를 waitFor 이전에 제거 ────────────────────────────
     // partner.exocad.com에서 consent_blackbar (TrustArc GDPR 배너)가
@@ -540,7 +540,7 @@ export class CancelService {
   // ============================================================
   private async confirmCancel(page: Page, settings: any, productName: string = ''): Promise<void> {
     const confirmLabel = this.resolveConfirmButtonLabel(productName, settings);
-    logger.info(`확인 팝업에서 "${confirmLabel}" 클릭 (제품: ${productName || 'unknown'})`);
+    logger.info(`Clicking "${confirmLabel}" in confirmation popup (product: ${productName || 'unknown'})`);
 
     // ── TrustArc 쿠키 배너 제거 (confirm 팝업 클릭 차단 방지) ──────────────
     await page.evaluate(() => {
@@ -558,19 +558,19 @@ export class CancelService {
 
     try {
       await confirmButton.waitFor({ state: 'visible', timeout: 8000 });
-      logger.info(`확인 버튼 감지 완료: "${confirmLabel}"`);
+      logger.info(`Confirmation button detected: "${confirmLabel}"`);
     } catch {
       // 2순위 fallback: bg-red-55 클래스를 가진 아무 버튼 (색상이 빨간 확인 버튼)
-      logger.warn(`"${confirmLabel}" 텍스트로 못 찾음 → bg-red-55 버튼 fallback 시도`);
+      logger.warn(`Could not find text "${confirmLabel}" -> trying bg-red-55 button fallback`);
       confirmButton = page.locator(
         'button.bg-red-55, button[type="button"][class*="bg-red-55"]'
       ).first();
       try {
         await confirmButton.waitFor({ state: 'visible', timeout: 5000 });
         const btnText = await confirmButton.textContent();
-        logger.info(`bg-red-55 fallback 버튼 발견: "${btnText?.trim()}"`);
+        logger.info(`bg-red-55 fallback button found: "${btnText?.trim()}"`);
       } catch (err2: any) {
-        logger.error(`확인 팝업 버튼을 찾을 수 없습니다: ${err2.message}`);
+        logger.error(`Could not find confirmation popup button: ${err2.message}`);
         throw new Error(`확인 팝업 버튼을 찾을 수 없습니다 (시도: "${confirmLabel}", bg-red-55 fallback)`);
       }
     }
@@ -578,7 +578,7 @@ export class CancelService {
     await confirmButton.click({ force: true });
     await page.waitForLoadState('networkidle').catch(() => { });
     await page.waitForTimeout(3000);
-    logger.info('확인 팝업 클릭 완료');
+    logger.info('Confirmation popup click completed');
   }
 
   // ============================================================
@@ -608,20 +608,20 @@ export class CancelService {
       const foundStatus = statusTexts.find(t => successStatuses.some(s => t.includes(s)));
 
       if (foundStatus) {
-        logger.info(`[검증] ${serialNumber}: 상태 확인됨 → "${foundStatus}"`);
+        logger.info(`[verify] ${serialNumber}: status confirmed -> "${foundStatus}"`);
         return { verified: true, status: foundStatus };
       }
 
       // 행이 사라졌거나 상태가 변경된 경우도 성공으로 간주
       if (statusTexts.length === 0) {
-        logger.info(`[검증] ${serialNumber}: 결과 행 없음 (cancel 완료로 간주)`);
+        logger.info(`[verify] ${serialNumber}: no result row (assuming cancel completed)`);
         return { verified: true, status: 'row_removed' };
       }
 
-      logger.warn(`[검증] ${serialNumber}: 상태 확인 실패 — 감지된 셀: ${JSON.stringify(statusTexts)}`);
+      logger.warn(`[verify] ${serialNumber}: status verification failed; detected cells: ${JSON.stringify(statusTexts)}`);
       return { verified: false, status: statusTexts.join(' | ') };
     } catch (err: any) {
-      logger.warn(`[검증] ${serialNumber}: 오류 — ${err.message}`);
+      logger.warn(`[verify] ${serialNumber}: error - ${err.message}`);
       return { verified: false, status: `error: ${err.message}` };
     }
   }
@@ -637,10 +637,10 @@ export class CancelService {
       const filepath = path.join(getScreenshotDir(), filename);
 
       await page.screenshot({ path: filepath, fullPage: false });
-      logger.info(`[스크린샷] 저장: ${filepath}`);
+      logger.info(`[screenshot] saved: ${filepath}`);
       return filepath;
     } catch (err: any) {
-      logger.warn(`[스크린샷] 캡처 실패: ${err.message}`);
+      logger.warn(`[screenshot] capture failed: ${err.message}`);
       return '';
     }
   }
@@ -648,7 +648,7 @@ export class CancelService {
   // ============================================================
   // 만료된 시리얼 일괄 cancel 처리 (즉시 만료)
   // - 오늘 날짜 기준으로 만료된 active 시리얼을 조회
-  // - 갱신 요청(pending renewal)이 있는 시리얼은 건너뜀
+  // - 갱신 중단 요청이 없는 시리얼은 건너뜀
   // - 한 번의 로그인으로 여러 시리얼을 순차 처리 (세션 재사용)
   // ============================================================
   async processExpiredSerials(): Promise<CancelResult[]> {
@@ -659,7 +659,7 @@ export class CancelService {
     for (const serial of expiringSerials) {
       // fallback 경로: 이미 만료되었고 stop 요청이 있는 건만 마감 처리
       if (!serial.renewal_stop_requested) {
-        logger.info(`Cancel 건너뜀: ${serial.serial_number} (stop 요청 없음)`);
+        logger.info(`Cancel skipped: ${serial.serial_number} (no stop request)`);
         continue;
       }
 
@@ -679,18 +679,18 @@ export class CancelService {
   }
 
   // ============================================================
-  // 만료 N일 전 자동 cancel 처리 (갱신 요청 없을 때만)
+  // 만료 N일 전 자동 cancel 처리 (갱신 중단 요청이 있을 때만)
   // Settings의 auto_cancel_enabled / auto_cancel_days_before 기반으로 동작
   // - 스케줄러가 매일 자정에 호출
   // - 만료일이 "오늘 + N일" 인 active 시리얼 조회
-  // - 갱신 요청(pending renewal)이 있으면 건너뜀
+  // - 갱신 중단 요청이 없으면 건너뜀
   // - 없으면 Exocad 사이트에서 자동 cancel 실행
   // ============================================================
   async processPreExpiryAutoCancel(): Promise<CancelResult[]> {
     const settings = getSettings();
 
     if (!settings.auto_cancel_enabled) {
-      logger.info('자동 cancel 비활성화 — 건너뜀');
+    logger.info('Auto-cancel disabled; skipping');
       return [];
     }
 
@@ -700,7 +700,7 @@ export class CancelService {
     // toISOString()은 UTC 기준이라 KST 09:00 실행 시 날짜가 어긋남 → KST 기준으로 변환
     const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
-    logger.info(`자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
+    logger.info(`Auto-cancel check: expiry date = ${targetDateStr} (D-${daysBefore})`);
 
     // 만료일이 정확히 N일 후인 active 시리얼 조회
     const targetSerials = serialService.getExpiringSerialsOnDate(targetDateStr);
@@ -709,11 +709,11 @@ export class CancelService {
     for (const serial of targetSerials) {
       // 반전 로직: stop 요청이 있는 건만 cancel
       if (!serial.renewal_stop_requested) {
-        logger.info(`자동 cancel 건너뜀: ${serial.serial_number} (stop 요청 없음)`);
+        logger.info(`Auto-cancel skipped: ${serial.serial_number} (no stop request)`);
         continue;
       }
 
-      logger.info(`자동 cancel 실행: ${serial.serial_number} (만료일 ${serial.expiry_date}, stop 요청 있음)`);
+      logger.info(`Auto-cancel started: ${serial.serial_number} (expiry ${serial.expiry_date}, stop requested)`);
       const result = await this.cancelSubscription(serial.serial_number, true); // headless: background
       if (result.success) {
         const updated = serialService.cancelSubscription(serial.id);
@@ -724,7 +724,7 @@ export class CancelService {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    logger.info(`자동 cancel 완료: ${results.length}건 처리`);
+    logger.info(`Auto-cancel completed: processed=${results.length}`);
     return results;
   }
 
@@ -742,26 +742,13 @@ export class CancelService {
     targetDate.setDate(targetDate.getDate() + daysBefore);
     const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
-    logger.info(`[Dry-Run] 자동 cancel 체크: 만료일 = ${targetDateStr} (D-${daysBefore})`);
+    logger.info(`[Dry-Run] auto-cancel check: expiry date = ${targetDateStr} (D-${daysBefore})`);
 
     const targetSerials = serialService.getExpiringSerialsOnDate(targetDateStr);
     const results: CancelDryRunResult[] = [];
 
-    // ── 대상 시리얼이 없으면 테스트용 시리얼로 Playwright 동작 검증 ──────────
-    // DB에 만료 예정 시리얼이 없어도 로그인→검색→옵션→cancel 클릭 흐름이
-    // 올바르게 동작하는지 확인할 수 있도록 하드코딩된 테스트 시리얼을 사용한다.
-    const TEST_SERIAL = '40E83399-8C74-A0721A02';
     if (targetSerials.length === 0) {
-      logger.info(`[Dry-Run] 만료 예정 시리얼 없음 → 테스트 시리얼 (${TEST_SERIAL})로 Playwright 동작 검증`);
-      const dryResult = await this.checkCancelDryRun(TEST_SERIAL);
-      results.push({
-        ...dryResult,
-        customer_name: dryResult.customer_name || '(테스트)',
-        expiry_date: dryResult.expiry_date || targetDateStr,
-        has_renewal: false,
-        is_test_serial: true,
-      });
-      logger.info(`[Dry-Run] 테스트 시리얼 검증 완료`);
+      logger.info('[Dry-Run] no expiring serials -> ending without Playwright check');
       return results;
     }
 
@@ -774,26 +761,30 @@ export class CancelService {
           serial_number: serial.serial_number,
           customer_name: serial.customer?.name || '',
           expiry_date: serial.expiry_date,
+          stop_requested: false,
+          cancel_skipped: true,
           has_renewal: true,
         });
-        logger.info(`[Dry-Run] skip (stop 요청 없음): ${serial.serial_number}`);
+        logger.info(`[Dry-Run] skip (no stop request): ${serial.serial_number}`);
         continue;
       }
 
       // stop 요청 있음 → 실제 cancel 대상, Playwright 확인 실행
-      logger.info(`[Dry-Run] Playwright 확인 시작: ${serial.serial_number}`);
+      logger.info(`[Dry-Run] Playwright verification started: ${serial.serial_number}`);
       const dryResult = await this.checkCancelDryRun(serial.serial_number);
       results.push({
         ...dryResult,
         customer_name: serial.customer?.name || '',
         expiry_date: serial.expiry_date,
+        stop_requested: true,
+        cancel_skipped: false,
         has_renewal: false,
       });
 
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    logger.info(`[Dry-Run] 완료: 총 ${results.length}건 (skip ${results.filter(r => r.has_renewal).length}, 확인 ${results.filter(r => !r.has_renewal).length})`);
+    logger.info(`[Dry-Run] completed: total=${results.length} (skipped=${results.filter(r => r.cancel_skipped).length}, checked=${results.filter(r => !r.cancel_skipped).length})`);
     return results;
   }
 
@@ -808,6 +799,8 @@ export class CancelService {
       serial_number: serialNumber,
       customer_name: '',
       expiry_date: '',
+      stop_requested: true,
+      cancel_skipped: false,
       has_renewal: false,
       login_ok: false,
       serial_found: false,
@@ -816,7 +809,7 @@ export class CancelService {
     };
 
     const dryBrowser = await chromium.launch({
-      headless: false,
+      headless: true,
       args: [
         // ── 패스워드 저장 팝업 완전 차단 (Dry-Run) ──────────────────────────
         '--disable-save-password-bubble',
@@ -838,24 +831,24 @@ export class CancelService {
       // ── Step 1: 로그인 ──────────────────────────────────────────────────────
       await this.login(page, settings);
       result.login_ok = true;
-      logger.info(`[Dry-Run] ${serialNumber} ✓ 로그인`);
+      logger.info(`[Dry-Run] ${serialNumber} login succeeded`);
 
       // ── Step 2: 라이선스 관리 페이지로 이동 ───────────────────────────────
       // 로그인 완료 후 SSO 리다이렉트로 이미 target URL에 있을 수 있음.
       // 이 경우 goto()를 호출하면 불필요한 페이지 재로딩이 발생하므로 URL 비교 후 스킵.
       const postLoginUrl = page.url();
-      logger.info(`[Dry-Run] 로그인 후 현재 URL: ${postLoginUrl}`);
+      logger.info(`[Dry-Run] current URL after login: ${postLoginUrl}`);
       if (!postLoginUrl.startsWith(settings.exocad_site_url)) {
-        logger.info(`[Dry-Run] target URL이 아님 → goto 실행`);
+        logger.info('[Dry-Run] not at target URL -> running goto');
         await page.goto(settings.exocad_site_url, { waitUntil: 'domcontentloaded' });
         // React SPA가 완전히 마운트될 때까지 networkidle 대기
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
-          logger.warn('[Dry-Run] networkidle 타임아웃 — searchSerial에서 element 대기로 진행');
+          logger.warn('[Dry-Run] networkidle timeout; continuing with element wait in searchSerial');
         });
       } else {
-        logger.info(`[Dry-Run] 이미 target URL에 있음 → goto 생략, networkidle 대기`);
+        logger.info('[Dry-Run] already at target URL -> skipping goto and waiting for networkidle');
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
-          logger.warn('[Dry-Run] networkidle 타임아웃 — searchSerial에서 element 대기로 진행');
+          logger.warn('[Dry-Run] networkidle timeout; continuing with element wait in searchSerial');
         });
       }
 
@@ -866,7 +859,7 @@ export class CancelService {
       const serialVisible = await page.locator(`text="${serialNumber}"`).first()
         .isVisible({ timeout: 5000 }).catch(() => false);
       result.serial_found = serialVisible;
-      logger.info(`[Dry-Run] ${serialNumber} ${serialVisible ? '✓' : '✗'} 시리얼 검색결과 표시`);
+      logger.info(`[Dry-Run] ${serialNumber} serial search result visible=${serialVisible}`);
 
       if (!serialVisible) {
         result.error = `검색 결과에 시리얼(${serialNumber})이 표시되지 않음`;
@@ -878,12 +871,12 @@ export class CancelService {
       result.product_name = productName;
       const cancelLabel = this.resolveCancelButtonLabel(productName, settings);
       result.cancel_btn_label = cancelLabel;
-      logger.info(`[Dry-Run] ${serialNumber} 제품명: "${productName}" → 버튼: "${cancelLabel}"`);
+      logger.info(`[Dry-Run] ${serialNumber} product name: "${productName}" -> button: "${cancelLabel}"`);
 
       // ── Step 5: 옵션 버튼(menu-button) 클릭 ──────────────────────────────
       await this.clickOptionButton(page, serialNumber, settings);
       result.option_btn_found = true;
-      logger.info(`[Dry-Run] ${serialNumber} ✓ 옵션 버튼 클릭`);
+      logger.info(`[Dry-Run] ${serialNumber} option button clicked`);
 
       // ── Step 6: 드롭다운에서 cancel 메뉴 항목 가시성 확인 ─────────────────
       const cancelItem = page.locator(
@@ -893,7 +886,7 @@ export class CancelService {
 
       const isVisible = await cancelItem.isVisible({ timeout: 5000 }).catch(() => false);
       result.cancel_item_found = isVisible;
-      logger.info(`[Dry-Run] ${serialNumber} ${isVisible ? '✓' : '✗'} cancel 메뉴 항목 ("${cancelLabel}")`);
+      logger.info(`[Dry-Run] ${serialNumber} cancel menu item visible=${isVisible} ("${cancelLabel}")`);
 
       if (!isVisible) {
         result.error = `드롭다운에서 "${cancelLabel}" 버튼을 찾을 수 없음 (제품: "${productName}")`;
@@ -902,15 +895,15 @@ export class CancelService {
         // 실제 cancel 흐름과 동일하게 드롭다운 버튼을 클릭하여 확인 다이얼로그가
         // 열리는 것까지 검증한다. 단, "Confirm cancellation" 버튼은 누르지 않아
         // 실제 취소는 발생하지 않는다.
-        logger.info(`[Dry-Run] ${serialNumber} → "${cancelLabel}" 클릭 (확인 팝업은 클릭하지 않음)`);
+        logger.info(`[Dry-Run] ${serialNumber} -> clicked "${cancelLabel}" (confirmation popup not confirmed)`);
         await cancelItem.click();
         await page.waitForTimeout(2000);
         result.cancel_item_clicked = true;
-        logger.info(`[Dry-Run] ${serialNumber} ✓ cancel 드롭다운 버튼 클릭 완료 — 확인 팝업 열림 상태 (확인하지 않음)`);
+        logger.info(`[Dry-Run] ${serialNumber} cancel dropdown button clicked; confirmation popup open (not confirmed)`);
       }
 
     } catch (err: any) {
-      logger.error(`[Dry-Run] ${serialNumber} 오류: ${err.message}`);
+      logger.error(`[Dry-Run] ${serialNumber} error: ${err.message}`);
       result.error = err.message;
     } finally {
       await page.close().catch(() => { });

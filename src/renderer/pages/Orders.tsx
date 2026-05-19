@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
-import { api } from '../api';
+import { api } from '../client';
 
 import type { PendingOrder } from '../../shared/types';
 
@@ -222,6 +222,7 @@ export default function Orders() {
                 <Field label={t(lang, 'orders_field_email')} value={order.customer_email} />
                 <Field label={t(lang, 'orders_field_purchase')} value={order.purchase_date} />
                 <Field label={t(lang, 'orders_field_expiry')} value={order.expiry_date} />
+                <Field label={t(lang, 'label_main_product')} value={order.main_product} />
                 <Field label={t(lang, 'orders_field_version')} value={order.version} />
                 {order.notes && <Field label={t(lang, 'orders_field_notes')} value={order.notes} />}
               </div>
@@ -350,6 +351,10 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
               <label>{t(lang, 'label_version')}</label>
               <input value={form.version} onChange={e => set('version', e.target.value)} />
             </div>
+          </div>
+          <div className="form-group">
+            <label>{t(lang, 'label_main_product')}</label>
+            <input value={form.main_product} onChange={e => set('main_product', e.target.value)} />
           </div>
           <div className="form-row">
             <div className="form-group">

@@ -42,7 +42,7 @@ export function startApiServer(): void {
 
   server = http.createServer(app);
   server.listen(PORT, '127.0.0.1', () => {
-    logger.info(`API 서버 시작: http://127.0.0.1:${PORT}`);
+    logger.info(`API server started: http://127.0.0.1:${PORT}`);
   });
 }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, powerMonitor, powerSaveBlocker, session } from 'electron';
 import path from 'path';
 import { initDatabase, closeDatabase } from './database';
 import { registerIpcHandlers } from './ipc-handlers';
@@ -10,6 +10,7 @@ import { stopWebhookServer } from './webhook-server';
 import { startApiServer, stopApiServer } from './api-server';
 
 let mainWindow: BrowserWindow | null = null;
+let powerSaveBlockerId: number | null = null;
 
 app.setName('Exocad Serial Manager');
 
@@ -35,14 +36,67 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
   }
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger.error(`Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload();
+    }
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    logger.warn('Renderer unresponsive detected');
+  });
+
+  mainWindow.webContents.on('responsive', () => {
+    logger.info('Renderer responsive again');
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    logger.error(`Renderer load failed: ${errorCode} ${errorDescription} ${validatedURL}`);
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
+function startPowerProtection(): void {
+  if (powerSaveBlockerId === null) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    logger.info(`Power save blocker started: id=${powerSaveBlockerId}`);
+  }
+
+  powerMonitor.on('suspend', () => {
+    logger.warn('System suspend detected');
+  });
+
+  powerMonitor.on('resume', () => {
+    logger.info('System resume detected');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.reloadIgnoringCache();
+    }
+  });
+
+  powerMonitor.on('lock-screen', () => {
+    logger.info('Windows lock-screen detected');
+  });
+
+  powerMonitor.on('unlock-screen', () => {
+    logger.info('Windows unlock-screen detected');
+  });
+}
+
+function stopPowerProtection(): void {
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    logger.info(`Power save blocker stopped: id=${powerSaveBlockerId}`);
+  }
+  powerSaveBlockerId = null;
+}
+
 app.whenReady().then(() => {
   logger.init();
-  logger.info('앱 시작');
+  logger.info('App started');
 
   // ── Content Security Policy 설정 ───────────────────────────────────────────
   // 개발: Vite HMR(WebSocket) + eval 허용 / 프로덕션: strict CSP
@@ -80,6 +134,7 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   startApiServer();
   createWindow();
+  startPowerProtection();
   startScheduler();
   startPollingScheduler(); // URL 폴링 스케줄러 자동 시작
 
@@ -99,8 +154,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   await stopApiServer();
   await stopWebhookServer();
+  stopPowerProtection();
   stopScheduler();
   stopPollingScheduler(); // URL 폴링 스케줄러 정리
   closeDatabase();
-  logger.info('앱 종료');
+  logger.info('App exiting');
 });
