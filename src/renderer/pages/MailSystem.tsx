@@ -1,20 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import TemplateEditor from '../components/TemplateEditor';
 import { useLang } from '../App';
-import { t } from '../i18n';
-
-interface MailTemplate {
-  id: number;
-  code: string;
-  name: string;
-  subject: string;
-  body: string;
-  is_builtin: number;
-  enabled: number;
-  updated_at: string;
-}
+import { t, type TranslationKey } from '../i18n';
+import type { AppSettings, InboundMail, MailConnectionResult, MailTemplate, MailTemplateUpsert } from '../../shared/types';
+import { api } from '../client';
 
 type Tab = 'templates' | 'inbound' | 'smtp';
+type MailClassification = InboundMail['classification'];
+type InboundFilter = MailClassification | 'all';
+type EditorTarget = MailTemplate | 'new' | undefined;
+type CheckInboundResult = { processed: number; saved: number; errors: string[] };
+type GenericResult = { success: boolean; message?: string; error?: string };
+
+interface InboundDryRunEntry {
+  from: string;
+  subject: string;
+  date: string;
+  classification: MailClassification;
+  matched_keywords: string[];
+  extracted_serial: string | null;
+  serial_exists: boolean;
+  is_duplicate: boolean;
+  message_id: string | null;
+  missing_fields: string[];
+}
+
+interface InboundDryRunResult {
+  total_checked: number;
+  would_save: number;
+  would_skip: number;
+  entries: InboundDryRunEntry[];
+  error?: string;
+}
 
 const badgeStyle = (color: string): React.CSSProperties => ({
   display: 'inline-block', padding: '1px 8px', borderRadius: 10,
@@ -23,21 +40,23 @@ const badgeStyle = (color: string): React.CSSProperties => ({
   color: color === 'blue' ? '#60a5fa' : 'var(--text3)',
 });
 
-const CLASSIF_STYLE: Record<string, { bg: string; color: string }> = {
+const CLASSIF_STYLE: Record<MailClassification, { bg: string; color: string }> = {
   stop_request_candidate: { bg: 'rgba(194,65,12,0.15)',  color: '#fb923c' },
   stop_request:           { bg: 'rgba(194,65,12,0.15)',  color: '#fb923c' },
   renewal_request:        { bg: 'rgba(34,197,94,0.12)',  color: '#22c55e' },
   missing_info:           { bg: 'rgba(234,179,8,0.14)',   color: '#facc15' },
+  invalid_cancellation_response: { bg: 'rgba(220,38,38,0.15)', color: '#fc8181' },
   unrelated:              { bg: 'rgba(29,78,216,0.15)',  color: '#60a5fa' },
   unclassified:           { bg: 'var(--bg3)',             color: 'var(--text3)' },
   error:                  { bg: 'rgba(220,38,38,0.15)',   color: '#fc8181' },
 };
 
-const CLASSIF_I18N_KEY: Record<string, string> = {
+const CLASSIF_I18N_KEY: Record<MailClassification, TranslationKey> = {
   stop_request_candidate: 'mail_classif_stop_candidate',
   stop_request:           'mail_classif_stop_candidate',
   renewal_request:        'mail_classif_renewal_request',
   missing_info:           'mail_classif_missing_info',
+  invalid_cancellation_response: 'mail_classif_invalid_response',
   unrelated:              'mail_classif_unrelated',
   unclassified:           'mail_classif_unclassified',
   error:                  'mail_classif_error',
@@ -66,34 +85,34 @@ export default function MailSystem() {
   const [tab, setTab] = useState<Tab>('templates');
   const [templates, setTemplates] = useState<MailTemplate[]>([]);
   const [loading, setLoading] = useState(false);
-  const [editorTarget, setEditorTarget] = useState<MailTemplate | null | 'new'>(undefined as any);
+  const [editorTarget, setEditorTarget] = useState<EditorTarget>(undefined);
 
-  const [inboundMails, setInboundMails] = useState<any[]>([]);
+  const [inboundMails, setInboundMails] = useState<InboundMail[]>([]);
   const [inboundLoading, setInboundLoading] = useState(false);
-  const [inboundFilter, setInboundFilter] = useState<string>('all');
+  const [inboundFilter, setInboundFilter] = useState<InboundFilter>('all');
   const [checkLoading, setCheckLoading] = useState(false);
-  const [checkResult, setCheckResult] = useState<{ processed: number; saved: number; errors: string[] } | null>(null);
+  const [checkResult, setCheckResult] = useState<CheckInboundResult | null>(null);
   const [dryRunInboundLoading, setDryRunInboundLoading] = useState(false);
-  const [dryRunInboundResult, setDryRunInboundResult] = useState<any | null>(null);
+  const [dryRunInboundResult, setDryRunInboundResult] = useState<InboundDryRunResult | null>(null);
   const [connTestLoading, setConnTestLoading] = useState(false);
-  const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; mail_count?: number } | null>(null);
-  const [inboundSettings, setInboundSettings] = useState<any>(null);
-  const [selectedMail, setSelectedMail] = useState<any | null>(null);
+  const [connTestResult, setConnTestResult] = useState<MailConnectionResult | null>(null);
+  const [inboundSettings, setInboundSettings] = useState<AppSettings | null>(null);
+  const [selectedMail, setSelectedMail] = useState<InboundMail | null>(null);
   const [confirmingMailId, setConfirmingMailId] = useState<number | null>(null);
   const [sendingMissingInfoId, setSendingMissingInfoId] = useState<number | null>(null);
 
   const [smtpTesting, setSmtpTesting] = useState(false);
-  const [smtpResult, setSmtpResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [smtpResult, setSmtpResult] = useState<MailConnectionResult | null>(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
-  const [dryRunResult, setDryRunResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [settings, setSettings] = useState<any>(null);
+  const [dryRunResult, setDryRunResult] = useState<GenericResult | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
 
-  const classifBadge = (c: string) => {
+  const classifBadge = (c: MailClassification) => {
     const style = CLASSIF_STYLE[c] ?? CLASSIF_STYLE.unclassified;
     const i18nKey = CLASSIF_I18N_KEY[c] ?? 'mail_classif_unclassified';
     return (
       <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: style.bg, color: style.color }}>
-        {t(lang, i18nKey as any)}
+        {t(lang, i18nKey)}
       </span>
     );
   };
@@ -101,7 +120,7 @@ export default function MailSystem() {
   const loadTemplates = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await window.electronAPI.listMailTemplates();
+      const list = await api.listMailTemplates();
       setTemplates(list);
     } finally {
       setLoading(false);
@@ -109,18 +128,18 @@ export default function MailSystem() {
   }, []);
 
   const loadSettings = useCallback(async () => {
-    const s = await window.electronAPI.getSettings();
+    const s = await api.getSettings();
     setSettings(s);
   }, []);
 
   useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
-  const loadInboundMails = useCallback(async (filter?: string) => {
+  const loadInboundMails = useCallback(async (filter?: InboundFilter) => {
     setInboundLoading(true);
     try {
       const f = filter ?? inboundFilter;
       const classification = f === 'all' ? undefined : [f];
-      const list = await window.electronAPI.listInboundMails({ classification, limit: 100 });
+      const list = await api.listInboundMails({ classification, limit: 100 });
       setInboundMails(list);
     } finally {
       setInboundLoading(false);
@@ -129,7 +148,7 @@ export default function MailSystem() {
 
   const loadInboundSettings = useCallback(async () => {
     if (!inboundSettings) {
-      const s = await window.electronAPI.getSettings();
+      const s = await api.getSettings();
       setInboundSettings(s);
     }
   }, [inboundSettings]);
@@ -139,9 +158,9 @@ export default function MailSystem() {
     if (tab === 'inbound') { loadInboundMails(); loadInboundSettings(); }
   }, [tab, loadSettings, loadInboundMails, loadInboundSettings]);
 
-  const handleSave = async (input: any) => {
-    await window.electronAPI.upsertMailTemplate(input);
-    setEditorTarget(undefined as any);
+  const handleSave = async (input: MailTemplateUpsert) => {
+    await api.upsertMailTemplate(input);
+    setEditorTarget(undefined);
     await loadTemplates();
   };
 
@@ -149,15 +168,15 @@ export default function MailSystem() {
     const msg = t(lang, 'mail_delete_confirm').replace('{name}', tmpl.name);
     if (!confirm(msg)) return;
     try {
-      await window.electronAPI.deleteMailTemplate(tmpl.code);
+      await api.deleteMailTemplate(tmpl.code);
       await loadTemplates();
-    } catch (e: any) {
-      alert(e.message ?? t(lang, 'mail_delete_fail'));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : t(lang, 'mail_delete_fail'));
     }
   };
 
   const handleToggleEnabled = async (tmpl: MailTemplate) => {
-    await window.electronAPI.upsertMailTemplate({
+    await api.upsertMailTemplate({
       id: tmpl.id, code: tmpl.code, name: tmpl.name,
       subject: tmpl.subject, body: tmpl.body, enabled: tmpl.enabled === 0,
     });
@@ -166,20 +185,20 @@ export default function MailSystem() {
 
   const handleSmtpTest = async () => {
     setSmtpTesting(true); setSmtpResult(null);
-    try { setSmtpResult(await window.electronAPI.testSmtp()); }
+    try { setSmtpResult(await api.testSmtp()); }
     finally { setSmtpTesting(false); }
   };
 
   const handleConnTest = async () => {
     setConnTestLoading(true); setConnTestResult(null);
-    try { setConnTestResult(await window.electronAPI.testMailConnection()); }
+    try { setConnTestResult(await api.testMailConnection()); }
     finally { setConnTestLoading(false); }
   };
 
   const handleCheckNow = async () => {
     setCheckLoading(true); setCheckResult(null);
     try {
-      const r = await window.electronAPI.checkInboundNow();
+      const r = await api.checkInboundNow();
       setCheckResult(r);
       await loadInboundMails();
     } finally { setCheckLoading(false); }
@@ -187,11 +206,11 @@ export default function MailSystem() {
 
   const handleDryRunInbound = async () => {
     setDryRunInboundLoading(true); setDryRunInboundResult(null);
-    try { setDryRunInboundResult(await window.electronAPI.inboundDryRun()); }
+    try { setDryRunInboundResult(await api.inboundDryRun()); }
     finally { setDryRunInboundLoading(false); }
   };
 
-  const handleFilterChange = (f: string) => {
+  const handleFilterChange = (f: InboundFilter) => {
     setInboundFilter(f);
     loadInboundMails(f);
   };
@@ -215,27 +234,27 @@ export default function MailSystem() {
   };
 
   const missingFieldText = (field: string) => {
-    if (field === 'serial') return t(lang, 'mail_missing_serial' as any);
-    if (field === 'stop_keyword') return t(lang, 'mail_missing_stop_keyword' as any);
+    if (field === 'serial') return t(lang, 'mail_missing_serial');
+    if (field === 'stop_keyword') return t(lang, 'mail_missing_stop_keyword');
     return field;
   };
 
-  const handleConfirmStopRequest = async (mail: any) => {
+  const handleConfirmStopRequest = async (mail: InboundMail) => {
     if (!mail?.id) return;
     if (!mail.extracted_serial && !mail.linked_serial_id) {
-      alert(t(lang, 'mail_confirm_stop_no_serial' as any));
+      alert(t(lang, 'mail_confirm_stop_no_serial'));
       return;
     }
-    if (!confirm(t(lang, 'mail_confirm_stop_prompt' as any).replace('{serial}', mail.extracted_serial || ''))) return;
+    if (!confirm(t(lang, 'mail_confirm_stop_prompt').replace('{serial}', mail.extracted_serial || ''))) return;
 
     setConfirmingMailId(mail.id);
     try {
-      const result = await window.electronAPI.confirmStopRequestFromMail(mail.id);
+      const result = await api.confirmStopRequestFromMail(mail.id);
       if (!result.success) {
-        alert(result.error || t(lang, 'mail_confirm_stop_fail' as any));
+        alert(result.error || t(lang, 'mail_confirm_stop_fail'));
         return;
       }
-      alert(t(lang, 'mail_confirm_stop_done' as any).replace('{serial}', result.serial_number || ''));
+      alert(t(lang, 'mail_confirm_stop_done').replace('{serial}', result.serial_number || ''));
       setSelectedMail(null);
       await loadInboundMails();
     } finally {
@@ -243,11 +262,11 @@ export default function MailSystem() {
     }
   };
 
-  const handleSendMissingInfoTemplate = async (mail: any) => {
+  const handleSendMissingInfoTemplate = async (mail: InboundMail) => {
     if (!mail?.id) return;
     setSendingMissingInfoId(mail.id);
     try {
-      const result = await window.electronAPI.sendMissingInfoTemplateForMail(mail.id);
+      const result = await api.sendMissingInfoTemplateForMail(mail.id);
       alert(result.message);
       if (result.success) {
         setSelectedMail(null);
@@ -260,11 +279,11 @@ export default function MailSystem() {
 
   const handleDryRun = async () => {
     setDryRunLoading(true); setDryRunResult(null);
-    try { setDryRunResult(await window.electronAPI.sendTestDryRun()); }
+    try { setDryRunResult(await api.sendTestDryRun()); }
     finally { setDryRunLoading(false); }
   };
 
-  const tabBtn = (id: Tab, labelKey: string) => (
+  const tabBtn = (id: Tab, labelKey: TranslationKey) => (
     <button
       onClick={() => setTab(id)}
       style={{
@@ -274,7 +293,7 @@ export default function MailSystem() {
         color: tab === id ? 'var(--accent)' : 'var(--text3)',
       }}
     >
-      {t(lang, labelKey as any)}
+      {t(lang, labelKey)}
     </button>
   );
 
@@ -295,7 +314,7 @@ export default function MailSystem() {
     : '';
 
   return (
-    <div style={{ padding: 28, minHeight: '100%' }}>
+    <div style={{ padding: 28, height: '100%', overflowY: 'auto' }}>
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>Mail System</h2>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>
@@ -483,7 +502,7 @@ export default function MailSystem() {
                     </tr>
                   </thead>
                   <tbody>
-                    {dryRunInboundResult.entries.map((e: any, i: number) => (
+                    {dryRunInboundResult.entries.map((e, i) => (
                       <tr key={i} style={{ background: i % 2 === 0 ? 'var(--bg2)' : 'var(--bg3)' }}>
                         <td style={{ padding: '6px 10px' }}>{classifBadge(e.classification)}</td>
                         <td style={{ padding: '6px 10px', color: 'var(--text)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.from}</td>
@@ -507,7 +526,7 @@ export default function MailSystem() {
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{t(lang, 'mail_inbound_list')} ({inboundMails.length})</span>
               <div style={{ display: 'flex', gap: 6 }}>
-                {(['all', 'stop_request_candidate', 'missing_info', 'renewal_request', 'unrelated', 'error'] as const).map(f => (
+                {(['all', 'stop_request_candidate', 'missing_info', 'invalid_cancellation_response', 'renewal_request', 'unrelated', 'error'] as const).map(f => (
                   <button
                     key={f}
                     onClick={() => handleFilterChange(f)}
@@ -519,7 +538,7 @@ export default function MailSystem() {
                       cursor: 'pointer',
                     }}
                   >
-                    {f === 'all' ? t(lang, 'mail_filter_all') : t(lang, (CLASSIF_I18N_KEY[f] ?? 'mail_classif_unclassified') as any)}
+                    {f === 'all' ? t(lang, 'mail_filter_all') : t(lang, CLASSIF_I18N_KEY[f])}
                   </button>
                 ))}
                 <button onClick={() => loadInboundMails()} style={{ padding: '3px 10px', fontSize: 11, borderRadius: 6, border: '1px solid var(--border2)', background: 'var(--bg3)', color: 'var(--text)', cursor: 'pointer' }}>
@@ -564,7 +583,7 @@ export default function MailSystem() {
                       </td>
                       <td style={{ padding: '8px 14px' }}>
                         <span style={{ fontSize: 11, color: m.processed ? '#22c55e' : 'var(--text3)' }}>
-                          {m.template_sent_at ? t(lang, 'mail_template_sent' as any) : m.processed ? t(lang, 'mail_processed') : t(lang, 'mail_not_processed')}
+                          {m.template_sent_at ? t(lang, 'mail_template_sent') : m.processed ? t(lang, 'mail_processed') : t(lang, 'mail_not_processed')}
                         </span>
                       </td>
                     </tr>
@@ -674,7 +693,7 @@ export default function MailSystem() {
         <TemplateEditor
           template={editorTarget === 'new' ? null : editorTarget}
           onSave={handleSave}
-          onClose={() => setEditorTarget(undefined as any)}
+          onClose={() => setEditorTarget(undefined)}
         />
       )}
 
@@ -694,11 +713,11 @@ export default function MailSystem() {
                   <span style={{ color: 'var(--text3)', fontSize: 12 }}>{selectedMail.received_at?.slice(0, 16)}</span>
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {selectedMail.subject || t(lang, 'mail_no_subject' as any)}
+                  {selectedMail.subject || t(lang, 'mail_no_subject')}
                 </div>
               </div>
               <button onClick={() => setSelectedMail(null)} style={{ border: '1px solid var(--border2)', background: 'var(--bg3)', color: 'var(--text)', borderRadius: 6, padding: '5px 10px', cursor: 'pointer' }}>
-                {t(lang, 'close' as any)}
+                {t(lang, 'close')}
               </button>
             </div>
 
@@ -710,11 +729,11 @@ export default function MailSystem() {
                 <span style={{ color: 'var(--text)' }}>{selectedMail.mail_to || '—'}</span>
                 <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_col_serial_label')}</span>
                 <span>{selectedMail.extracted_serial ? <code style={{ fontSize: 12, background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4, color: 'var(--text)' }}>{selectedMail.extracted_serial}</code> : <span style={{ color: 'var(--text3)' }}>—</span>}</span>
-                <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_dryrun_col_keyword' as any)}</span>
+                <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_dryrun_col_keyword')}</span>
                 <span style={{ color: 'var(--text)' }}>{matchedKeywords(selectedMail.matched_keywords).join(', ') || '—'}</span>
                 {selectedMail.classification === 'missing_info' && (
                   <>
-                    <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_missing_fields' as any)}</span>
+                    <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_missing_fields')}</span>
                     <span style={{ color: '#facc15', fontWeight: 700 }}>
                       {missingFields(selectedMail.missing_fields).map(missingFieldText).join(', ') || '—'}
                     </span>
@@ -725,7 +744,7 @@ export default function MailSystem() {
               {selectedMail.classification === 'stop_request_candidate' && (
                 <div style={{ marginBottom: 14, padding: 12, border: '1px solid rgba(251,146,60,0.35)', background: 'rgba(194,65,12,0.12)', borderRadius: 7 }}>
                   <div style={{ fontSize: 13, color: '#fb923c', fontWeight: 700, marginBottom: 8 }}>
-                    {t(lang, 'mail_stop_candidate_notice' as any)}
+                    {t(lang, 'mail_stop_candidate_notice')}
                   </div>
                   <button
                     disabled={confirmingMailId === selectedMail.id || !!selectedMail.processed}
@@ -738,7 +757,7 @@ export default function MailSystem() {
                       fontSize: 12, fontWeight: 700,
                     }}
                   >
-                    {selectedMail.processed ? t(lang, 'mail_confirm_stop_processed' as any) : confirmingMailId === selectedMail.id ? t(lang, 'saving') : t(lang, 'mail_confirm_stop_action' as any)}
+                    {selectedMail.processed ? t(lang, 'mail_confirm_stop_processed') : confirmingMailId === selectedMail.id ? t(lang, 'saving') : t(lang, 'mail_confirm_stop_action')}
                   </button>
                 </div>
               )}
@@ -747,8 +766,8 @@ export default function MailSystem() {
                 <div style={{ marginBottom: 14, padding: 12, border: '1px solid rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.1)', borderRadius: 7 }}>
                   <div style={{ fontSize: 13, color: '#facc15', fontWeight: 700, marginBottom: 8 }}>
                     {selectedMail.template_sent_at
-                      ? t(lang, 'mail_missing_template_sent' as any).replace('{date}', selectedMail.template_sent_at)
-                      : t(lang, 'mail_missing_info_notice' as any)}
+                      ? t(lang, 'mail_missing_template_sent').replace('{date}', selectedMail.template_sent_at)
+                      : t(lang, 'mail_missing_info_notice')}
                   </div>
                   <button
                     disabled={sendingMissingInfoId === selectedMail.id || !!selectedMail.template_sent_at}
@@ -761,7 +780,7 @@ export default function MailSystem() {
                       fontSize: 12, fontWeight: 700,
                     }}
                   >
-                    {sendingMissingInfoId === selectedMail.id ? t(lang, 'saving' as any) : t(lang, 'mail_send_missing_template' as any)}
+                    {sendingMissingInfoId === selectedMail.id ? t(lang, 'saving') : t(lang, 'mail_send_missing_template')}
                   </button>
                   {selectedMail.error && (
                     <div style={{ marginTop: 8, color: '#fc8181', fontSize: 12 }}>{selectedMail.error}</div>
@@ -770,7 +789,7 @@ export default function MailSystem() {
               )}
 
               <pre style={{ margin: 0, padding: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, color: 'var(--text)', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7 }}>
-                {selectedMail.body || t(lang, 'mail_empty_body' as any)}
+                {selectedMail.body || t(lang, 'mail_empty_body')}
               </pre>
             </div>
           </div>

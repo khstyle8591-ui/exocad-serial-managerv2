@@ -42,11 +42,7 @@ export function buildSerialTemplateVars(serial: SerialWithCustomer | null): Reco
 }
 
 function pickSampleSerial(kind: NoticeKind): SerialWithCustomer | null {
-  const all = serialService.getAll();
-  const preferred = kind === 'stop_request'
-    ? all.find(serial => serial.renewal_stop_requested && serial.customer.email)
-    : all.find(serial => serial.status === 'cancelled' && serial.customer.email);
-  return preferred ?? all.find(serial => serial.customer.email) ?? all[0] ?? null;
+  return serialService.getLifecycleNoticeSample(kind);
 }
 
 export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer): Promise<void> {

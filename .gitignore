@@ -5,6 +5,8 @@ dist/
 *.db-wal
 *.db-journal
 .env
+.env.*
+!.env.example
 data/
 db-archive/
 logs/

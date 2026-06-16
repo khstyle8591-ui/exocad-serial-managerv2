@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import VariableChips from './VariableChips';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import type { SerialWithCustomer } from '../../shared/types';
+import { api } from '../client';
 
 interface MailTemplate {
   id: number;
@@ -47,6 +49,8 @@ const labelStyle: React.CSSProperties = {
   display: 'block',
 };
 
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
 export default function TemplateEditor({ template, onSave, onClose }: Props) {
   const { lang } = useLang();
   const isBuiltin = template?.is_builtin === 1;
@@ -61,23 +65,50 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
 
   const [tab, setTab] = useState<'edit' | 'preview'>('edit');
   const [previewSerialId, setPreviewSerialId] = useState<string>('');
+  const [previewSerialSearch, setPreviewSerialSearch] = useState('');
   const [previewResult, setPreviewResult] = useState<{ subject: string; body: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [serials, setSerials] = useState<any[]>([]);
-  const [serialsLoaded, setSerialsLoaded] = useState(false);
+  const [serials, setSerials] = useState<SerialWithCustomer[]>([]);
+  const [serialsLoading, setSerialsLoading] = useState(false);
 
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const lastFocused = useRef<'subject' | 'body'>('body');
 
   useEffect(() => {
-    if (tab === 'preview' && !serialsLoaded) {
-      window.electronAPI.getSerials().then(list => {
-        setSerials(list);
-        setSerialsLoaded(true);
-      });
+    if (tab !== 'preview') return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setSerialsLoading(true);
+      api.listSerials({
+          limit: 100,
+          offset: 0,
+          search: previewSerialSearch.trim() || undefined,
+        })
+        .then(result => {
+          if (!cancelled) setSerials(result.items);
+        })
+        .catch(err => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setSerialsLoading(false);
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [tab, previewSerialSearch]);
+
+  useEffect(() => {
+    if (previewSerialId && !serials.some(serial => String(serial.id) === previewSerialId)) {
+      setPreviewSerialId('');
+      setPreviewResult(null);
     }
-  }, [tab, serialsLoaded]);
+  }, [previewSerialId, serials]);
 
   const insertVar = (v: string) => {
     if (lastFocused.current === 'subject') {
@@ -104,7 +135,7 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
     setPreviewLoading(true);
     try {
       if (template) {
-        const result = await window.electronAPI.previewMailTemplate(template.code, Number(previewSerialId));
+        const result = await api.previewMailTemplate(template.code, Number(previewSerialId));
         setPreviewResult(result);
       } else {
         const serial = serials.find(s => String(s.id) === previewSerialId);
@@ -140,8 +171,8 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
     setError('');
     try {
       await onSave({ id: template?.id, code: code.trim(), name: name.trim(), subject, body, enabled });
-    } catch (e: any) {
-      setError(e.message ?? t(lang, 'tmpl_save_fail'));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e) || t(lang, 'tmpl_save_fail'));
     } finally {
       setSaving(false);
     }
@@ -270,12 +301,18 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
               <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>{t(lang, 'label_preview_serial')}</label>
+                  <input
+                    value={previewSerialSearch}
+                    onChange={e => { setPreviewSerialSearch(e.target.value); setPreviewResult(null); }}
+                    placeholder={t(lang, 'search_placeholder')}
+                    style={{ ...inputStyle, marginBottom: 8 }}
+                  />
                   <select
                     value={previewSerialId}
                     onChange={e => { setPreviewSerialId(e.target.value); setPreviewResult(null); }}
                     style={inputStyle}
                   >
-                    <option value="">{t(lang, 'preview_select_placeholder')}</option>
+                    <option value="">{serialsLoading ? t(lang, 'loading') : t(lang, 'preview_select_placeholder')}</option>
                     {serials.map(s => (
                       <option key={s.id} value={String(s.id)}>
                         {s.serial_number} — {s.customer?.name ?? ''}

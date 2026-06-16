@@ -1,6 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import Dashboard from './pages/Dashboard';
-import Serials from './pages/Serials';
 import SerialData from './pages/SerialData';
 import Orders from './pages/Orders';
 import RequestedOrder from './pages/RequestedOrder';
@@ -11,7 +10,8 @@ import Logs from './pages/Logs';
 import SystemLogs from './pages/SystemLogs';
 import Customers from './pages/Customers';
 import Products from './pages/Products';
-import type { Language } from './i18n';
+import type { AppSettings } from '../shared/types';
+import type { Language, TranslationKey } from './i18n';
 import { t } from './i18n';
 import { api } from './client';
 
@@ -23,14 +23,14 @@ export const LanguageContext = createContext<LangCtx>({ lang: 'ko', setLang: () 
 
 export const NavigationContext = createContext<{
   page: Page;
-  setPage: (p: Page, params?: any) => void;
-  params: any;
+  setPage: (p: Page, params?: unknown) => void;
+  params: unknown;
 }>({ page: 'dashboard', setPage: () => {}, params: null });
 
 export const useLang = () => useContext(LanguageContext);
 export const useNav  = () => useContext(NavigationContext);
 
-type Page = 'dashboard' | 'serials' | 'serial-data' | 'orders' | 'requested-order' | 'mail-system' | 'notification' | 'settings' | 'logs' | 'system_logs' | 'customers' | 'products';
+type Page = 'dashboard' | 'serial-data' | 'orders' | 'requested-order' | 'mail-system' | 'notification' | 'settings' | 'logs' | 'system_logs' | 'customers' | 'products';
 
 // ── SVG icons ──────────────────────────────────────────────────────────────────
 const SvgIcon = ({ d, size = 14 }: { d: React.ReactNode; size?: number }) => (
@@ -53,7 +53,7 @@ const NavIcons: Record<string, React.ReactNode> = {
   key:              <SvgIcon d={<><circle cx="6" cy="7" r="3.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8.5 9.5L14 15M11 12.5l1.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></>} />,
 };
 
-const MAIN_NAV: { key: Page; labelKey: string; icon: string }[] = [
+const MAIN_NAV: { key: Page; labelKey: TranslationKey; icon: string }[] = [
   { key: 'dashboard',        labelKey: 'nav_dashboard',    icon: 'dashboard' },
   { key: 'serial-data',      labelKey: 'nav_serials',       icon: 'serial-data' },
   { key: 'requested-order',  labelKey: 'nav_orders',        icon: 'requested-order' },
@@ -67,10 +67,10 @@ const MAIN_NAV: { key: Page; labelKey: string; icon: string }[] = [
 
 export default function App() {
   const [page, setPage]   = useState<Page>('dashboard');
-  const [params, setParams] = useState<any>(null);
+  const [params, setParams] = useState<unknown>(null);
   const [lang, setLang]   = useState<Language>('ko');
 
-  const handleSetPage = (p: Page, pms?: any) => {
+  const handleSetPage = (p: Page, pms?: unknown) => {
     setPage(p);
     setParams(pms || null);
   };
@@ -78,7 +78,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const settings = await api.getSettings() as any;
+        const settings = await api.getSettings() as AppSettings;
         if (settings.app_language) setLang(settings.app_language as Language);
       } catch {}
     })();
@@ -92,7 +92,6 @@ export default function App() {
     switch (page) {
       case 'dashboard':        return <Dashboard />;
       case 'serial-data':      return <SerialData />;
-      case 'serials':          return <Serials />;
       case 'requested-order':  return <RequestedOrder />;
       case 'orders':           return <Orders />;
       case 'mail-system':      return <MailSystem />;
@@ -137,7 +136,7 @@ export default function App() {
             <ul className="sidebar-nav">
               {MAIN_NAV.map(item => {
                 const active = page === item.key;
-                const label = t(lang, item.labelKey as any);
+                const label = t(lang, item.labelKey);
                 return (
                   <li key={item.key} className={active ? 'active' : ''} onClick={() => handleSetPage(item.key)}>
                     {NavIcons[item.icon]}
@@ -167,7 +166,7 @@ export default function App() {
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = page === 'settings' ? 'var(--accent-dim2)' : 'transparent'; (e.currentTarget as HTMLElement).style.color = page === 'settings' ? 'var(--accent)' : 'var(--text2)'; }}
               >
                 {NavIcons.settings}
-                <span>{t(lang, 'nav_settings' as any)}</span>
+                <span>{t(lang, 'nav_settings')}</span>
               </button>
               <div style={{ padding: '8px 10px 2px', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{

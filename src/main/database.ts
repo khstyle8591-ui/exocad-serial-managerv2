@@ -5,6 +5,14 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
+const CURRENT_SCHEMA_VERSION = 6;
+
+type Migration = {
+  version: number;
+  name: string;
+  run: () => void;
+};
+
 function resolveElectronUserDataPath(): string | null {
   if (!process.versions.electron) return null;
 
@@ -149,14 +157,18 @@ function migrateInboundClassificationConstraint(): void {
     row.sql.includes("'stop_request_candidate'") &&
     row.sql.includes("'renewal_request'") &&
     row.sql.includes("'missing_info'") &&
+    row.sql.includes("'invalid_cancellation_response'") &&
     row.sql.includes('missing_fields') &&
-    row.sql.includes('template_sent_at')
+    row.sql.includes('template_sent_at') &&
+    row.sql.includes('response_errors') &&
+    row.sql.includes('admin_review_resolved')
   ) return;
 
   console.log('[DB] Migrating inbound_mails: adding request classifications...');
   const columns = db.prepare('PRAGMA table_info(inbound_mails)').all() as { name: string }[];
   const hasMissingFields = columns.some(col => col.name === 'missing_fields');
   const hasTemplateSentAt = columns.some(col => col.name === 'template_sent_at');
+  const has = (name: string) => columns.some(col => col.name === name);
 
   db.exec(`
     CREATE TABLE inbound_mails_new (
@@ -168,7 +180,7 @@ function migrateInboundClassificationConstraint(): void {
       body             TEXT NOT NULL,
       received_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       classification   TEXT NOT NULL DEFAULT 'unclassified'
-                         CHECK(classification IN ('unclassified','renewal_request','stop_request_candidate','stop_request','missing_info','unrelated','error')),
+                         CHECK(classification IN ('unclassified','renewal_request','stop_request_candidate','stop_request','missing_info','invalid_cancellation_response','unrelated','error')),
       matched_template TEXT,
       matched_keywords TEXT NOT NULL DEFAULT '[]',
       extracted_serial TEXT,
@@ -176,6 +188,11 @@ function migrateInboundClassificationConstraint(): void {
       processed        INTEGER NOT NULL DEFAULT 0,
       missing_fields   TEXT NOT NULL DEFAULT '[]',
       template_sent_at TEXT,
+      response_errors  TEXT NOT NULL DEFAULT '[]',
+      response_attempt INTEGER NOT NULL DEFAULT 0,
+      response_customer_name TEXT,
+      admin_review     INTEGER NOT NULL DEFAULT 0,
+      admin_review_resolved INTEGER NOT NULL DEFAULT 0,
       error            TEXT,
       FOREIGN KEY (linked_serial_id) REFERENCES serials(id) ON DELETE SET NULL
     );
@@ -183,7 +200,8 @@ function migrateInboundClassificationConstraint(): void {
     INSERT INTO inbound_mails_new
       (id, message_id, mail_from, mail_to, subject, body, received_at,
        classification, matched_template, matched_keywords, extracted_serial,
-       linked_serial_id, processed, missing_fields, template_sent_at, error)
+       linked_serial_id, processed, missing_fields, template_sent_at, response_errors,
+       response_attempt, response_customer_name, admin_review, admin_review_resolved, error)
     SELECT
       id, message_id, mail_from, mail_to, subject, body, received_at,
       CASE WHEN classification = 'stop_request' THEN 'renewal_request' ELSE classification END,
@@ -191,6 +209,11 @@ function migrateInboundClassificationConstraint(): void {
       linked_serial_id, processed,
       ${hasMissingFields ? 'missing_fields' : "'[]'"},
       ${hasTemplateSentAt ? 'template_sent_at' : 'NULL'},
+      ${has('response_errors') ? 'response_errors' : "'[]'"},
+      ${has('response_attempt') ? 'response_attempt' : '0'},
+      ${has('response_customer_name') ? 'response_customer_name' : 'NULL'},
+      ${has('admin_review') ? 'admin_review' : '0'},
+      ${has('admin_review_resolved') ? 'admin_review_resolved' : '0'},
       error
     FROM inbound_mails;
 
@@ -249,6 +272,121 @@ function createPendingOrderSourceUniqueIndex(): void {
   `);
 }
 
+function createSerialMailNoticeLogsTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS serial_mail_notice_logs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      serial_id       INTEGER,
+      serial_number   TEXT NOT NULL DEFAULT '',
+      template_code   TEXT NOT NULL DEFAULT '',
+      notice_kind     TEXT NOT NULL CHECK(notice_kind IN ('expiry_renewal','expiry_stop')),
+      days_before     INTEGER NOT NULL,
+      recipient_email TEXT NOT NULL DEFAULT '',
+      status          TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      message         TEXT NOT NULL DEFAULT '',
+      sent_at         TEXT NOT NULL,
+      expires_at      TEXT NOT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notice_logs_serial_sent
+      ON serial_mail_notice_logs(serial_id, sent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notice_logs_expires
+      ON serial_mail_notice_logs(expires_at);
+  `);
+}
+
+function createAutoRenewalOrderNoticeLogsTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_renewal_order_notice_logs (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      serial_id            INTEGER,
+      serial_number        TEXT NOT NULL DEFAULT '',
+      customer_name        TEXT NOT NULL DEFAULT '',
+      customer_email       TEXT NOT NULL DEFAULT '',
+      main_product         TEXT NOT NULL DEFAULT '',
+      modules              TEXT NOT NULL DEFAULT '[]',
+      previous_expiry_date TEXT NOT NULL DEFAULT '',
+      renewed_expiry_date  TEXT NOT NULL DEFAULT '',
+      recipient_email      TEXT NOT NULL DEFAULT '',
+      subject              TEXT NOT NULL DEFAULT '',
+      html_body            TEXT NOT NULL DEFAULT '',
+      status               TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      message              TEXT NOT NULL DEFAULT '',
+      sent_at              TEXT NOT NULL,
+      created_at           TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_sent
+      ON auto_renewal_order_notice_logs(sent_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_serial
+      ON auto_renewal_order_notice_logs(serial_id, sent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_status
+      ON auto_renewal_order_notice_logs(status);
+  `);
+}
+
+function getUserVersion(): number {
+  return db.pragma('user_version', { simple: true }) as number;
+}
+
+function setUserVersion(version: number): void {
+  db.pragma(`user_version = ${version}`);
+}
+
+const migrations: Migration[] = [
+  {
+    version: 1,
+    name: 'activity_logs severity critical',
+    run: migrateSeverityConstraint,
+  },
+  {
+    version: 2,
+    name: 'inbound_mails request classifications',
+    run: migrateInboundClassificationConstraint,
+  },
+  {
+    version: 3,
+    name: 'inbound_mails message_id unique index',
+    run: ensureInboundMessageIdUniqueIndex,
+  },
+  {
+    version: 4,
+    name: 'pending_orders source_id unique index',
+    run: createPendingOrderSourceUniqueIndex,
+  },
+  {
+    version: 5,
+    name: 'serial mail notice logs',
+    run: createSerialMailNoticeLogsTable,
+  },
+  {
+    version: 6,
+    name: 'auto renewal order notice logs',
+    run: createAutoRenewalOrderNoticeLogsTable,
+  },
+];
+
+function runMigrations(): void {
+  const currentVersion = getUserVersion();
+  if (currentVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `Database schema version ${currentVersion} is newer than supported version ${CURRENT_SCHEMA_VERSION}`
+    );
+  }
+
+  for (const migration of migrations) {
+    if (migration.version <= currentVersion) continue;
+    logger.info(`[DB] Running migration ${migration.version}: ${migration.name}`);
+    migration.run();
+    setUserVersion(migration.version);
+  }
+
+  if (getUserVersion() < CURRENT_SCHEMA_VERSION) {
+    setUserVersion(CURRENT_SCHEMA_VERSION);
+  }
+}
+
 export function initDatabase(): Database.Database {
   const renamed = detectAndRenameLegacy();
 
@@ -259,17 +397,29 @@ export function initDatabase(): Database.Database {
   db.pragma('foreign_keys = ON');
 
   createTables();
-  migrateSeverityConstraint();
-  migrateInboundClassificationConstraint();
-  ensureInboundMessageIdUniqueIndex();
-  createPendingOrderSourceUniqueIndex();
+  runMigrations();
 
-  // 레거시 DB 존재 알림 (settings에 기록 — 첫 실행만)
+  // 레거시 DB 존재 알림 (settings에 기록 — 첫 실행만).
+  // 일회성 settings key는 이후 재사용 가능하도록 삭제하거나 덮어쓰지 않는다.
   if (renamed || fs.existsSync(getLegacyDbPath())) {
     db.prepare(
       "INSERT OR IGNORE INTO settings (key, value) VALUES ('legacy_import_available', 'true')"
     ).run();
   }
+
+  return db;
+}
+
+export function initDatabaseForTesting(): Database.Database {
+  if (db) {
+    db.close();
+  }
+
+  db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+
+  createTables();
+  runMigrations();
 
   return db;
 }
@@ -295,6 +445,7 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_customers_email  ON customers(email);
     CREATE INDEX IF NOT EXISTS idx_customers_phone  ON customers(phone);
     CREATE INDEX IF NOT EXISTS idx_customers_dealer ON customers(dealer);
+    CREATE INDEX IF NOT EXISTS idx_customers_sales_manager ON customers(sales_manager);
 
     -- =========================================================
     -- serials  (REDESIGNED — customer_* 컬럼 제거, customer_id FK)
@@ -325,6 +476,8 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_serials_status   ON serials(status);
     CREATE INDEX IF NOT EXISTS idx_serials_stop     ON serials(renewal_stop_requested, expiry_date);
     CREATE INDEX IF NOT EXISTS idx_serials_number   ON serials(serial_number);
+    CREATE INDEX IF NOT EXISTS idx_serials_status_expiry_id ON serials(status, expiry_date, id);
+    CREATE INDEX IF NOT EXISTS idx_serials_customer_status_expiry ON serials(customer_id, status, expiry_date);
 
     -- =========================================================
     -- activity_logs  (REDESIGNED — actor/diff/trigger_id/severity)
@@ -379,7 +532,7 @@ function createTables(): void {
       body             TEXT NOT NULL,
       received_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       classification   TEXT NOT NULL DEFAULT 'unclassified'
-                         CHECK(classification IN ('unclassified','renewal_request','stop_request_candidate','stop_request','missing_info','unrelated','error')),
+                         CHECK(classification IN ('unclassified','renewal_request','stop_request_candidate','stop_request','missing_info','invalid_cancellation_response','unrelated','error')),
       matched_template TEXT,
       matched_keywords TEXT NOT NULL DEFAULT '[]',
       extracted_serial TEXT,
@@ -387,6 +540,11 @@ function createTables(): void {
       processed        INTEGER NOT NULL DEFAULT 0,
       missing_fields   TEXT NOT NULL DEFAULT '[]',
       template_sent_at TEXT,
+      response_errors  TEXT NOT NULL DEFAULT '[]',
+      response_attempt INTEGER NOT NULL DEFAULT 0,
+      response_customer_name TEXT,
+      admin_review     INTEGER NOT NULL DEFAULT 0,
+      admin_review_resolved INTEGER NOT NULL DEFAULT 0,
       error            TEXT,
       FOREIGN KEY (linked_serial_id) REFERENCES serials(id) ON DELETE SET NULL
     );
@@ -431,6 +589,58 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_pending_serial ON pending_orders(serial_number);
 
     -- =========================================================
+    -- serial_mail_notice_logs  (per-serial expiry notice history)
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS serial_mail_notice_logs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      serial_id       INTEGER,
+      serial_number   TEXT NOT NULL DEFAULT '',
+      template_code   TEXT NOT NULL DEFAULT '',
+      notice_kind     TEXT NOT NULL CHECK(notice_kind IN ('expiry_renewal','expiry_stop')),
+      days_before     INTEGER NOT NULL,
+      recipient_email TEXT NOT NULL DEFAULT '',
+      status          TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      message         TEXT NOT NULL DEFAULT '',
+      sent_at         TEXT NOT NULL,
+      expires_at      TEXT NOT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notice_logs_serial_sent
+      ON serial_mail_notice_logs(serial_id, sent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notice_logs_expires
+      ON serial_mail_notice_logs(expires_at);
+
+    -- =========================================================
+    -- auto_renewal_order_notice_logs  (per-auto-renewal order mail history)
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS auto_renewal_order_notice_logs (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      serial_id            INTEGER,
+      serial_number        TEXT NOT NULL DEFAULT '',
+      customer_name        TEXT NOT NULL DEFAULT '',
+      customer_email       TEXT NOT NULL DEFAULT '',
+      main_product         TEXT NOT NULL DEFAULT '',
+      modules              TEXT NOT NULL DEFAULT '[]',
+      previous_expiry_date TEXT NOT NULL DEFAULT '',
+      renewed_expiry_date  TEXT NOT NULL DEFAULT '',
+      recipient_email      TEXT NOT NULL DEFAULT '',
+      subject              TEXT NOT NULL DEFAULT '',
+      html_body            TEXT NOT NULL DEFAULT '',
+      status               TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      message              TEXT NOT NULL DEFAULT '',
+      sent_at              TEXT NOT NULL,
+      created_at           TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_sent
+      ON auto_renewal_order_notice_logs(sent_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_serial
+      ON auto_renewal_order_notice_logs(serial_id, sent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_status
+      ON auto_renewal_order_notice_logs(status);
+
+    -- =========================================================
     -- settings  (UNCHANGED)
     -- =========================================================
     CREATE TABLE IF NOT EXISTS settings (
@@ -450,5 +660,6 @@ export function getDb(): Database.Database {
 export function closeDatabase(): void {
   if (db) {
     db.close();
+    db = undefined as unknown as Database.Database;
   }
 }

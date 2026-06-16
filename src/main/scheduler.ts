@@ -3,14 +3,18 @@ import { serialService } from './services/serial.service';
 import { cancelService, cleanOldScreenshots } from './services/cancel.service';
 import { checkInboundNow } from './services/mail/inbound.service';
 import { notificationService, buildScheduleSummary } from './services/notification.service';
-import { runAutoRenewNow, runLimboFallbackNow } from './services/automation.service';
+import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow } from './services/automation.service';
 import { sendTemplate as sendMailTemplate } from './services/mail/smtp.service';
 import { sendCancelCompleteNotice } from './services/mail/lifecycle-notice.service';
+import { deleteOldActivityLogs } from './services/activity-log.service';
+import { deleteExpiredSerialMailNoticeLogs, logSerialMailNotice } from './services/serial-mail-notice-log.service';
 import { getSettings } from './settings';
 import { getDb } from './database';
 import { logger } from './utils/logger';
 import { getDateString, getTodayDateString, getYesterdayDateString } from './utils/date-utils';
 import type { DailyReport, CancelResult, ExpiryNoticeRule, SerialWithCustomer } from '../shared/types';
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 let mailCheckTasks: cron.ScheduledTask[] = [];
 let dailyCancelTask: cron.ScheduledTask | null = null;
@@ -25,7 +29,7 @@ let expiryNoticeTask: cron.ScheduledTask | null = null;
 // 하루 동안의 cancel 결과를 모아둠 (앱 재시작 대비 DB 영속)
 interface PersistedCancelResult extends CancelResult { date: string; }
 let limboCronTask: cron.ScheduledTask | null = null;
-let dailyCancelResults: CancelResult[] = [];
+let dailyCancelResults: PersistedCancelResult[] = [];
 // lastReportSentDate를 메모리에만 두면 앱 재시작 시 초기화되어 중복 리포트 발송.
 // DB settings에 영속화하여 재시작 후에도 중복 방지.
 function getLastReportSentDate(): string {
@@ -45,13 +49,27 @@ function setLastReportSentDate(date: string): void {
   } catch { /* DB 미초기화 시 무시 */ }
 }
 
+function persistSchedulerSummary(summary: string): void {
+  try {
+    const payload = JSON.stringify({
+      summary,
+      updated_at: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }),
+    });
+    getDb()
+      .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('scheduler_summary', ?)")
+      .run(payload);
+  } catch { /* DB 미초기화 시 무시 */ }
+}
+
 function persistDailyCancelResults(): void {
   try {
-    const today = getTodayDateString();
-    const data: PersistedCancelResult[] = dailyCancelResults.map(r => ({ ...r, date: today }));
     getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('daily_cancel_results', ?)")
-      .run(JSON.stringify(data));
+      .run(JSON.stringify(dailyCancelResults));
   } catch { /* DB 미초기화 시 무시 */ }
+}
+
+function withCancelResultDate(result: CancelResult, date = getTodayDateString()): PersistedCancelResult {
+  return { ...result, date };
 }
 
 function initDailyCancelResults(): void {
@@ -63,7 +81,7 @@ function initDailyCancelResults(): void {
       const parsed: PersistedCancelResult[] = JSON.parse(row.value);
       dailyCancelResults = parsed
         .filter(r => r.date === today)
-        .map(r => ({ serial_number: r.serial_number, success: r.success, error: r.error, verified: r.verified, verified_status: r.verified_status, screenshot_path: r.screenshot_path }));
+        .map(r => ({ serial_number: r.serial_number, success: r.success, error: r.error, verified: r.verified, verified_status: r.verified_status, screenshot_path: r.screenshot_path, date: r.date }));
       if (dailyCancelResults.length > 0) {
         logger.info(`[Scheduler] Restored today's cancel failure history: ${dailyCancelResults.length}`);
       }
@@ -72,7 +90,7 @@ function initDailyCancelResults(): void {
 }
 
 // 시간 문자열 (HH:MM 또는 HH:MM AM/PM) → cron expression (M H * * *)
-function timeToCron(timeStr: string): string {
+export function timeToCron(timeStr: string): string {
   const clean = (timeStr || '09:00').trim().toUpperCase();
   const isPM = clean.includes('PM');
   const isAM = clean.includes('AM');
@@ -110,6 +128,10 @@ export function startScheduler(): void {
   // 매일 00:10 JST — 30일 이상 된 Playwright 스크린샷 정리 (디스크 고갈 방지)
   cron.schedule('10 0 * * *', () => {
     cleanOldScreenshots(30);
+    const deleted = deleteOldActivityLogs(Number(process.env.ACTIVITY_LOG_RETENTION_DAYS) || 180);
+    if (deleted > 0) logger.info(`[activity_logs] deleted old rows: ${deleted}`);
+    const deletedNoticeLogs = deleteExpiredSerialMailNoticeLogs();
+    if (deletedNoticeLogs > 0) logger.info(`[serial_mail_notice_logs] deleted expired rows: ${deletedNoticeLogs}`);
   }, { timezone: 'Asia/Tokyo' });
 
   // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
@@ -135,8 +157,8 @@ export function startScheduler(): void {
       for (const result of results) {
         await notificationService.sendCancelResultSlack(result).catch(() => { });
       }
-    } catch (err: any) {
-      logger.error(`Cancel task error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Cancel task error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
   */
@@ -172,8 +194,8 @@ export function startScheduler(): void {
       });
 
       logger.info(`Monthly report sent: ${targetMonthStr}, expiring=${expiringSerials.length}`);
-    } catch (err: any) {
-      logger.error(`Monthly report error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Monthly report error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -187,8 +209,8 @@ export function startScheduler(): void {
       } else {
         logger.info('[Limbo] no fallback targets');
       }
-    } catch (err: any) {
-      logger.error(`[Limbo] error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -213,8 +235,8 @@ export function startScheduler(): void {
         try {
           // hasStopRequested=1 means customer requested renewal stop, so cancel should run.
           cancel_skipped = !serialService.hasStopRequested(s.id);
-        } catch (e: any) {
-          logger.warn(`[dailySummary] hasStopRequested(${s.id}) error: ${e.message}`);
+        } catch (e: unknown) {
+          logger.warn(`[dailySummary] hasStopRequested(${s.id}) error: ${getErrorMessage(e)}`);
         }
         return {
           serial_number: s.serial_number,
@@ -246,9 +268,10 @@ export function startScheduler(): void {
       
       const yesterdayStats = {
         registered: yesterdayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-        renewed: yesterdayLogs.filter(l => l.action === 'renewed').length,
+        autoRenewed: yesterdayLogs.filter(l => l.action === 'renewed' && l.actor === 'auto').length,
+        manualRenewed: yesterdayLogs.filter(l => l.action === 'renewed' && l.actor !== 'auto').length,
         cancelled: yesterdayLogs.filter(l => l.action === 'cancelled').length,
-        failed: dailyCancelResults.filter(r => !r.success).length,
+        failed: dailyCancelResults.filter(r => r.date === yesterdayDateStr && !r.success).length,
       };
 
       await notificationService.sendDailySummarySlack({
@@ -258,8 +281,8 @@ export function startScheduler(): void {
       });
 
       logger.info('Daily summary Slack notification sent');
-    } catch (err: any) {
-      logger.error(`Daily summary Slack notification error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Daily summary Slack notification error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -270,7 +293,7 @@ export function startScheduler(): void {
   const reportTimes = settings.daily_report_times?.length ? settings.daily_report_times : ['10:00'];
   const summary = buildScheduleSummary(mailTimes, cancelTime, reportTimes, settings.expiry_notice_time || '05:00');
   logger.info(`[Schedule Summary] ${summary}`);
-  notificationService.sendSchedulerStartupSlack(summary).catch(() => {});
+  persistSchedulerSummary(summary);
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -289,7 +312,7 @@ function startPreExpiryTask(): void {
     try {
       const results = await cancelService.processPreExpiryAutoCancel();
       if (results.length > 0) {
-        dailyCancelResults.push(...results);
+        dailyCancelResults.push(...results.map(r => withCancelResultDate(r)));
         persistDailyCancelResults();
         logger.info(`Pre-expiry auto-cancel completed: ${results.length}`);
 
@@ -298,8 +321,21 @@ function startPreExpiryTask(): void {
           await notificationService.sendCancelResultSlack(result).catch(() => { });
         }
       }
-    } catch (err: any) {
-      logger.error(`Pre-expiry auto-cancel error: ${err.message}`);
+
+      const failsafe = await runCandidateFailsafeCancelNow();
+      if (failsafe.results.length > 0) {
+        dailyCancelResults.push(...failsafe.results.map(r => withCancelResultDate(r)));
+        persistDailyCancelResults();
+        logger.warn(
+          `[Failsafe] candidate auto-cancel completed: processed=${failsafe.processed}, ` +
+          `success=${failsafe.success}, failed=${failsafe.failed}`
+        );
+        for (const result of failsafe.results) {
+          await notificationService.sendCancelResultSlack(result).catch(() => {});
+        }
+      }
+    } catch (err: unknown) {
+      logger.error(`Pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -352,14 +388,14 @@ async function retryFailedCancellations() {
     logger.info(`[Retry] retry started: ${fail.serial_number}`);
     try {
       const result = await cancelService.cancelSubscription(fail.serial_number, true);
-      if (result.success) {
+      if (result.success && result.verified) {
         const serial = serialService.getBySerialNumber(fail.serial_number);
         if (serial) {
           const updated = serialService.cancelSubscription(serial.id);
           if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
         }
-        
-        // 성공으로 상태 업데이트 (일일 리포트에서 실패 목록 제거됨)
+
+        // 검증된 성공만 상태 업데이트 (일일 리포트에서 실패 목록 제거됨)
         fail.success = true;
         fail.verified = result.verified;
         fail.verified_status = result.verified_status;
@@ -368,12 +404,16 @@ async function retryFailedCancellations() {
 
         logger.info(`[Retry] retry succeeded: ${fail.serial_number}`);
         await notificationService.sendCancelResultSlack(result).catch(() => {});
+      } else if (result.success && !result.verified) {
+        // 사이트 작업은 끝났으나 미검증 → 실패로 남겨 다음 회차/수동 확인 대상으로 유지
+        fail.error = `[재시도 미검증] status=${result.verified_status || 'unknown'}`;
+        logger.warn(`[Retry] retry completed but UNVERIFIED; kept as failure: ${fail.serial_number}`);
       } else {
         fail.error = `[재시도 실패] ${result.error}`;
         logger.warn(`[Retry] retry failed again: ${fail.serial_number} - ${result.error}`);
       }
-    } catch (err: any) {
-      logger.error(`[Retry] retry error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Retry] retry error: ${getErrorMessage(err)}`);
     }
     // 연속 요청 방지
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -403,8 +443,8 @@ function startAutoRenewTask(): void {
       } else {
         logger.info('[AutoRenew] no renewal targets');
       }
-    } catch (err: any) {
-      logger.error(`[AutoRenew] error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`[AutoRenew] error: ${getErrorMessage(err)}`);
     }
   }, { timezone: 'Asia/Tokyo' });
 
@@ -428,8 +468,8 @@ export function startMailCheck(): void {
       if (result.errors.length > 0) {
         logger.warn(`Mail processing errors: ${result.errors.join(', ')}`);
       }
-    } catch (err: any) {
-      logger.error(`Mail check error: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Mail check error: ${getErrorMessage(err)}`);
     }
   };
 
@@ -449,7 +489,7 @@ function normalizeExpiryNoticeRules(settings: ReturnType<typeof getSettings>): E
   const rawRules = Array.isArray(settings.expiry_notice_rules) ? settings.expiry_notice_rules : [];
   const fallbackTemplate = settings.expiry_notice_renewal_template || 'renewal_reminder';
   const fromRules = rawRules
-    .map((rule: any) => ({
+    .map((rule: Partial<ExpiryNoticeRule>) => ({
       id: String(rule.id || `d${rule.days_before ?? ''}`),
       days_before: Number(rule.days_before),
       renewal_template: String(rule.renewal_template || fallbackTemplate),
@@ -542,12 +582,43 @@ export function startExpiryNoticeTask(): void {
           );
 
           if (result.success) {
+            logSerialMailNotice({
+              serial_id: serial.id,
+              serial_number: serial.serial_number,
+              template_code: code,
+              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
+              days_before: rule.days_before,
+              recipient_email: serial.customer.email,
+              status: 'sent',
+              message: result.message,
+            });
             logger.info(`[ExpiryNotice] D-${rule.days_before} email sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
           } else {
+            logSerialMailNotice({
+              serial_id: serial.id,
+              serial_number: serial.serial_number,
+              template_code: code,
+              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
+              days_before: rule.days_before,
+              recipient_email: serial.customer.email,
+              status: 'failed',
+              message: result.message,
+            });
             logger.error(`[ExpiryNotice] D-${rule.days_before} send failed: ${serial.serial_number} - ${result.message}`);
           }
-        } catch (err: any) {
-          logger.error(`[ExpiryNotice] send failed: ${serial.serial_number} - ${err.message}`);
+        } catch (err: unknown) {
+          const message = getErrorMessage(err);
+          logSerialMailNotice({
+            serial_id: serial.id,
+            serial_number: serial.serial_number,
+            template_code: code,
+            notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
+            days_before: rule.days_before,
+            recipient_email: serial.customer.email,
+            status: 'failed',
+            message,
+          });
+          logger.error(`[ExpiryNotice] send failed: ${serial.serial_number} - ${message}`);
         }
       }
     }
@@ -615,15 +686,17 @@ async function sendDailyReportForDate(targetDateStr: string): Promise<void> {
   const report: DailyReport = {
     date: targetDateStr,
     new_registrations: logs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-    renewals: logs.filter(l => l.action === 'renewed').length,
+    renewals: logs.filter(l => l.action === 'renewed' && l.actor === 'auto').length,
+    auto_renewals: logs.filter(l => l.action === 'renewed' && l.actor === 'auto').length,
+    manual_renewals: logs.filter(l => l.action === 'renewed' && l.actor !== 'auto').length,
     cancellations: logs.filter(l => l.action === 'cancelled').length,
-    failed_cancellations: lastSent === targetDateStr ? [] : dailyCancelResults.filter(r => !r.success),
+    failed_cancellations: lastSent === targetDateStr ? [] : dailyCancelResults.filter(r => r.date === targetDateStr && !r.success),
     details: logs,
   };
 
   await notificationService.sendDailyReport(report);
   setLastReportSentDate(targetDateStr);
-  dailyCancelResults = dailyCancelResults.filter(r => !r.success);
+  dailyCancelResults = dailyCancelResults.filter(r => !r.success && r.date !== targetDateStr);
   persistDailyCancelResults();
 }
 
@@ -647,8 +720,8 @@ export function startDailyReportTasks(): void {
       try {
         await sendDailyReportForDate(getYesterdayDateString());
         logger.info('Daily report sent');
-      } catch (err: any) {
-        logger.error(`Daily report error: ${err.message}`);
+      } catch (err: unknown) {
+        logger.error(`Daily report error: ${getErrorMessage(err)}`);
       }
     }, { timezone: 'Asia/Tokyo' });
 

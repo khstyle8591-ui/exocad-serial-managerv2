@@ -1,17 +1,49 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { IpcRendererEvent } from 'electron';
+import type {
+  AddOn,
+  AppSettings,
+  CustomerInput,
+  LegacyImportInput,
+  LogFilter,
+  MailTemplateUpsert,
+  PendingOrder,
+  PollSource,
+  SerialExportQuery,
+  SerialInput,
+  SerialListQuery,
+  SerialWithCustomer,
+  SerialVersionSummary,
+} from '../shared/types';
+
+type CustomerMergeQuery = { email?: string; name?: string; phone?: string; dealer?: string };
+type MailTemplateVars = Record<string, string>;
+type MailSendOptions = Record<string, unknown>;
+type OrderApproveOptions = {
+  serial_status?: SerialWithCustomer['status'];
+  customer_id?: number;
+  customer_data?: CustomerInput;
+};
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── Serial CRUD ──────────────────────────────────────────────────────────────
+  // @deprecated Compatibility API. New UI should use listSerials or exportSerialsByFilter.
   getSerials: () => ipcRenderer.invoke('serial:getAll'),
+  listSerials: (query: SerialListQuery) => ipcRenderer.invoke('serial:list', query),
+  getExpiringSoonSerials: (days = 60, limit = 50) =>
+    ipcRenderer.invoke('serial:getExpiringSoon', days, limit),
+  getSerialVersionSummary: (): Promise<SerialVersionSummary[]> =>
+    ipcRenderer.invoke('serial:getVersionSummary'),
   getSerialById: (id: number) => ipcRenderer.invoke('serial:getById', id),
-  createSerial: (input: any) => ipcRenderer.invoke('serial:create', input),
-  updateSerial: (id: number, input: any) => ipcRenderer.invoke('serial:update', id, input),
+  createSerial: (input: SerialInput) => ipcRenderer.invoke('serial:create', input),
+  updateSerial: (id: number, input: Partial<SerialInput>) => ipcRenderer.invoke('serial:update', id, input),
   deleteSerial: (id: number) => ipcRenderer.invoke('serial:delete', id),
   searchSerials: (query: string) => ipcRenderer.invoke('serial:search', query),
-  addAddon: (id: number, addon: any) => ipcRenderer.invoke('serial:addAddon', id, addon),
+  addAddon: (id: number, addon: AddOn) => ipcRenderer.invoke('serial:addAddon', id, addon),
   bulkImport: () => ipcRenderer.invoke('serial:bulkImport'),
   downloadExcelTemplate: () => ipcRenderer.invoke('excel:downloadTemplate'),
-  exportSerials: (serials: any[]) => ipcRenderer.invoke('excel:exportSerials', serials),
+  exportSerials: (serials: SerialWithCustomer[]) => ipcRenderer.invoke('excel:exportSerials', serials),
+  exportSerialsByFilter: (query: SerialExportQuery) => ipcRenderer.invoke('excel:exportSerialsByFilter', query),
 
   // ── Serial domain actions ────────────────────────────────────────────────────
   activateSerial: (id: number) => ipcRenderer.invoke('serial:activate', id),
@@ -24,12 +56,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Customer CRUD ────────────────────────────────────────────────────────────
   listCustomers: () => ipcRenderer.invoke('customer:list'),
+  listCustomerSerialSummaries: () => ipcRenderer.invoke('customer:serialSummaries'),
   getCustomerById: (id: number) => ipcRenderer.invoke('customer:getById', id),
-  createCustomer: (input: any) => ipcRenderer.invoke('customer:create', input),
-  updateCustomer: (id: number, input: any) => ipcRenderer.invoke('customer:update', id, input),
+  createCustomer: (input: CustomerInput) => ipcRenderer.invoke('customer:create', input),
+  updateCustomer: (id: number, input: Partial<CustomerInput>) => ipcRenderer.invoke('customer:update', id, input),
   deleteCustomer: (id: number) => ipcRenderer.invoke('customer:delete', id),
   searchCustomers: (query: string) => ipcRenderer.invoke('customer:search', query),
-  getCustomerMergeCandidates: (query: any) =>
+  getCustomerMergeCandidates: (query: CustomerMergeQuery) =>
     ipcRenderer.invoke('customer:mergeCandidates', query),
 
   // ── Cancel (Playwright) ──────────────────────────────────────────────────────
@@ -47,22 +80,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Mail — Inbound ───────────────────────────────────────────────────────────
   checkInboundNow: () => ipcRenderer.invoke('mail:checkInboundNow'),
   inboundDryRun: () => ipcRenderer.invoke('mail:inboundDryRun'),
-  testMailConnection: (settingsOverride?: any) =>
+  testMailConnection: (settingsOverride?: Partial<AppSettings>) =>
     ipcRenderer.invoke('mail:testConnection', settingsOverride),
-  listInboundMails: (filter?: any) => ipcRenderer.invoke('mail:listInbound', filter),
+  listInboundMails: (filter?: { classification?: string[]; limit?: number; offset?: number }) =>
+    ipcRenderer.invoke('mail:listInbound', filter),
   confirmStopRequestFromMail: (id: number) => ipcRenderer.invoke('mail:confirmStopRequest', id),
   sendMissingInfoTemplateForMail: (id: number) =>
     ipcRenderer.invoke('mail:sendMissingInfoTemplate', id),
 
   // ── Mail — Outbound + Templates ──────────────────────────────────────────────
-  sendMailTemplate: (code: string, to: string, vars: any, options?: any) =>
+  sendMailTemplate: (code: string, to: string, vars: MailTemplateVars, options?: MailSendOptions) =>
     ipcRenderer.invoke('mail:sendTemplate', code, to, vars, options),
-  testSmtp: (settingsOverride?: any) => ipcRenderer.invoke('mail:testSmtp', settingsOverride),
-  sendTestDryRun: (settingsOverride?: any) =>
+  testSmtp: (settingsOverride?: Partial<AppSettings>) => ipcRenderer.invoke('mail:testSmtp', settingsOverride),
+  sendTestDryRun: (settingsOverride?: Partial<AppSettings>) =>
     ipcRenderer.invoke('mail:sendTestDryRun', settingsOverride),
   listMailTemplates: () => ipcRenderer.invoke('mailTemplate:list'),
   getMailTemplate: (code: string) => ipcRenderer.invoke('mailTemplate:get', code),
-  upsertMailTemplate: (template: any) => ipcRenderer.invoke('mailTemplate:upsert', template),
+  upsertMailTemplate: (template: MailTemplateUpsert) => ipcRenderer.invoke('mailTemplate:upsert', template),
   deleteMailTemplate: (code: string) => ipcRenderer.invoke('mailTemplate:delete', code),
   previewMailTemplate: (code: string, serialId: number) =>
     ipcRenderer.invoke('mailTemplate:preview', code, serialId),
@@ -75,16 +109,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  saveSettings: (settings: any) => ipcRenderer.invoke('settings:save', settings),
+  saveSettings: (settings: Partial<AppSettings>) => ipcRenderer.invoke('settings:save', settings),
   exportSettings: () => ipcRenderer.invoke('settings:export'),
   importSettings: () => ipcRenderer.invoke('settings:import'),
 
   // ── Logs ─────────────────────────────────────────────────────────────────────
-  listLogs: (filter?: any) => ipcRenderer.invoke('logs:list', filter),
+  listLogs: (filter?: LogFilter) => ipcRenderer.invoke('logs:list', filter),
 
   // logs:push — main→renderer push event (returns cleanup function)
   onLogsPush: (callback: (payload: { id: number }) => void) => {
-    const handler = (_event: any, payload: { id: number }) => callback(payload);
+    const handler = (_event: IpcRendererEvent, payload: { id: number }) => callback(payload);
     ipcRenderer.on('logs:push', handler);
     return () => ipcRenderer.removeListener('logs:push', handler);
   },
@@ -92,32 +126,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Orders ───────────────────────────────────────────────────────────────────
   getOrders: () => ipcRenderer.invoke('order:getPending'),
   listGroupedOrders: () => ipcRenderer.invoke('order:listGrouped'),
-  approveOrder: (id: number, options?: any) => ipcRenderer.invoke('order:approve', id, options),
+  approveOrder: (id: number, options?: OrderApproveOptions) => ipcRenderer.invoke('order:approve', id, options),
   rejectOrder: (id: number) => ipcRenderer.invoke('order:reject', id),
-  updateOrder: (id: number, data: any) => ipcRenderer.invoke('order:update', id, data),
+  updateOrder: (id: number, data: Partial<PendingOrder>) => ipcRenderer.invoke('order:update', id, data),
+  updateDataOrder: (id: number, data: Partial<PendingOrder>) => ipcRenderer.invoke('order:updateData', id, data),
   deleteOrder: (id: number) => ipcRenderer.invoke('order:delete', id),
   pollNow: (sourceId?: string) => ipcRenderer.invoke('order:pollNow', sourceId),
-  pollDryRun: (sourceId?: string, sourceOverrides?: any) =>
+  pollDryRun: (sourceId?: string, sourceOverrides?: Partial<PollSource>) =>
     ipcRenderer.invoke('order:pollDryRun', sourceId, sourceOverrides),
   getPollStatus: () => ipcRenderer.invoke('order:getPollStatus'),
   restartScheduler: () => ipcRenderer.invoke('order:restartScheduler'),
 
   // ── Notification ─────────────────────────────────────────────────────────────
-  testSlackWebhook: (settingsOverride?: any) =>
+  testSlackWebhook: (settingsOverride?: Partial<AppSettings>) =>
     ipcRenderer.invoke('notification:testSlack', settingsOverride),
   sendDailyReportNow: () => ipcRenderer.invoke('notification:sendDailyReportNow'),
   listReportTimes: () => ipcRenderer.invoke('notification:listReportTimes'),
   setReportTimes: (times: string[]) =>
     ipcRenderer.invoke('notification:setReportTimes', times),
-  runExpiryNoticeDryRun: (input: any) => ipcRenderer.invoke('expiryNotice:dryRun', input),
-  runStopLifecycleNoticeDryRun: (input: any) => ipcRenderer.invoke('stopLifecycleNotice:dryRun', input),
+  runExpiryNoticeDryRun: (input: unknown) => ipcRenderer.invoke('expiryNotice:dryRun', input),
+  runStopLifecycleNoticeDryRun: (input: unknown) => ipcRenderer.invoke('stopLifecycleNotice:dryRun', input),
 
   // ── Legacy Import ─────────────────────────────────────────────────────────────
   detectLegacy: () => ipcRenderer.invoke('legacy:detect'),
-  listLegacySerials: (filter?: any) => ipcRenderer.invoke('legacy:listSerials', filter),
-  suggestLegacyMerge: (legacyRow: any) =>
+  listLegacySerials: (filter?: { status?: string[]; limit?: number; offset?: number }) =>
+    ipcRenderer.invoke('legacy:listSerials', filter),
+  suggestLegacyMerge: (legacyRow: unknown) =>
     ipcRenderer.invoke('legacy:suggestMerge', legacyRow),
-  importLegacySerial: (input: any) => ipcRenderer.invoke('legacy:import', input),
+  importLegacySerial: (input: LegacyImportInput) => ipcRenderer.invoke('legacy:import', input),
 
   // ── Webhook server control ────────────────────────────────────────────────────
   getWebhookStatus: () => ipcRenderer.invoke('webhook:getStatus'),

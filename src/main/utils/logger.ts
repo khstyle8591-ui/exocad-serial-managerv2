@@ -1,52 +1,57 @@
 import fs from 'fs';
-import path from 'path';
+import winston from 'winston';
+import DailyRotateFile from 'winston-daily-rotate-file';
+import { LOG_DIR } from './paths';
 
 class Logger {
-  private logDir: string = '';
-  private logFile: string = '';
+  private logger: winston.Logger | null = null;
 
   init(): void {
-    // 환경변수 LOG_DIR → process.cwd()/logs 순으로 폴백
-    this.logDir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
-    if (!fs.existsSync(this.logDir)) {
-      fs.mkdirSync(this.logDir, { recursive: true });
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
     }
-    this.updateLogFile();
+
+    this.logger = winston.createLogger({
+      level: process.env.LOG_LEVEL || 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.errors({ stack: true }),
+        winston.format.json()
+      ),
+      transports: [
+        new DailyRotateFile({
+          dirname: LOG_DIR,
+          filename: '%DATE%.log',
+          datePattern: 'YYYY-MM-DD',
+          maxFiles: process.env.LOG_MAX_FILES || '14d',
+          maxSize: process.env.LOG_MAX_SIZE || '100m',
+          zippedArchive: false,
+        }),
+        new winston.transports.Console({
+          format: winston.format.combine(
+            winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+            winston.format.printf(info => `[${info.timestamp}] [${String(info.level).toUpperCase()}] ${info.message}`)
+          ),
+        }),
+      ],
+    });
   }
 
-  private updateLogFile(): void {
-    // JST (UTC+9) 기준 날짜 문자열 (YYYY-MM-DD)
-    const date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    this.logFile = path.join(this.logDir, `${date}.log`);
-  }
-
-  private write(level: string, message: string): void {
-    this.updateLogFile();
-    // JST (UTC+9) 기준 타임스탬프 (YYYY-MM-DD HH:mm:ss)
-    const timestamp = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    const line = `[${timestamp}] [${level}] ${message}\n`;
-    if (this.logFile) {
-      try {
-        fs.appendFileSync(this.logFile, line);
-      } catch { /* ignore */ }
-    }
-    if (level === 'ERROR') {
-      console.error(line.trim());
-    } else {
-      console.log(line.trim());
-    }
+  private write(level: 'info' | 'warn' | 'error', message: string): void {
+    if (!this.logger) this.init();
+    this.logger?.[level](message);
   }
 
   info(message: string): void {
-    this.write('INFO', message);
+    this.write('info', message);
   }
 
   warn(message: string): void {
-    this.write('WARN', message);
+    this.write('warn', message);
   }
 
   error(message: string): void {
-    this.write('ERROR', message);
+    this.write('error', message);
   }
 }
 

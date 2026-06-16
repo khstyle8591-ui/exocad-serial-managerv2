@@ -9,6 +9,8 @@ module.exports = {
                 HTTP_PORT: 80,
                 HTTPS_PORT: 443,
                 CERT_DOMAIN: 'geomedi-exocad.duckdns.org',
+                DATA_DIR: '/home/geomedicho/exocad-serial/data',
+                LOG_DIR: '/home/geomedicho/exocad-serial/logs',
             },
             watch: false,
             autorestart: true,

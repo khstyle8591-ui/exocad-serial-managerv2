@@ -8,10 +8,14 @@ const router = Router();
 router.get('/daily', (_req: Request, res: Response) => {
     const todayLogs = serialService.getTodayLogs();
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const autoRenewals = todayLogs.filter(l => l.action === 'renewed' && l.actor === 'auto').length;
+    const manualRenewals = todayLogs.filter(l => l.action === 'renewed' && l.actor !== 'auto').length;
     res.json({
         date: today,
         new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-        renewals: todayLogs.filter(l => l.action === 'renewed').length,
+        renewals: autoRenewals,
+        auto_renewals: autoRenewals,
+        manual_renewals: manualRenewals,
         cancellations: todayLogs.filter(l => l.action === 'cancelled').length,
         failed_cancellations: [],
         details: todayLogs,
@@ -37,10 +41,14 @@ router.get('/monthly-expiry', (_req: Request, res: Response) => {
 router.post('/send-daily', async (_req: Request, res: Response) => {
     const todayLogs = serialService.getTodayLogs();
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const autoRenewals = todayLogs.filter(l => l.action === 'renewed' && l.actor === 'auto').length;
+    const manualRenewals = todayLogs.filter(l => l.action === 'renewed' && l.actor !== 'auto').length;
     await notificationService.sendDailyReport({
         date: today,
         new_registrations: todayLogs.filter(l => l.action === 'registered' || l.action === 'bulk_imported').length,
-        renewals: todayLogs.filter(l => l.action === 'renewed').length,
+        renewals: autoRenewals,
+        auto_renewals: autoRenewals,
+        manual_renewals: manualRenewals,
         cancellations: todayLogs.filter(l => l.action === 'cancelled').length,
         failed_cancellations: [],
         details: todayLogs,

@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import { api } from '../client';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import type { AddOn } from '../../shared/types';
 
 interface Props {
-  serial: any;
+  serial: {
+    id: number;
+    serial_number: string;
+    add_ons?: string;
+  };
   onClose: () => void;
 }
 
 export default function AddOnManager({ serial, onClose }: Props) {
   const { lang } = useLang();
-  const [addOns, setAddOns] = useState<{ name: string; added_date: string }[]>(
+  const [addOns, setAddOns] = useState<AddOn[]>(
     JSON.parse(serial.add_ons || '[]')
   );
   const [newAddon, setNewAddon] = useState('');

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import type { Customer, CustomerInput, SerialWithCustomer } from '../../shared/types';
+import type { Customer, CustomerInput, CustomerSerialSummary } from '../../shared/types';
+import { api } from '../client';
 
 const EMPTY_CUSTOMER: CustomerInput = {
   name: '',
@@ -13,26 +14,30 @@ const EMPTY_CUSTOMER: CustomerInput = {
   notes: '',
 };
 
+const normalizeCustomerText = (value: string) =>
+  value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+
 export default function Customers() {
   const { lang } = useLang();
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [serials, setSerials] = useState<SerialWithCustomer[]>([]);
+  const [serialSummaries, setSerialSummaries] = useState<CustomerSerialSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch]   = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<CustomerInput>(EMPTY_CUSTOMER);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     Promise.all([
-      window.electronAPI.listCustomers(),
-      window.electronAPI.getSerials(),
+      api.listCustomers(),
+      api.listCustomerSerialSummaries(),
     ])
-      .then(([customerData, serialData]) => {
+      .then(([customerData, summaryData]) => {
         setCustomers(customerData);
-        setSerials(serialData);
+        setSerialSummaries(summaryData);
       })
       .catch(err => {
         console.error(err);
@@ -41,16 +46,9 @@ export default function Customers() {
       .finally(() => setLoading(false));
   }, []);
 
-  const serialsByCustomer = new Map<number, SerialWithCustomer[]>();
-  serials.forEach(s => {
-    const customerId = s.customer?.id ?? s.customer_id;
-    if (!customerId) return;
-    const list = serialsByCustomer.get(customerId) || [];
-    list.push(s);
-    serialsByCustomer.set(customerId, list);
-  });
+  const summariesByCustomer = new Map(serialSummaries.map(summary => [summary.customer_id, summary]));
 
-  const query = search.trim().toLowerCase();
+  const query = normalizeCustomerText(search);
   const filteredCustomers = customers
     .filter(customer => {
       if (!query) return true;
@@ -60,7 +58,7 @@ export default function Customers() {
         customer.phone,
         customer.dealer,
         customer.sales_manager,
-      ].some(value => (value || '').toLowerCase().includes(query));
+      ].some(value => normalizeCustomerText(value || '').includes(query));
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -71,16 +69,33 @@ export default function Customers() {
   const openCreate = () => {
     setForm(EMPTY_CUSTOMER);
     setFormError('');
+    setEditingCustomer(null);
     setShowCreate(true);
   };
 
-  const closeCreate = () => {
+  const openEdit = (customer: Customer) => {
+    setForm({
+      name: customer.name ?? '',
+      email: customer.email ?? '',
+      phone: customer.phone ?? '',
+      address: customer.address ?? '',
+      dealer: customer.dealer ?? '',
+      sales_manager: customer.sales_manager ?? '',
+      notes: customer.notes ?? '',
+    });
+    setFormError('');
+    setShowCreate(false);
+    setEditingCustomer(customer);
+  };
+
+  const closeForm = () => {
     if (saving) return;
     setShowCreate(false);
+    setEditingCustomer(null);
     setFormError('');
   };
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     if (!form.name.trim()) {
       setFormError(t(lang, 'customer_name_required'));
       return;
@@ -89,7 +104,7 @@ export default function Customers() {
     setSaving(true);
     setFormError('');
     try {
-      const created = await window.electronAPI.createCustomer({
+      const input = {
         name: form.name.trim(),
         email: form.email?.trim() ?? '',
         phone: form.phone?.trim() ?? '',
@@ -97,14 +112,43 @@ export default function Customers() {
         dealer: form.dealer?.trim() ?? '',
         sales_manager: form.sales_manager?.trim() ?? '',
         notes: form.notes?.trim() ?? '',
-      });
-      setCustomers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      };
+
+      if (editingCustomer) {
+        const updated = await api.updateCustomer(editingCustomer.id, input);
+        if (!updated) throw new Error(t(lang, 'save_fail'));
+        setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c).sort((a, b) => a.name.localeCompare(b.name)));
+      } else {
+        const created = await api.createCustomer(input);
+        setCustomers(prev => {
+          const withoutDuplicate = prev.filter(c => c.id !== created.id);
+          return [...withoutDuplicate, created].sort((a, b) => a.name.localeCompare(b.name));
+        });
+      }
       setShowCreate(false);
+      setEditingCustomer(null);
       setForm(EMPTY_CUSTOMER);
     } catch (err: any) {
       setFormError(err?.message ?? t(lang, 'save_fail'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async (customer: Customer, linkedCount: number) => {
+    if (linkedCount > 0) {
+      setError(t(lang, 'customer_delete_blocked').replace('{n}', String(linkedCount)));
+      return;
+    }
+    if (!confirm(t(lang, 'customer_delete_confirm').replace('{name}', customer.name))) return;
+
+    setError('');
+    try {
+      const result = await api.deleteCustomer(customer.id);
+      if (!result.success) throw new Error(result.error ?? t(lang, 'delete_failed'));
+      setCustomers(prev => prev.filter(c => c.id !== customer.id));
+    } catch (err: any) {
+      setError(err?.message ?? t(lang, 'delete_failed'));
     }
   };
 
@@ -155,10 +199,13 @@ export default function Customers() {
       {/* Customer grid */}
       <div className="card-grid">
         {filteredCustomers.map(customer => {
-          const cSerials = serialsByCustomer.get(customer.id) || [];
-          const active    = cSerials.filter(s => s.status === 'active').length;
-          const cancelled = cSerials.filter(s => s.status === 'cancelled').length;
-          const expired   = cSerials.filter(s => s.status === 'expired').length;
+          const summary = summariesByCustomer.get(customer.id);
+          const total     = summary?.total ?? 0;
+          const active    = summary?.active ?? 0;
+          const cancelled = summary?.cancelled ?? 0;
+          const expired   = summary?.expired ?? 0;
+          const notActivated = summary?.not_activated ?? 0;
+          const broken = summary?.broken ?? 0;
           const name      = customer.name || '(unknown)';
           const manager   = customer.sales_manager || '';
           const email     = customer.email || '';
@@ -180,7 +227,7 @@ export default function Customers() {
                   <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {name}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{t(lang, 'label_license_count').replace('{n}', String(cSerials.length))}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{t(lang, 'label_license_count').replace('{n}', String(total))}</div>
                 </div>
               </div>
 
@@ -219,6 +266,39 @@ export default function Customers() {
                     {t(lang, 'status_expired')} {expired}
                   </span>
                 )}
+                {notActivated > 0 && (
+                  <span style={{
+                    fontSize: 11, color: 'var(--yellow)', background: 'var(--yellow-dim)',
+                    padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(245,194,107,0.3)',
+                  }}>
+                    {t(lang, 'status_not_activated')} {notActivated}
+                  </span>
+                )}
+                {broken > 0 && (
+                  <span style={{
+                    fontSize: 11, color: 'var(--purple)', background: 'var(--purple-dim)',
+                    padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(167,139,250,0.3)',
+                  }}>
+                    {t(lang, 'status_broken')} {broken}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 6, marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <button onClick={() => openEdit(customer)} style={smallActionBtn}>{t(lang, 'edit')}</button>
+                <button
+                  onClick={() => handleDelete(customer, total)}
+                  disabled={total > 0}
+                  title={total > 0 ? t(lang, 'customer_delete_blocked').replace('{n}', String(total)) : t(lang, 'delete')}
+                  style={{
+                    ...smallActionBtn,
+                    color: total > 0 ? 'var(--text3)' : 'var(--red)',
+                    cursor: total > 0 ? 'not-allowed' : 'pointer',
+                    opacity: total > 0 ? 0.55 : 1,
+                  }}
+                >
+                  {t(lang, 'delete')}
+                </button>
               </div>
             </div>
           );
@@ -231,14 +311,14 @@ export default function Customers() {
         </div>
       )}
 
-      {showCreate && (
+      {(showCreate || editingCustomer) && (
         <div style={overlay}>
           <div style={modal}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>
-                {t(lang, 'customer_add_title')}
+                {editingCustomer ? t(lang, 'customer_edit_title') : t(lang, 'customer_add_title')}
               </h2>
-              <button onClick={closeCreate} disabled={saving} style={closeBtn}>✕</button>
+              <button onClick={closeForm} disabled={saving} style={closeBtn}>✕</button>
             </div>
 
             {formError && <div style={errorBox}>{formError}</div>}
@@ -275,8 +355,8 @@ export default function Customers() {
             </div>
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <button onClick={closeCreate} disabled={saving} style={secondaryBtn}>{t(lang, 'cancel')}</button>
-              <button onClick={handleCreate} disabled={saving} style={primaryBtn}>
+              <button onClick={closeForm} disabled={saving} style={secondaryBtn}>{t(lang, 'cancel')}</button>
+              <button onClick={handleSave} disabled={saving} style={primaryBtn}>
                 {saving ? t(lang, 'saving') : t(lang, 'save')}
               </button>
             </div>
@@ -306,6 +386,16 @@ const secondaryBtn: React.CSSProperties = {
   cursor: 'pointer',
   fontSize: 13,
   color: 'var(--text)',
+};
+
+const smallActionBtn: React.CSSProperties = {
+  padding: '5px 9px',
+  borderRadius: 6,
+  background: 'var(--bg3)',
+  border: '1px solid var(--border2)',
+  cursor: 'pointer',
+  fontSize: 11.5,
+  color: 'var(--text2)',
 };
 
 const overlay: React.CSSProperties = {

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import type { SerialWithCustomer } from '../../shared/types';
+import type { SerialMailNoticeLog, SerialWithCustomer } from '../../shared/types';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import SerialForm from '../components/SerialForm';
 import ConfirmModal from '../components/ConfirmModal';
 import ModuleListEditor from '../components/ModuleListEditor';
+import { api } from '../client';
 
 interface Props {
   serialId: number;
@@ -19,18 +20,19 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [mailLogs, setMailLogs] = useState<SerialMailNoticeLog[]>([]);
   const [showEdit, setShowEdit] = useState(false);
   const [confirm, setConfirm] = useState<{
     title: string; message: string; label: string; danger?: boolean; action: () => Promise<void>;
   } | null>(null);
 
-  const ea = window.electronAPI;
-
-  const reload = async () => {
+    const reload = async () => {
     try {
-      const s = await ea.getSerialById(serialId);
+      const s = await api.getSerialById(serialId);
       if (!s) { setError(t(lang, 'serial_not_found')); return; }
       setSerial(s);
+      const logs = await api.listSerialMailNoticeLogs(serialId) as SerialMailNoticeLog[];
+      setMailLogs(logs);
     } catch (e: any) {
       setError(e?.message ?? t(lang, 'load_failed'));
     }
@@ -91,7 +93,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
               label: t(lang, 'serial_activate_label'),
               action: async () => {
                 setBusy('activate');
-                const r = await ea.activateSerial(serial.id);
+                const r = await api.activateSerial(serial.id);
                 if (r) { setSerial(r); onUpdated(r); }
               },
             })}
@@ -109,7 +111,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             label: t(lang, 'serial_renew_label'),
             action: async () => {
               setBusy('renew');
-              const r = await ea.renewSerial(serial.id);
+              const r = await api.renewSerial(serial.id);
               if (r) { setSerial(r); onUpdated(r); }
             },
           })}
@@ -127,7 +129,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             danger: true,
             action: async () => {
               setBusy('cancel-db');
-              const r = await ea.cancelSerialDb(serial.id);
+              const r = await api.cancelSerialDb(serial.id);
               if (r) { setSerial(r); onUpdated(r); }
             },
           })}
@@ -145,7 +147,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             danger: !isStop,
             action: async () => {
               setBusy('stop');
-              await ea.setStopRequested(serial.id, !isStop);
+              await api.setStopRequested(serial.id, !isStop);
               await reload();
             },
           })}
@@ -164,7 +166,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             label: t(lang, 'delete'),
             danger: true,
             action: async () => {
-              const r = await ea.deleteSerial(serial.id);
+              const r = await api.deleteSerial(serial.id);
               if (!r.success) { alert(r.error ?? t(lang, 'delete')); return; }
               onDeleted(serial.id);
             },
@@ -207,6 +209,43 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
           🛑 {t(lang, 'serial_stop_requested')}: {serial.stop_requested_at.slice(0, 16)}
         </div>
       )}
+
+      <Card title={t(lang, 'section_mail_notice_history')} style={{ marginTop: 16 }}>
+        {mailLogs.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>{t(lang, 'mail_notice_history_empty')}</p>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {mailLogs.map(log => (
+              <div key={log.id} style={{
+                display: 'grid',
+                gridTemplateColumns: '120px 56px minmax(0, 1fr) 70px',
+                gap: 10,
+                alignItems: 'center',
+                padding: '8px 0',
+                borderBottom: '1px solid var(--border)',
+                fontSize: 12,
+              }}>
+                <span style={{ color: 'var(--text2)' }}>{log.sent_at.slice(0, 16)}</span>
+                <span style={{ color: 'var(--text3)' }}>D-{log.days_before}</span>
+                <span style={{ minWidth: 0, color: 'var(--text)' }}>
+                  <span style={{ fontWeight: 600 }}>{log.template_code}</span>
+                  <span style={{ color: 'var(--text3)' }}> / {log.recipient_email}</span>
+                  {log.message && log.status === 'failed' && (
+                    <span style={{ display: 'block', color: 'var(--red)', marginTop: 2, overflowWrap: 'anywhere' }}>{log.message}</span>
+                  )}
+                </span>
+                <span style={{
+                  justifySelf: 'end',
+                  color: log.status === 'sent' ? 'var(--accent)' : 'var(--red)',
+                  fontWeight: 700,
+                }}>
+                  {log.status === 'sent' ? t(lang, 'mail_notice_status_sent') : t(lang, 'mail_notice_status_failed')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {showEdit && (
         <SerialForm

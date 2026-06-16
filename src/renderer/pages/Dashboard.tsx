@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLang, useNav } from '../App';
 import { t } from '../i18n';
 import { api } from '../client';
+import type { ActivityLog, CancelResult, SerialWithCustomer } from '../../shared/types';
 
 interface Stats {
   total: number;
@@ -16,6 +17,19 @@ interface WebhookStatus {
   running: boolean;
   port: number;
 }
+
+interface MailCheckResult {
+  processed: number;
+  saved: number;
+  errors: string[];
+}
+
+interface SchedulerSummary {
+  summary: string;
+  updated_at: string;
+}
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 // ── Inline SVG icons ────────────────────────────────────────────────────────────
 const AlertIcon = () => (
@@ -39,34 +53,28 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({
     total: 0, active: 0, cancelled: 0, expired: 0, notActivated: 0, expiringThisMonth: 0,
   });
-  const [todayLogs, setTodayLogs]       = useState<any[]>([]);
+  const [todayLogs, setTodayLogs]       = useState<ActivityLog[]>([]);
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ running: false, port: 3000 });
-  const [expiringSerials, setExpiringSerials] = useState<any[]>([]);
+  const [expiringSerials, setExpiringSerials] = useState<SerialWithCustomer[]>([]);
+  const [schedulerSummary, setSchedulerSummary] = useState<SchedulerSummary>({ summary: '', updated_at: '' });
   const [loading, setLoading]           = useState(true);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     try {
-      const [statsData, logs, whStatus, allSerials] = await Promise.all([
+      const [statsData, logs, whStatus, soon, schedule] = await Promise.all([
         api.getStats(),
         api.getTodayLogs(),
         api.getWebhookStatus(),
-        api.getSerials(),
+        api.getExpiringSoonSerials(60, 50),
+        api.getSchedulerSummary(),
       ]);
       setStats(statsData as Stats);
-      setTodayLogs(logs as any[]);
+      setTodayLogs(logs as ActivityLog[]);
       setWebhookStatus(whStatus as WebhookStatus);
-
-      // Serials expiring within 60 days
-      const today = new Date();
-      const soon = (allSerials as any[]).filter(s => {
-        if (s.status !== 'active') return false;
-        const exp  = new Date(s.expiry_date);
-        const diff = (exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
-        return diff >= 0 && diff <= 60;
-      }).sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
-      setExpiringSerials(soon);
+      setExpiringSerials(soon as SerialWithCustomer[]);
+      setSchedulerSummary(schedule as SchedulerSummary);
     } catch (err) {
       console.error('Dashboard load error:', err);
     } finally {
@@ -76,24 +84,24 @@ export default function Dashboard() {
 
   const handleCheckEmails = async () => {
     try {
-      const result = await api.checkRenewalEmails() as any;
-      alert(t(lang, 'dash_renewal_result').replace('{processed}', result.processed).replace('{errors}', result.errors.length));
+      const result = await api.checkRenewalEmails() as MailCheckResult;
+      alert(t(lang, 'dash_renewal_result').replace('{processed}', String(result.processed)).replace('{errors}', String(result.errors.length)));
       loadData();
-    } catch (err: any) {
-      alert(t(lang, 'dash_error').replace('{error}', err.message));
+    } catch (err: unknown) {
+      alert(t(lang, 'dash_error').replace('{error}', getErrorMessage(err)));
     }
   };
 
   const handleProcessExpiring = async () => {
     if (!confirm(t(lang, 'dash_confirm_expiry_cancel'))) return;
     try {
-      const results = await api.checkExpiring() as any[];
-      const success = results.filter((r: any) => r.success).length;
-      const failed  = results.filter((r: any) => !r.success).length;
+      const results = await api.checkExpiring() as CancelResult[];
+      const success = results.filter(r => r.success).length;
+      const failed  = results.filter(r => !r.success).length;
       alert(t(lang, 'dash_cancel_result').replace('{success}', String(success)).replace('{failed}', String(failed)));
       loadData();
-    } catch (err: any) {
-      alert(t(lang, 'dash_error').replace('{error}', err.message));
+    } catch (err: unknown) {
+      alert(t(lang, 'dash_error').replace('{error}', getErrorMessage(err)));
     }
   };
 
@@ -101,8 +109,8 @@ export default function Dashboard() {
     try {
       await api.sendReport('daily');
       alert(t(lang, 'dash_report_sent'));
-    } catch (err: any) {
-      alert(t(lang, 'dash_error').replace('{error}', err.message));
+    } catch (err: unknown) {
+      alert(t(lang, 'dash_error').replace('{error}', getErrorMessage(err)));
     }
   };
 
@@ -112,8 +120,8 @@ export default function Dashboard() {
       else await api.startWebhook();
       const whStatus = await api.getWebhookStatus() as WebhookStatus;
       setWebhookStatus(whStatus);
-    } catch (err: any) {
-      alert(t(lang, 'dash_webhook_error').replace('{error}', err.message));
+    } catch (err: unknown) {
+      alert(t(lang, 'dash_webhook_error').replace('{error}', getErrorMessage(err)));
     }
   };
 
@@ -152,6 +160,29 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {schedulerSummary.summary && (
+        <div style={{
+          background: 'var(--bg2)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          padding: '11px 14px',
+          marginBottom: 14,
+          color: 'var(--text2)',
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}>
+          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>
+            {t(lang, 'dash_scheduler_status')}
+          </div>
+          <div>{schedulerSummary.summary}</div>
+          {schedulerSummary.updated_at && (
+            <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
+              {t(lang, 'dash_scheduler_updated').replace('{time}', schedulerSummary.updated_at)}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Webhook badge ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
         <div style={{
@@ -179,32 +210,32 @@ export default function Dashboard() {
 
       {/* ── Stat cards ── */}
       <div className="stats-grid">
-        <div className="stat-card total" onClick={() => setPage('serials', { filter: 'all' })}>
+        <div className="stat-card total" onClick={() => setPage('serial-data', { filter: 'all' })}>
           <div className="label">{t(lang, 'dash_stat_total')}</div>
           <div className="value">{stats.total}</div>
           <div className="sub">{t(lang, 'dash_active_expired_summary').replace('{active}', String(stats.active)).replace('{expired}', String(stats.expired))}</div>
         </div>
-        <div className="stat-card green" onClick={() => setPage('serials', { filter: 'active' })}>
+        <div className="stat-card green" onClick={() => setPage('serial-data', { filter: 'active' })}>
           <div className="label">{t(lang, 'dash_stat_active')}</div>
           <div className="value">{stats.active}</div>
           <div className="sub">{t(lang, 'dash_sub_active')}</div>
         </div>
-        <div className="stat-card red" onClick={() => setPage('serials', { filter: 'cancelled' })}>
+        <div className="stat-card red" onClick={() => setPage('serial-data', { filter: 'cancelled' })}>
           <div className="label">{t(lang, 'dash_stat_cancelled')}</div>
           <div className="value">{stats.cancelled}</div>
           <div className="sub">{t(lang, 'dash_sub_cancelled')}</div>
         </div>
-        <div className="stat-card gray" onClick={() => setPage('serials', { filter: 'expired' })}>
+        <div className="stat-card gray" onClick={() => setPage('serial-data', { filter: 'expired' })}>
           <div className="label">{t(lang, 'dash_stat_expired')}</div>
           <div className="value">{stats.expired}</div>
           <div className="sub">{t(lang, 'dash_sub_expired')}</div>
         </div>
-        <div className="stat-card purple" onClick={() => setPage('serials', { filter: 'not-activated' })}>
+        <div className="stat-card purple" onClick={() => setPage('serial-data', { filter: 'not-activated' })}>
           <div className="label">{t(lang, 'status_not_activated')}</div>
           <div className="value">{stats.notActivated}</div>
           <div className="sub">{t(lang, 'dash_sub_not_activated')}</div>
         </div>
-        <div className="stat-card orange" onClick={() => setPage('serials', { filter: 'expiring' })}>
+        <div className="stat-card orange" onClick={() => setPage('serial-data', { filter: 'expiring' })}>
           <div className="label">{t(lang, 'dash_stat_expiring')}</div>
           <div className="value">{stats.expiringThisMonth}</div>
           <div className="sub">{t(lang, 'dash_sub_expiring')}</div>
@@ -262,9 +293,9 @@ export default function Dashboard() {
             <div style={{ fontSize: 12, color: 'var(--text3)', padding: '12px 0' }}>{t(lang, 'dash_no_expiring_soon')}</div>
           ) : (
             <div style={{ overflow: 'auto', maxHeight: 200 }}>
-              {expiringSerials.map((s: any) => {
+              {expiringSerials.map(s => {
                 const days = Math.ceil(
-                  (new Date(s.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                  (new Date(s.expiry_date ?? '').getTime() - Date.now()) / (1000 * 60 * 60 * 24),
                 );
                 return (
                   <div key={s.id} style={{
@@ -281,7 +312,7 @@ export default function Dashboard() {
                         {s.serial_number}
                       </div>
                       <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
-                        {s.customer_name}
+                        {s.customer?.name ?? '-'}
                       </div>
                     </div>
                     <div style={{
@@ -314,7 +345,7 @@ export default function Dashboard() {
             {t(lang, 'dash_no_activity')}
           </div>
         ) : (
-          todayLogs.map((log: any) => (
+          todayLogs.map(log => (
             <div key={log.id} className="log-entry">
               <span className="time">{log.created_at}</span>
               <span className={`action-badge action-${log.action}`}>{log.action}</span>

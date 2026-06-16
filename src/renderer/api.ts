@@ -22,9 +22,29 @@ const del = <T>(path: string) => req<T>('DELETE', path);
 
 export const api = {
     // ── Serials ────────────────────────────────────────────────────────────────
+    // @deprecated Compatibility API. New browser UI should use listSerials.
     getSerials: () => get('/serials'),
+    listSerials: (query: {
+        limit?: number;
+        offset?: number;
+        search?: string;
+        status?: string;
+        customer_id?: number;
+        renewal_stop_requested?: boolean;
+        expiring_this_month?: boolean;
+    }) => {
+        const params = new URLSearchParams({ paged: '1' });
+        for (const [key, value] of Object.entries(query)) {
+            if (value !== undefined && value !== '') params.set(key, String(value));
+        }
+        return get(`/serials?${params.toString()}`);
+    },
+    getExpiringSoonSerials: (days = 60, limit = 50) =>
+        get(`/serials/expiring-soon?days=${days}&limit=${limit}`),
+    getSerialVersionSummary: () => get('/serials/version-summary'),
     getSerial: (id: number) => get(`/serials/${id}`),
     getSerialById: (id: number) => get(`/serials/${id}`),
+    listSerialMailNoticeLogs: (id: number) => get(`/serials/${id}/mail-notice-logs`),
     searchSerials: (q: string) => get(`/serials/search?q=${encodeURIComponent(q)}`),
     getStats: () => get('/serials/stats'),
     createSerial: (data: unknown) => post('/serials', data),
@@ -39,15 +59,37 @@ export const api = {
     renewSerial: (id: number) => post(`/serials/${id}/renew`),
     exportSerials: async (serials: unknown[]) => {
         try {
-            await post('/serials/export', { serials });
+            const res = await fetch(`${BASE}/serials/export`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ serials }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || res.statusText);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'serials.xlsx';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
             return { success: true };
-        } catch {
-            return { success: false, error: 'Export not supported in browser mode' };
+        } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : 'Export failed' };
         }
+    },
+    exportSerialsByFilter: async (query: Record<string, unknown>) => {
+        const data = await api.listSerials({ ...query, limit: 10000, offset: 0 }) as { items: unknown[] };
+        return api.exportSerials(data.items);
     },
 
     // 엑셀 템플릿 다운로드
     downloadTemplate: () => { window.location.href = `${BASE}/serials/template/download`; },
+    downloadExcelTemplate: () => { window.location.href = `${BASE}/serials/template/download`; },
 
     // 엑셀 대량 임포트 (multipart)
     bulkImport: async (file: File) => {
@@ -60,6 +102,7 @@ export const api = {
 
     // ── Customers ─────────────────────────────────────────────────────────────
     listCustomers: () => get('/customers'),
+    listCustomerSerialSummaries: () => get('/customers/serial-summaries'),
     getCustomerById: (id: number) => get(`/customers/${id}`),
     createCustomer: (data: unknown) => post('/customers', data),
     updateCustomer: (id: number, data: unknown) => put(`/customers/${id}`, data),
@@ -71,9 +114,9 @@ export const api = {
     getOrders: () => get('/orders'),
     listGroupedOrders: () => get('/orders/grouped'),
     getPollStatus: () => get('/orders/poll-status'),
-    pollNow: (sourceId?: string) => post('/orders/poll-now', { sourceId }),
-    pollDryRun: (sourceId?: string, overrides?: unknown) =>
-        post('/orders/poll-dry-run', { sourceId, sourceOverrides: overrides }),
+    pollNow: (sourceId?: string, targetDate?: string) => post('/orders/poll-now', { sourceId, targetDate }),
+    pollDryRun: (sourceId?: string, overrides?: unknown, targetDate?: string) =>
+        post('/orders/poll-dry-run', { sourceId, sourceOverrides: overrides, targetDate }),
     restartOrderScheduler: () => post('/orders/restart-scheduler'),
     updateOrder: (id: number, data: unknown) => put(`/orders/${id}`, data),
     approveOrder: (id: number, data?: unknown) => post(`/orders/${id}/approve`, data),
@@ -118,6 +161,7 @@ export const api = {
 
     // ── Settings ──────────────────────────────────────────────────────────────
     getSettings: () => get('/settings'),
+    getSchedulerSummary: () => get('/settings/scheduler-summary'),
     saveSettings: (data: unknown) => post('/settings', data),
     testSmtp: (override?: unknown) => post('/mail/test-smtp', override),
     testSlack: (override?: unknown) => post('/settings/test-slack', override),
@@ -126,8 +170,20 @@ export const api = {
     renewalDryRun: () => post('/mail/inbound-dry-run'),
     checkRenewalEmails: () => post('/mail/check-inbound-now'),
     updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
-    exportSettings: () => post('/settings/export'),
-    importSettings: () => post('/settings/import'),
+    exportSettings: async () => {
+        const settings = await api.getSettings();
+        const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'exocad-settings.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        return { success: true };
+    },
+    importSettings: (data: unknown) => post('/settings', data),
     listReportTimes: () => get('/settings/report-times'),
     setReportTimes: (times: string[]) => post('/settings/report-times', { times }),
     sendDailyReportNow: () => post('/reports/send-daily'),
@@ -139,6 +195,9 @@ export const api = {
     getTodayLogs: () => get('/logs/today'),
     getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
     getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
+    listAutoRenewalOrderNotices: (limit = 100) => get(`/logs/auto-renewal-order-notices?limit=${limit}`),
+    getAutoRenewalOrderNotice: (id: number) => get(`/logs/auto-renewal-order-notices/${id}`),
+    resolveAdminReview: (id: number) => post(`/logs/admin-review/${id}/resolve`, {}),
     listLogs: (filter?: unknown) => post('/logs/list', filter),
     onLogsPush: (callback: (payload: { id: number }) => void): () => void => {
         const interval = setInterval(() => callback({ id: 0 }), 30000);

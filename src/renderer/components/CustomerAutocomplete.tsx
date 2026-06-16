@@ -1,3 +1,4 @@
+import { api } from '../client';
 /**
  * CustomerAutocomplete.tsx
  *
@@ -8,6 +9,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Customer } from '../../shared/types';
 import { useLang } from '../App';
 import { t } from '../i18n';
+
+const normalizeCustomerText = (value: string) =>
+  value.normalize('NFKC').replace(/\s+/g, ' ').trim();
 
 export type CustomerChoice =
   | { kind: 'existing'; customer: Customer }
@@ -34,6 +38,8 @@ export default function CustomerAutocomplete({ value, onChange, placeholder, dis
       ? `${value.customer.name}${value.customer.email ? ` <${value.customer.email}>` : ''}`
       : `✦ ${t(lang, 'customer_new_prefix')}: ${value.name}`
     : '';
+  const normalizedQuery = normalizeCustomerText(query);
+  const hasExactNameMatch = results.some(c => normalizeCustomerText(c.name) === normalizedQuery);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -51,7 +57,7 @@ export default function CustomerAutocomplete({ value, onChange, placeholder, dis
     setLoading(true);
     timer.current = setTimeout(async () => {
       try {
-        const res = await window.electronAPI.searchCustomers(query);
+        const res = await api.searchCustomers(query);
         setResults(res);
       } catch {
         setResults([]);
@@ -69,7 +75,7 @@ export default function CustomerAutocomplete({ value, onChange, placeholder, dis
   };
 
   const pickNew = () => {
-    onChange({ kind: 'new', name: query.trim() });
+    onChange({ kind: 'new', name: normalizedQuery });
     setQuery('');
     setOpen(false);
   };
@@ -101,7 +107,7 @@ export default function CustomerAutocomplete({ value, onChange, placeholder, dis
         style={inputBox}
       />
 
-      {open && query.length > 0 && (
+      {open && normalizedQuery.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 500,
           background: 'var(--bg2)', border: '1px solid var(--border2)', borderRadius: 6,
@@ -118,12 +124,12 @@ export default function CustomerAutocomplete({ value, onChange, placeholder, dis
               </span>
             </div>
           ))}
-          {!loading && query.trim() && (
+          {!loading && normalizedQuery && !hasExactNameMatch && (
             <div onMouseDown={pickNew} style={{ ...dropItem, borderTop: '1px solid var(--border)', color: 'var(--accent)' }}>
-              ✦ {t(lang, 'customer_create_new').replace('{name}', query.trim())}
+              ✦ {t(lang, 'customer_create_new').replace('{name}', normalizedQuery)}
             </div>
           )}
-          {!loading && results.length === 0 && !query.trim() && (
+          {!loading && results.length === 0 && !normalizedQuery && (
             <div style={{ padding: '8px 12px', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'no_results')}</div>
           )}
         </div>

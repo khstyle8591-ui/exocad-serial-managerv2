@@ -1,13 +1,20 @@
 import { getDb } from '../database';
+import { logger } from '../utils/logger';
 import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
-import { findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
+import { createCustomerSeparate, findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
 import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs } from './activity-log.service';
 import type {
   Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
-  LogFilter, StatsCountsResult, StatsSeries,
+  LogFilter, StatsCountsResult, StatsSeries, SerialExportQuery, SerialListQuery, SerialListResult,
+  SerialVersionSummary,
 } from '../../shared/types';
+import { parseSerialListQuery } from '../../shared/serial-contract';
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
+
+type SerialRow = Omit<SerialWithCustomer, 'customer'> & { customer_json: string };
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 const SERIAL_WITH_CUSTOMER_SQL = `
   SELECT s.*,
@@ -20,9 +27,69 @@ const SERIAL_WITH_CUSTOMER_SQL = `
   JOIN customers c ON c.id = s.customer_id
 `;
 
-function parseSerialRow(row: any): SerialWithCustomer {
+function parseSerialRow(row: SerialRow): SerialWithCustomer {
   const { customer_json, ...rest } = row;
   return { ...rest, customer: JSON.parse(customer_json) };
+}
+
+/** modules 컬럼은 원본 JSON 텍스트로 저장되어 레거시/수동편집으로 손상될 수 있음 — 파싱 실패 시 빈 배열로 대체 */
+function parseModules(raw: string, serialId: number): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    logger.error(`Invalid modules JSON for serial id=${serialId}; treating as empty list`);
+    return [];
+  }
+}
+
+function buildSerialListWhere(query: SerialListQuery): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  if (query.search) {
+    const like = `%${query.search}%`;
+    clauses.push(`(
+      s.serial_number LIKE ?
+      OR c.name LIKE ?
+      OR c.email LIKE ?
+      OR c.phone LIKE ?
+      OR c.sales_manager LIKE ?
+      OR s.notes LIKE ?
+    )`);
+    params.push(like, like, like, like, like, like);
+  }
+
+  if (query.status && query.status !== 'all') {
+    clauses.push('s.status = ?');
+    params.push(query.status);
+  }
+
+  if (query.customer_id !== undefined) {
+    clauses.push('s.customer_id = ?');
+    params.push(query.customer_id);
+  }
+
+  if (query.renewal_stop_requested !== undefined) {
+    clauses.push('s.renewal_stop_requested = ?');
+    params.push(query.renewal_stop_requested ? 1 : 0);
+  }
+
+  if (query.expiring_this_month) {
+    const today = getTodayDateString();
+    const d = new Date();
+    const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+      .toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    clauses.push("s.status = 'active'");
+    clauses.push("s.expiry_date IS NOT NULL AND s.expiry_date != ''");
+    clauses.push('s.expiry_date >= ? AND s.expiry_date <= ?');
+    params.push(today, endOfMonth);
+  }
+
+  return {
+    where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  };
 }
 
 function syncExpiredStatus(): void {
@@ -42,14 +109,27 @@ function syncExpiredStatus(): void {
 function resolveCustomerId(input: SerialInput): number {
   if (input.customer_id != null) return input.customer_id;
 
-  return findOrCreateCustomer({
+  const customerInput = {
     name: input.customer_name || '(Unknown)',
     email: input.customer_email,
     phone: input.customer_phone,
     address: input.customer_address,
     dealer: input.dealer,
     sales_manager: input.customer_manager,
-  }).id;
+  };
+
+  if (input.customer_resolution === 'separate') {
+    return createCustomerSeparate(customerInput).id;
+  }
+
+  if (input.customer_resolution === 'merge' && input.customer_merge_target_id != null) {
+    const target = getCustomerById(input.customer_merge_target_id);
+    if (!target) throw new Error(`고객 id=${input.customer_merge_target_id} 를 찾을 수 없습니다.`);
+    const updated = updateCustomer(target.id, customerInput);
+    return (updated ?? target).id;
+  }
+
+  return findOrCreateCustomer(customerInput).id;
 }
 
 /** Modules JSON serialization (accepts string[] or AddOn[] for compat). */
@@ -71,26 +151,149 @@ export class SerialService {
     syncExpiredStatus();
   }
 
+  /** @deprecated Compatibility read for legacy getSerials/export callers. New code should use list(), listForExport(), or domain-specific queries. */
   getAll(): SerialWithCustomer[] {
-    syncExpiredStatus();
     const rows = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} ORDER BY s.expiry_date ASC`)
-      .all() as any[];
+      .all() as SerialRow[];
     return rows.map(parseSerialRow);
+  }
+
+  list(rawQuery: SerialListQuery = {}): SerialListResult {
+    const query = parseSerialListQuery(rawQuery);
+    const db = getDb();
+    const { where, params } = buildSerialListWhere(query);
+
+    const total = (db
+      .prepare(`
+        SELECT COUNT(*) as cnt
+        FROM serials s
+        JOIN customers c ON c.id = s.customer_id
+        ${where}
+      `)
+      .get(...params) as { cnt: number }).cnt;
+
+    const rows = db
+      .prepare(`
+        ${SERIAL_WITH_CUSTOMER_SQL}
+        ${where}
+        ORDER BY s.expiry_date ASC, s.id ASC
+        LIMIT ? OFFSET ?
+      `)
+      .all(...params, query.limit, query.offset) as SerialRow[];
+
+    return {
+      items: rows.map(parseSerialRow),
+      total,
+      limit: query.limit,
+      offset: query.offset,
+    };
+  }
+
+  listForExport(rawQuery: SerialExportQuery = {}): SerialWithCustomer[] {
+    const { where, params } = buildSerialListWhere(rawQuery);
+    const rows = getDb()
+      .prepare(`
+        ${SERIAL_WITH_CUSTOMER_SQL}
+        ${where}
+        ORDER BY s.expiry_date ASC, s.id ASC
+      `)
+      .all(...params) as SerialRow[];
+    return rows.map(parseSerialRow);
+  }
+
+  getExpiringSoon(days = 60, limit = 50): SerialWithCustomer[] {
+    const safeDays = Math.min(Math.max(Math.trunc(days), 1), 365);
+    const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 500);
+    const today = getTodayDateString();
+    const end = new Date(today);
+    end.setDate(end.getDate() + safeDays);
+    const endDate = end.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+    const rows = getDb()
+      .prepare(
+        `${SERIAL_WITH_CUSTOMER_SQL}
+         WHERE s.status = 'active'
+           AND s.expiry_date IS NOT NULL
+           AND s.expiry_date != ''
+           AND s.expiry_date >= ?
+           AND s.expiry_date <= ?
+         ORDER BY s.expiry_date ASC, s.id ASC
+         LIMIT ?`
+      )
+      .all(today, endDate, safeLimit) as SerialRow[];
+    return rows.map(parseSerialRow);
+  }
+
+  getVersionSummary(): SerialVersionSummary[] {
+    return getDb()
+      .prepare(
+        `SELECT
+           COALESCE(NULLIF(TRIM(main_product), ''), '') as version,
+           COUNT(*) as total,
+           SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+           SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+           SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expired,
+           SUM(CASE WHEN status = 'not-activated' THEN 1 ELSE 0 END) as not_activated,
+           SUM(CASE WHEN status = 'broken' THEN 1 ELSE 0 END) as broken
+         FROM serials
+         GROUP BY COALESCE(NULLIF(TRIM(main_product), ''), '')
+         ORDER BY version DESC`
+      )
+      .all() as SerialVersionSummary[];
+  }
+
+  getAutoRenewCandidates(today = getTodayDateString()): SerialWithCustomer[] {
+    const rows = getDb()
+      .prepare(
+        `${SERIAL_WITH_CUSTOMER_SQL}
+         WHERE s.status = 'active'
+           AND s.expiry_date IS NOT NULL
+           AND s.expiry_date != ''
+           AND s.expiry_date = ?
+           AND s.renewal_stop_requested = 0
+         ORDER BY s.expiry_date ASC, s.id ASC`
+      )
+      .all(today) as SerialRow[];
+    return rows.map(parseSerialRow);
+  }
+
+  getLifecycleNoticeSample(kind: 'stop_request' | 'cancel_complete'): SerialWithCustomer | null {
+    const preferredWhere = kind === 'stop_request'
+      ? 's.renewal_stop_requested = 1'
+      : "s.status = 'cancelled'";
+    const row = getDb()
+      .prepare(
+        `${SERIAL_WITH_CUSTOMER_SQL}
+         ORDER BY
+           CASE WHEN ${preferredWhere} AND c.email != '' THEN 0 ELSE 1 END,
+           CASE WHEN c.email != '' THEN 0 ELSE 1 END,
+           s.updated_at DESC,
+           s.id DESC
+         LIMIT 1`
+      )
+      .get() as SerialRow | undefined;
+    return row ? parseSerialRow(row) : null;
   }
 
   getById(id: number): SerialWithCustomer | undefined {
     const row = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE s.id = ?`)
-      .get(id) as any | undefined;
+      .get(id) as SerialRow | undefined;
     return row ? parseSerialRow(row) : undefined;
   }
 
   getBySerialNumber(serialNumber: string): SerialWithCustomer | undefined {
     const row = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE LOWER(s.serial_number) = LOWER(?)`)
-      .get(serialNumber) as any | undefined;
+      .get(serialNumber) as SerialRow | undefined;
     return row ? parseSerialRow(row) : undefined;
+  }
+
+  listSerialNumbers(): Array<{ serial_number: string }> {
+    return getDb()
+      .prepare("SELECT serial_number FROM serials WHERE serial_number IS NOT NULL AND serial_number != '' ORDER BY serial_number ASC")
+      .all() as Array<{ serial_number: string }>;
   }
 
   search(query: string): SerialWithCustomer[] {
@@ -106,7 +309,7 @@ export class SerialService {
             OR s.notes LIKE ?
          ORDER BY s.expiry_date ASC`
       )
-      .all(like, like, like, like, like, like) as any[];
+      .all(like, like, like, like, like, like) as SerialRow[];
     return rows.map(parseSerialRow);
   }
 
@@ -171,17 +374,34 @@ export class SerialService {
       const existingName = existing.customer.name?.trim() ?? '';
       const shouldResolveDifferentCustomer = !!incomingName && incomingName !== existingName;
 
-      if (input.customer_id != null) {
-        currentCustomerId = input.customer_id;
-      } else if (shouldResolveDifferentCustomer) {
-        currentCustomerId = findOrCreateCustomer({
-          name: incomingName,
+      if (input.customer_resolution === 'separate') {
+        currentCustomerId = createCustomerSeparate({
+          name: incomingName || existingName || '(Unknown)',
           email: input.customer_email,
           phone: input.customer_phone,
           address: input.customer_address,
           sales_manager: input.customer_manager,
           dealer: input.dealer,
         }).id;
+      } else if (input.customer_id != null) {
+        currentCustomerId = input.customer_id;
+      } else if (shouldResolveDifferentCustomer) {
+        const customerInput = {
+          name: incomingName,
+          email: input.customer_email,
+          phone: input.customer_phone,
+          address: input.customer_address,
+          sales_manager: input.customer_manager,
+          dealer: input.dealer,
+        };
+
+        if (input.customer_resolution === 'merge' && input.customer_merge_target_id != null) {
+          const target = getCustomerById(input.customer_merge_target_id);
+          if (!target) throw new Error(`고객 id=${input.customer_merge_target_id} 를 찾을 수 없습니다.`);
+          currentCustomerId = (updateCustomer(target.id, customerInput) ?? target).id;
+        } else {
+          currentCustomerId = findOrCreateCustomer(customerInput).id;
+        }
       }
 
       if (currentCustomerId !== existing.customer_id) {
@@ -189,14 +409,16 @@ export class SerialService {
           .run(currentCustomerId, getNowTimestampString(), id);
       }
 
-      updateCustomer(currentCustomerId, {
-        name: input.customer_name,
-        email: input.customer_email,
-        phone: input.customer_phone,
-        address: input.customer_address,
-        sales_manager: input.customer_manager,
-        dealer: input.dealer,
-      });
+      if (input.customer_resolution !== 'separate') {
+        updateCustomer(currentCustomerId, {
+          name: input.customer_name,
+          email: input.customer_email,
+          phone: input.customer_phone,
+          address: input.customer_address,
+          sales_manager: input.customer_manager,
+          dealer: input.dealer,
+        });
+      }
     }
 
     // Update serial FK to a different customer if customer_id provided
@@ -273,7 +495,13 @@ export class SerialService {
   }
 
   /** renewal_stop_requested 플래그 설정/해제. 이미 같은 값이면 no-op. */
-  setStopRequested(id: number, flag: boolean, trigger_id?: string): SerialWithCustomer | undefined {
+  setStopRequested(
+    id: number,
+    flag: boolean,
+    trigger_id?: string,
+    actor: ActivityLog['actor'] = 'manual',
+    details?: string,
+  ): SerialWithCustomer | undefined {
     const db = getDb();
     const existing = this.getById(id);
     if (!existing) return undefined;
@@ -286,14 +514,14 @@ export class SerialService {
       db.prepare(
         'UPDATE serials SET renewal_stop_requested = 1, stop_requested_at = ?, updated_at = ? WHERE id = ?'
       ).run(now, now, id);
-      this.logActivity(id, 'stop_requested', 'manual',
-        { renewal_stop_requested: [0, 1] }, 'Renewal stop requested',
+      this.logActivity(id, 'stop_requested', actor,
+        { renewal_stop_requested: [0, 1] }, details || 'Renewal stop requested',
         trigger_id);
     } else {
       db.prepare(
         'UPDATE serials SET renewal_stop_requested = 0, stop_requested_at = NULL, updated_at = ? WHERE id = ?'
       ).run(now, id);
-      this.logActivity(id, 'stop_cleared', 'manual',
+      this.logActivity(id, 'stop_cleared', actor,
         { renewal_stop_requested: [1, 0] }, 'Renewal stop request cleared');
     }
     return this.getById(id);
@@ -305,7 +533,7 @@ export class SerialService {
   }
 
   /** renewSerial — backward compat alias (used by order.service.ts). */
-  renewSerial(id: number, source: 'email' | 'manual' = 'manual'): SerialWithCustomer | undefined {
+  renewSerial(id: number, source: ActivityLog['actor'] = 'manual'): SerialWithCustomer | undefined {
     return this._renew(id, source);
   }
 
@@ -351,11 +579,9 @@ export class SerialService {
 
   private _renew(id: number, actor: ActivityLog['actor']): SerialWithCustomer | undefined {
     const db = getDb();
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    const transaction = db.transaction(() => {
       const existing = this.getById(id);
       if (!existing) {
-        db.exec('COMMIT');
         return undefined;
       }
 
@@ -387,12 +613,10 @@ export class SerialService {
       if (existing.renewal_stop_requested) renewDiff.renewal_stop_requested = [1, 0];
       this.logActivity(id, 'renewed', actor, renewDiff, `Expiry renewed: ${existing.expiry_date} -> ${newExpiry}`);
 
-      db.exec('COMMIT');
       return this.getById(id);
-    } catch (err) {
-      try { db.exec('ROLLBACK'); } catch { /* ignore */ }
-      throw err;
-    }
+    });
+
+    return transaction();
   }
 
   /** DB-only cancel (no Playwright). */
@@ -437,7 +661,7 @@ export class SerialService {
     const db = getDb();
     const existing = this.getById(id);
     if (!existing) return undefined;
-    const modules: string[] = JSON.parse(existing.modules);
+    const modules: string[] = parseModules(existing.modules, id);
     if (!modules.includes(addon.name)) modules.push(addon.name);
     const now = getNowTimestampString();
     db.prepare('UPDATE serials SET modules = ?, updated_at = ? WHERE id = ?')
@@ -454,7 +678,7 @@ export class SerialService {
     const db = getDb();
     const existing = this.getById(id);
     if (!existing) return undefined;
-    const modules: string[] = JSON.parse(existing.modules).filter((m: string) => m !== moduleName);
+    const modules: string[] = parseModules(existing.modules, id).filter((m: string) => m !== moduleName);
     const now = getNowTimestampString();
     db.prepare('UPDATE serials SET modules = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(modules), now, id);
@@ -466,14 +690,14 @@ export class SerialService {
   getExpiringSerials(date: string): SerialWithCustomer[] {
     const rows = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE s.expiry_date IS NOT NULL AND s.expiry_date != '' AND s.expiry_date <= ? AND s.status IN ('active','expired') ORDER BY s.expiry_date ASC`)
-      .all(date) as any[];
+      .all(date) as SerialRow[];
     return rows.map(parseSerialRow);
   }
 
   getExpiringSerialsOnDate(date: string): SerialWithCustomer[] {
     const rows = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE s.expiry_date = ? AND s.status = 'active'`)
-      .all(date) as any[];
+      .all(date) as SerialRow[];
     return rows.map(parseSerialRow);
   }
 
@@ -484,7 +708,7 @@ export class SerialService {
     const end = `${ey}-${String(em).padStart(2, '0')}-01`;
     const rows = getDb()
       .prepare(`${SERIAL_WITH_CUSTOMER_SQL} WHERE s.expiry_date IS NOT NULL AND s.expiry_date != '' AND s.expiry_date >= ? AND s.expiry_date < ? AND s.status = 'active' ORDER BY s.expiry_date ASC`)
-      .all(start, end) as any[];
+      .all(start, end) as SerialRow[];
     return rows.map(parseSerialRow);
   }
 
@@ -564,8 +788,8 @@ export class SerialService {
           const row = db.prepare('SELECT id FROM serials WHERE serial_number = ?')
             .get(s.serial_number) as { id: number };
           if (row) importedIds.push({ id: row.id, serial_number: s.serial_number });
-        } catch (err: any) {
-          errors.push(`${s.serial_number}: ${err.message}`);
+        } catch (err: unknown) {
+          errors.push(`${s.serial_number}: ${getErrorMessage(err)}`);
         }
       }
     });
@@ -596,9 +820,9 @@ export class SerialService {
   ): void {
     try {
       _logActivity({ serial_id: serialId, action, actor, diff, details, trigger_id, severity });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Log write failure must not crash the parent operation
-      console.error(`[logActivity] DB write failed: ${err.message}`);
+      console.error(`[logActivity] DB write failed: ${getErrorMessage(err)}`);
     }
   }
 
@@ -627,7 +851,6 @@ export class SerialService {
   // ── Stats ──────────────────────────────────────────────────────────────────
 
   getStats(): StatsCountsResult & { total: number; notActivated: number; expiringThisMonth: number } {
-    syncExpiredStatus();
     const db = getDb();
     const cnt = (sql: string, ...p: unknown[]): number =>
       (db.prepare(sql).get(...p) as { cnt: number }).cnt;

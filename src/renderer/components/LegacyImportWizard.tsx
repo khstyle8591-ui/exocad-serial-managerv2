@@ -1,4 +1,7 @@
 /**
+
+import { api } from '../client';
+/**
  * LegacyImportWizard.tsx — 4-step legacy DB migration modal (dark theme)
  */
 import React, { useState, useEffect, useCallback } from 'react';
@@ -89,12 +92,10 @@ export default function LegacyImportWizard({ onClose, onDone }: WizardProps) {
   const [importing, setImporting] = useState(false);
   const [importDone, setImportDone] = useState(false);
 
-  const ea = window.electronAPI;
-
-  useEffect(() => {
+    useEffect(() => {
     setLoading(true);
     const filter = statusFilter.length > 0 ? { status: statusFilter } : undefined;
-    ea.listLegacySerials(filter)
+    api.listLegacySerials(filter)
       .then((data: any[]) => setRows(data as LegacyRow[]))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -126,7 +127,7 @@ export default function LegacyImportWizard({ onClose, onDone }: WizardProps) {
       const row = rows.find(r => r.id === id);
       if (!row) continue;
       try {
-        const candidates = await ea.suggestLegacyMerge({
+        const candidates = await api.suggestLegacyMerge({
           customer_name: row.customer_name,
           customer_email: row.customer_email,
           customer_phone: row.customer_phone,
@@ -181,7 +182,7 @@ export default function LegacyImportWizard({ onClose, onDone }: WizardProps) {
           : undefined,
       };
 
-      const result = await ea.importLegacySerial(input);
+      const result = await api.importLegacySerial(input);
       newResults[id] = { ...result, serial_number: row.serial_number };
     }
 

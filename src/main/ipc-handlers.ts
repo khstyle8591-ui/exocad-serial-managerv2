@@ -10,7 +10,7 @@ import { listLogs, getFailureLogs } from './services/activity-log.service';
 import {
   getPendingOrders, getAllOrders,
   updatePendingOrder, approvePendingOrder, rejectPendingOrder, deletePendingOrder,
-  pollNow, pollDryRun, getPollStatus, startPollingScheduler, listGroupedOrders,
+  pollNow, pollDryRun, getPollStatus, startPollingScheduler, listGroupedOrders, updateDataFromPendingOrder,
 } from './services/order.service';
 import { listTemplates, getTemplate, upsertTemplate, deleteTemplate, previewTemplate } from './services/mail/template.service';
 import { sendTemplate as smtpSendTemplate, testSmtp, sendTestDryRun } from './services/mail/smtp.service';
@@ -19,10 +19,49 @@ import { checkInboundNow, inboundDryRun, testMailConnection, listInboundMails, c
 import { restartPreExpiryTask, runExpiryNoticeDryRun, sendDailyReportNow, startDailyReportTasks, startExpiryNoticeTask, startMailCheck } from './scheduler';
 import { runAutoRenewNow, runAutoCancelNow, runLimboFallbackNow } from './services/automation.service';
 import { refreshSchedulersForSettingsChange } from './services/scheduler-refresh.service';
-import { getSettings, saveSettings } from './settings';
+import { getSettings, redactSettingsForClient, saveSettings } from './settings';
 import { logger } from './utils/logger';
 import { getWebhookStatus, startWebhookServer, stopWebhookServer } from './webhook-server';
-import type { SerialInput, AddOn, AppSettings, CustomerInput, LogFilter, MailTemplateUpsert } from '../shared/types';
+import type { AppSettings, LegacyImportInput, LogFilter, MailTemplateUpsert, SerialWithCustomer } from '../shared/types';
+import {
+  parseAddOnInput,
+  parseSerialExportQuery,
+  parseSerialInput,
+  parseSerialListQuery,
+  parseSerialUpdateInput,
+} from '../shared/serial-contract';
+import {
+  parseCustomerInput,
+  parseCustomerMergeQuery,
+  parseCustomerSearchQuery,
+  parseCustomerUpdateInput,
+} from '../shared/customer-contract';
+import {
+  parseOrderApproveInput,
+  parseOrderId,
+  parseOrderPollDryRunInput,
+  parseOrderPollNowInput,
+  parseOrderUpdateDataInput,
+  parseOrderUpdateInput,
+} from '../shared/order-contract';
+
+type LegacyMergeQuery = {
+  customer_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
+  dealer?: string;
+};
+type ExpiryNoticeDryRunInput = {
+  days_before: number;
+  template_code: string;
+  test_email?: string;
+  use_stop_template?: boolean;
+};
+type StopLifecycleNoticeDryRunInput = {
+  kind: 'stop_request' | 'cancel_complete';
+  template_code: string;
+  test_email: string;
+};
 
 // 설정 import 시 허용된 키만 통과시키는 allowlist.
 // 외부 JSON 파일에서 임의 키가 DB에 주입되지 않도록 방어.
@@ -40,6 +79,7 @@ const SETTINGS_ALLOWED_KEYS = new Set<keyof AppSettings>([
   'renewal_product_keywords', 'renewal_action_keywords', 'renewal_exclude_keywords',
   'require_serial_format', 'mail_serial_pattern',
   'missing_info_auto_reply_enabled', 'missing_info_template',
+  'invalid_response_auto_reply_enabled', 'invalid_response_template',
   'renewal_keywords',
   'mail_check_times',
   'auto_cancel_enabled', 'auto_cancel_days_before', 'auto_cancel_time',
@@ -69,35 +109,52 @@ function sanitizeSettingsImport(raw: unknown): Partial<AppSettings> {
     if (typeof v === 'string' && v.length > 4096) {
       throw new Error(`설정값이 너무 깁니다: ${k} (최대 4096자)`);
     }
-    (clean as any)[k] = v;
+    (clean as Record<string, unknown>)[k] = v;
   }
   return clean;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function registerIpcHandlers(): void {
   // === Serial CRUD ===
+  // Compatibility only. New code should not call serial:getAll.
   ipcMain.handle(IPC_CHANNELS.SERIAL_GET_ALL, () => {
     return serialService.getAll();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_LIST, (_event, query: unknown = {}) => {
+    return serialService.list(parseSerialListQuery(query));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_GET_EXPIRING_SOON, (_event, days: number = 60, limit: number = 50) => {
+    return serialService.getExpiringSoon(days, limit);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SERIAL_GET_VERSION_SUMMARY, () => {
+    return serialService.getVersionSummary();
   });
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_GET_BY_ID, (_event, id: number) => {
     return serialService.getById(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.SERIAL_CREATE, (_event, input: SerialInput) => {
-    return serialService.create(input);
+  ipcMain.handle(IPC_CHANNELS.SERIAL_CREATE, (_event, input: unknown) => {
+    return serialService.create(parseSerialInput(input));
   });
 
-  ipcMain.handle(IPC_CHANNELS.SERIAL_UPDATE, (_event, id: number, input: Partial<SerialInput>) => {
-    return serialService.update(id, input);
+  ipcMain.handle(IPC_CHANNELS.SERIAL_UPDATE, (_event, id: number, input: unknown) => {
+    return serialService.update(id, parseSerialUpdateInput(input));
   });
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_DELETE, (_event, id: number) => {
     try {
       const deleted = serialService.delete(id);
       return { success: deleted };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) };
     }
   });
 
@@ -105,8 +162,8 @@ export function registerIpcHandlers(): void {
     return serialService.search(query);
   });
 
-  ipcMain.handle(IPC_CHANNELS.SERIAL_ADD_ADDON, (_event, id: number, addon: AddOn) => {
-    return serialService.addAddon(id, addon);
+  ipcMain.handle(IPC_CHANNELS.SERIAL_ADD_ADDON, (_event, id: number, addon: unknown) => {
+    return serialService.addAddon(id, parseAddOnInput(addon));
   });
 
   ipcMain.handle(IPC_CHANNELS.SERIAL_ACTIVATE, (_event, id: number) => {
@@ -117,8 +174,8 @@ export function registerIpcHandlers(): void {
     const before = serialService.getById(id);
     const result = serialService.setStopRequested(id, flag, triggerId);
     if (flag && before && before.renewal_stop_requested !== 1 && result) {
-      await sendStopRequestReceivedNotice(result).catch((err: any) =>
-        logger.error(`Failed to send stop request receipt email: ${err.message}`)
+      await sendStopRequestReceivedNotice(result).catch((err: unknown) =>
+        logger.error(`Failed to send stop request receipt email: ${errorMessage(err)}`)
       );
     }
     return result;
@@ -141,42 +198,46 @@ export function registerIpcHandlers(): void {
     return customerService.list();
   });
 
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_SERIAL_SUMMARIES, () => {
+    return customerService.serialSummaries();
+  });
+
   ipcMain.handle(IPC_CHANNELS.CUSTOMER_GET_BY_ID, (_event, id: number) => {
     return customerService.getById(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOMER_CREATE, (_event, input: CustomerInput) => {
-    return customerService.create(input);
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_CREATE, (_event, input: unknown) => {
+    return customerService.create(parseCustomerInput(input));
   });
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOMER_UPDATE, (_event, id: number, input: Partial<CustomerInput>) => {
-    return customerService.update(id, input);
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_UPDATE, (_event, id: number, input: unknown) => {
+    return customerService.update(id, parseCustomerUpdateInput(input));
   });
 
   ipcMain.handle(IPC_CHANNELS.CUSTOMER_DELETE, (_event, id: number) => {
     return customerService.delete(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOMER_SEARCH, (_event, query: string) => {
-    return customerService.search(query);
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_SEARCH, (_event, query: unknown) => {
+    return customerService.search(parseCustomerSearchQuery(query));
   });
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOMER_MERGE_CANDIDATES, (_event, query: any) => {
-    return customerService.mergeCandidates(query);
+  ipcMain.handle(IPC_CHANNELS.CUSTOMER_MERGE_CANDIDATES, (_event, query: unknown) => {
+    return customerService.mergeCandidates(parseCustomerMergeQuery(query));
   });
 
   // === Legacy Import ===
   ipcMain.handle(IPC_CHANNELS.LEGACY_DETECT, () => detectLegacy());
 
-  ipcMain.handle(IPC_CHANNELS.LEGACY_LIST_SERIALS, (_event, filter?: any) => {
+  ipcMain.handle(IPC_CHANNELS.LEGACY_LIST_SERIALS, (_event, filter?: { status?: string[]; limit?: number; offset?: number }) => {
     return listLegacySerials(filter);
   });
 
-  ipcMain.handle(IPC_CHANNELS.LEGACY_SUGGEST_MERGE, (_event, legacyRow: any) => {
+  ipcMain.handle(IPC_CHANNELS.LEGACY_SUGGEST_MERGE, (_event, legacyRow: LegacyMergeQuery) => {
     return findMergeCandidatesForLegacy(legacyRow);
   });
 
-  ipcMain.handle(IPC_CHANNELS.LEGACY_IMPORT, (_event, input: any) => {
+  ipcMain.handle(IPC_CHANNELS.LEGACY_IMPORT, (_event, input: LegacyImportInput) => {
     return importSerial(input);
   });
 
@@ -191,15 +252,15 @@ export function registerIpcHandlers(): void {
     if (result.canceled || !result.filePath) return { success: false };
 
     try {
-      excelService.generateTemplate(result.filePath);
+      await excelService.generateTemplate(result.filePath);
       return { success: true, filePath: result.filePath };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) };
     }
   });
 
   // === 엑셀 내보내기 ===
-  ipcMain.handle(IPC_CHANNELS.EXCEL_EXPORT_SERIALS, async (_event, serials: any[]) => {
+  ipcMain.handle(IPC_CHANNELS.EXCEL_EXPORT_SERIALS, async (_event, serials: SerialWithCustomer[]) => {
     const result = await dialog.showSaveDialog({
       title: '엑셀 내보내기',
       defaultPath: `serials_${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -207,10 +268,26 @@ export function registerIpcHandlers(): void {
     });
     if (result.canceled || !result.filePath) return { success: false };
     try {
-      excelService.exportSerials(serials, result.filePath);
+      await excelService.exportSerials(serials, result.filePath);
       return { success: true, filePath: result.filePath };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXCEL_EXPORT_SERIALS_BY_FILTER, async (_event, query: unknown = {}) => {
+    const result = await dialog.showSaveDialog({
+      title: '엑셀 내보내기',
+      defaultPath: `serials_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
+    });
+    if (result.canceled || !result.filePath) return { success: false };
+    try {
+      const serials = serialService.listForExport(parseSerialExportQuery(query));
+      await excelService.exportSerials(serials, result.filePath);
+      return { success: true, filePath: result.filePath, count: serials.length };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) };
     }
   });
 
@@ -226,7 +303,7 @@ export function registerIpcHandlers(): void {
     }
 
     const filePath = result.filePaths[0];
-    const { serials, errors: parseErrors } = excelService.parseExcelFile(filePath);
+    const { serials, errors: parseErrors } = await excelService.parseExcelFile(filePath);
 
     if (serials.length === 0) {
       return { imported: 0, errors: parseErrors.length > 0 ? parseErrors : ['유효한 데이터가 없습니다'] };
@@ -271,7 +348,7 @@ export function registerIpcHandlers(): void {
 
   // === Settings ===
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, () => {
-    return getSettings();
+    return redactSettingsForClient();
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SAVE, (_event, settings: Partial<AppSettings>) => {
@@ -280,7 +357,7 @@ export function registerIpcHandlers(): void {
     const afterSettings = getSettings(true);
     refreshSchedulersForSettingsChange(beforeSettings, afterSettings);
 
-    return afterSettings;
+    return redactSettingsForClient(afterSettings);
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_EXPORT, async () => {
@@ -295,7 +372,7 @@ export function registerIpcHandlers(): void {
     }
 
     const fs = await import('fs/promises');
-    await fs.writeFile(result.filePath, JSON.stringify(getSettings(), null, 2), 'utf8');
+    await fs.writeFile(result.filePath, JSON.stringify(redactSettingsForClient(), null, 2), 'utf8');
     return { success: true, filePath: result.filePath };
   });
 
@@ -321,14 +398,14 @@ export function registerIpcHandlers(): void {
     let sanitized: Partial<AppSettings>;
     try {
       sanitized = sanitizeSettingsImport(parsed);
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) };
     }
     const beforeSettings = getSettings(true);
     saveSettings(sanitized);
     const afterSettings = getSettings(true);
     refreshSchedulersForSettingsChange(beforeSettings, afterSettings);
-    return { success: true, settings: afterSettings };
+    return { success: true, settings: redactSettingsForClient(afterSettings) };
   });
 
   // === Logs ===
@@ -350,31 +427,41 @@ export function registerIpcHandlers(): void {
   });
 
   // === 주문 폴링 & 대기함 ===
+  // @deprecated Channel name is legacy; it returns the all-orders list.
   ipcMain.handle(IPC_CHANNELS.ORDER_GET_PENDING, () => getAllOrders());
   ipcMain.handle(IPC_CHANNELS.ORDER_LIST_GROUPED, () => listGroupedOrders());
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_APPROVE, (_event, id: number, options?: { serial_status?: string }) =>
-    approvePendingOrder(id, options)
+  ipcMain.handle(IPC_CHANNELS.ORDER_APPROVE, (_event, id: unknown, options?: unknown) =>
+    approvePendingOrder(parseOrderId(id), parseOrderApproveInput(options))
   );
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_REJECT, (_event, id: number) => {
-    rejectPendingOrder(id);
+  ipcMain.handle(IPC_CHANNELS.ORDER_REJECT, (_event, id: unknown) => {
+    rejectPendingOrder(parseOrderId(id));
     return true;
   });
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_UPDATE, (_event, id: number, data: any) => updatePendingOrder(id, data));
+  ipcMain.handle(IPC_CHANNELS.ORDER_UPDATE, (_event, id: unknown, data: unknown) =>
+    updatePendingOrder(parseOrderId(id), parseOrderUpdateInput(data))
+  );
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_DELETE, (_event, id: number) => {
-    deletePendingOrder(id);
+  ipcMain.handle(IPC_CHANNELS.ORDER_UPDATE_DATA, (_event, id: unknown, data: unknown) =>
+    updateDataFromPendingOrder(parseOrderId(id), parseOrderUpdateDataInput(data))
+  );
+
+  ipcMain.handle(IPC_CHANNELS.ORDER_DELETE, (_event, id: unknown) => {
+    deletePendingOrder(parseOrderId(id));
     return true;
   });
 
-  ipcMain.handle(IPC_CHANNELS.ORDER_POLL_NOW, async (_event, sourceId?: string) => pollNow(sourceId));
+  ipcMain.handle(IPC_CHANNELS.ORDER_POLL_NOW, async (_event, sourceId?: unknown) =>
+    pollNow(parseOrderPollNowInput(sourceId))
+  );
 
   // Order Dry-Run: 수집만 하고 DB에 저장하지 않음
-  ipcMain.handle(IPC_CHANNELS.ORDER_POLL_DRY_RUN, async (_event, sourceId?: string, sourceOverrides?: any) =>
-    pollDryRun(sourceId, sourceOverrides)
-  );
+  ipcMain.handle(IPC_CHANNELS.ORDER_POLL_DRY_RUN, async (_event, sourceId?: unknown, sourceOverrides?: unknown) => {
+    const input = parseOrderPollDryRunInput({ sourceId, sourceOverrides });
+    return pollDryRun(input.sourceId, input.sourceOverrides);
+  });
 
   ipcMain.handle(IPC_CHANNELS.ORDER_GET_POLL_STATUS, () => getPollStatus());
 
@@ -384,7 +471,7 @@ export function registerIpcHandlers(): void {
   });
 
   // === Notification ===
-  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_TEST_SLACK, (_event, settingsOverride?: any) =>
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_TEST_SLACK, (_event, settingsOverride?: Partial<AppSettings>) =>
     notificationService.testSlackWebhook(settingsOverride)
   );
 
@@ -403,11 +490,11 @@ export function registerIpcHandlers(): void {
     return getSettings().daily_report_times;
   });
 
-  ipcMain.handle(IPC_CHANNELS.EXPIRY_NOTICE_DRY_RUN, (_event, input: any) =>
+  ipcMain.handle(IPC_CHANNELS.EXPIRY_NOTICE_DRY_RUN, (_event, input: ExpiryNoticeDryRunInput) =>
     runExpiryNoticeDryRun(input)
   );
 
-  ipcMain.handle(IPC_CHANNELS.STOP_LIFECYCLE_NOTICE_DRY_RUN, (_event, input: any) =>
+  ipcMain.handle(IPC_CHANNELS.STOP_LIFECYCLE_NOTICE_DRY_RUN, (_event, input: StopLifecycleNoticeDryRunInput) =>
     runStopLifecycleNoticeDryRun(input)
   );
 
@@ -427,11 +514,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.MAIL_INBOUND_DRY_RUN, () => inboundDryRun());
 
-  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_CONNECTION, (_event, settingsOverride?: any) =>
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_CONNECTION, (_event, settingsOverride?: Partial<AppSettings>) =>
     testMailConnection(settingsOverride)
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAIL_LIST_INBOUND, (_event, filter?: any) =>
+  ipcMain.handle(IPC_CHANNELS.MAIL_LIST_INBOUND, (_event, filter?: { classification?: string[]; limit?: number; offset?: number }) =>
     listInboundMails(filter)
   );
 
@@ -464,17 +551,17 @@ export function registerIpcHandlers(): void {
   );
 
   // === Mail SMTP ===
-  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_SMTP, (_event, settingsOverride?: any) =>
+  ipcMain.handle(IPC_CHANNELS.MAIL_TEST_SMTP, (_event, settingsOverride?: Partial<AppSettings>) =>
     testSmtp(settingsOverride)
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAIL_SEND_TEST_DRY_RUN, (_event, settingsOverride?: any) =>
+  ipcMain.handle(IPC_CHANNELS.MAIL_SEND_TEST_DRY_RUN, (_event, settingsOverride?: Partial<AppSettings>) =>
     sendTestDryRun(settingsOverride)
   );
 
   ipcMain.handle(
     IPC_CHANNELS.MAIL_SEND_TEMPLATE,
-    (_event, code: string, to: string, vars: any, options?: any) =>
+    (_event, code: string, to: string, vars: Record<string, string>, options?: Record<string, unknown>) =>
       smtpSendTemplate(code, to, vars, options)
   );
 }

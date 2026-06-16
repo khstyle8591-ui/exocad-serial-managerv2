@@ -1,11 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { GroupedOrder, PendingOrder, MergeCandidate } from '../../shared/types';
+import type { GroupedOrder, PendingOrder, MergeCandidate, Serial } from '../../shared/types';
 import { useLang } from '../App';
-import { t } from '../i18n';
+import { t, type TranslationKey } from '../i18n';
+import { api } from '../client';
 
 type FilterType = 'all' | 'duplicate' | 'single' | 'grouped';
 type CustomerMode = 'auto' | 'existing' | 'new';
 type EditableOrder = PendingOrder;
+type TargetStatus = Extract<Serial['status'], 'active' | 'not-activated'>;
+type EditableTextField = Extract<keyof EditableOrder,
+  | 'serial_number' | 'customer_name' | 'customer_phone' | 'customer_email'
+  | 'customer_address' | 'dealer' | 'sales_manager' | 'main_product'
+  | 'version' | 'product_code' | 'purchase_date' | 'expiry_date' | 'notes'>;
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export default function RequestedOrder() {
   const { lang } = useLang();
@@ -14,10 +22,11 @@ export default function RequestedOrder() {
   const [polling, setPolling] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterType>('all');
-  const [targetStatusByKey, setTargetStatusByKey] = useState<Record<string, 'active' | 'not-activated'>>({});
+  const [targetStatusByKey, setTargetStatusByKey] = useState<Record<string, TargetStatus>>({});
   const [customerModeByKey, setCustomerModeByKey] = useState<Record<string, CustomerMode>>({});
   const [selectedCustomerByKey, setSelectedCustomerByKey] = useState<Record<string, number>>({});
   const [candidateMap, setCandidateMap] = useState<Record<string, MergeCandidate[]>>({});
+  const [approveErrorByKey, setApproveErrorByKey] = useState<Record<string, string>>({});
   const [editingGroup, setEditingGroup] = useState<GroupedOrder | null>(null);
 
   useEffect(() => { void load(); }, []);
@@ -25,7 +34,7 @@ export default function RequestedOrder() {
   const load = async () => {
     setLoading(true);
     try {
-      const result = await window.electronAPI.listGroupedOrders();
+      const result = await api.listGroupedOrders();
       setGroups(result);
     } finally {
       setLoading(false);
@@ -44,7 +53,7 @@ export default function RequestedOrder() {
   const runPollNow = async () => {
     setPolling(true);
     try {
-      await window.electronAPI.pollNow();
+      await api.pollNow();
       await load();
     } finally {
       setPolling(false);
@@ -59,6 +68,12 @@ export default function RequestedOrder() {
     const customerMode = customerModeByKey[key] || 'auto';
     const selectedCustomerId = selectedCustomerByKey[key];
     setBusyKey(`approve:${key}`);
+    setApproveErrorByKey(current => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
     try {
       const ordered = [group.main, ...group.modules].filter(Boolean) as PendingOrder[];
       const primaryFirst = ordered.sort((a, b) => {
@@ -86,15 +101,18 @@ export default function RequestedOrder() {
           customerPayload = {};
         }
 
-        const result = await window.electronAPI.approveOrder(order.id, { serial_status: targetStatus, ...customerPayload });
+        const result = await api.approveOrder(order.id, { serial_status: targetStatus, ...customerPayload });
         if (!result?.success) throw new Error(result?.error || t(lang, 'orders_approve_fail') + order.id);
         if (resolvedCustomerId === undefined && result.customer_id) {
           resolvedCustomerId = result.customer_id;
         }
       }
       await load();
-    } catch (error: any) {
-      alert(error.message || t(lang, 'requested_order_approve_error'));
+    } catch (error: unknown) {
+      setApproveErrorByKey(current => ({
+        ...current,
+        [key]: getErrorMessage(error) || t(lang, 'requested_order_approve_error'),
+      }));
     } finally {
       setBusyKey(null);
     }
@@ -104,12 +122,12 @@ export default function RequestedOrder() {
     setBusyKey('edit-save');
     try {
       for (const order of orders) {
-        await window.electronAPI.updateOrder(order.id, order);
+        await api.updateOrder(order.id, order);
       }
       setEditingGroup(null);
       await load();
-    } catch (error: any) {
-      alert(error.message || t(lang, 'requested_order_save_error'));
+    } catch (error: unknown) {
+      alert(getErrorMessage(error) || t(lang, 'requested_order_save_error'));
     } finally {
       setBusyKey(null);
     }
@@ -122,7 +140,7 @@ export default function RequestedOrder() {
       name: group.main.customer_name, email: group.main.customer_email,
       phone: group.main.customer_phone, dealer: group.main.dealer,
     };
-    const candidates = await window.electronAPI.getCustomerMergeCandidates(query);
+    const candidates = await api.getCustomerMergeCandidates(query);
     setCandidateMap(current => ({ ...current, [key]: candidates }));
     const strongCandidate = candidates.find(c => c.score >= 0.8 && c.matched_field !== 'name_partial');
     if (strongCandidate) {
@@ -136,7 +154,7 @@ export default function RequestedOrder() {
     setBusyKey(`reject:${key}`);
     try {
       const orders = [group.main, ...group.modules].filter(Boolean) as PendingOrder[];
-      for (const order of orders) { await window.electronAPI.rejectOrder(order.id); }
+      for (const order of orders) { await api.rejectOrder(order.id); }
       await load();
     } finally {
       setBusyKey(null);
@@ -148,8 +166,8 @@ export default function RequestedOrder() {
   }
 
   return (
-    <div style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 18, minHeight: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+    <div style={{ padding: 28, height: '100%', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 700, color: 'var(--text)' }}>{t(lang, 'requested_order_title')}</h2>
           <p style={{ margin: 0, color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'requested_order_desc')}</p>
@@ -191,6 +209,8 @@ export default function RequestedOrder() {
           const customerMode = customerModeByKey[key] || 'auto';
           const candidates = candidateMap[key] || [];
           const orders = [group.main, ...group.modules].filter(Boolean) as PendingOrder[];
+          const addonOnly = orders.length > 0 && orders.every(order => order.order_type === 'addon');
+          const approveError = approveErrorByKey[key];
           return (
             <section key={key} style={panelStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
@@ -202,6 +222,9 @@ export default function RequestedOrder() {
                     <span style={badgeStyle('var(--bg3)', 'var(--text3)')}>
                       {orders.length}{t(lang, 'requested_order_count_suffix')}
                     </span>
+                    {addonOnly && (
+                      <span style={badgeStyle('rgba(96,165,250,0.12)', '#93c5fd')}>{t(lang, 'orders_type_addon')}</span>
+                    )}
                     {group.flagged_duplicate && (
                       <span style={badgeStyle('rgba(239,68,68,0.1)', '#fc8181')}>{t(lang, 'requested_order_duplicate_badge')}</span>
                     )}
@@ -214,7 +237,7 @@ export default function RequestedOrder() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 210 }}>
                   <select
                     value={statusValue}
-                    onChange={ev => setTargetStatusByKey(c => ({ ...c, [key]: ev.target.value as any }))}
+                    onChange={ev => setTargetStatusByKey(c => ({ ...c, [key]: ev.target.value as TargetStatus }))}
                     style={selectStyle}
                   >
                     <option value="active">{t(lang, 'requested_order_status_active')}</option>
@@ -231,6 +254,12 @@ export default function RequestedOrder() {
                   </button>
                 </div>
               </div>
+
+              {approveError && (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(239,68,68,0.28)', background: 'rgba(239,68,68,0.08)', color: '#fc8181', fontSize: 13 }}>
+                  {approveError}
+                </div>
+              )}
 
               {main && (
                 <div style={blockStyle}>
@@ -372,7 +401,7 @@ function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {
     const main = orders.find(o => o.order_type === 'new' || o.order_type === 'renewal') ?? orders[0];
     if (!main) return;
     const customerFields: (keyof EditableOrder)[] = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'dealer', 'sales_manager'];
-    setOrders(c => c.map(o => o.id === main.id ? o : customerFields.reduce((acc, f) => ({ ...acc, [f]: (main as any)[f] ?? '' }), o)));
+    setOrders(c => c.map(o => o.id === main.id ? o : customerFields.reduce((acc, f) => ({ ...acc, [f]: main[f] ?? '' }), o)));
   };
 
   return (
@@ -412,11 +441,11 @@ function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {
                   ['label_main_product', 'main_product'],
                   ['label_version', 'version'],
                   ['product_code_label', 'product_code'],
-                ] as [string, keyof EditableOrder][]).map(([lk, fk]) => (
+                ] as [TranslationKey, EditableTextField][]).map(([lk, fk]) => (
                   <label key={fk} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)' }}>
-                    <span style={{ fontWeight: 700 }}>{t(lang, lk as any)}</span>
+                    <span style={{ fontWeight: 700 }}>{t(lang, lk)}</span>
                     <input
-                      value={(order as any)[fk] ?? ''}
+                      value={String(order[fk] ?? '')}
                       onChange={ev => setField(order.id, fk, ev.target.value)}
                       style={{ padding: '6px 8px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', boxSizing: 'border-box', width: '100%' }}
                     />
@@ -425,12 +454,12 @@ function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {
                 {([
                   ['label_purchase_date', 'purchase_date', 'date'],
                   ['label_expiry_date', 'expiry_date', 'date'],
-                ] as [string, keyof EditableOrder, string][]).map(([lk, fk, type]) => (
+                ] as [TranslationKey, EditableTextField, string][]).map(([lk, fk, type]) => (
                   <label key={fk} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)' }}>
-                    <span style={{ fontWeight: 700 }}>{t(lang, lk as any)}</span>
+                    <span style={{ fontWeight: 700 }}>{t(lang, lk)}</span>
                     <input
                       type={type}
-                      value={(order as any)[fk] ?? ''}
+                      value={String(order[fk] ?? '')}
                       onChange={ev => setField(order.id, fk, ev.target.value)}
                       style={{ padding: '6px 8px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', boxSizing: 'border-box', width: '100%' }}
                     />

@@ -5,11 +5,40 @@ import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
-import type { DailyReport, MonthlyExpiryReport, Serial, CancelResult } from '../../shared/types';
+import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult } from '../../shared/types';
+
+type SettingsOverride = Partial<AppSettings>;
+type EffectiveSettings = ReturnType<typeof getSettings>;
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
+  return Object.fromEntries(
+    Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+  ) as SettingsOverride;
+}
 
 function buildSmtpFrom(settings: ReturnType<typeof getSettings>) {
   const name = (settings.smtp_from_name || 'Exocad Manager').trim();
   return settings.smtp_user ? { name, address: settings.smtp_user } : settings.smtp_host;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function parseModules(modulesJson: string): string[] {
+  try {
+    const parsed = JSON.parse(modulesJson || '[]');
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
 }
 
 // ─── Slack 메시지 다국어 사전 ────────────────────────────────────────────────
@@ -32,6 +61,8 @@ const S: Record<SlackLang, Record<string, string>> = {
     prev_summary: '📝 *전일 작업 요약*',
     new_reg: '  • 신규 등록: {n}건',
     renewal: '  • 갱신 처리: {n}건',
+    auto_renewal: '  • 자동 갱신: {n}건',
+    manual_renewal: '  • 수동/주문 갱신: {n}건',
     cancel_done: '  • Cancel 완료: {n}건',
     cancel_fail: '  • ⚠️ Cancel 실패: {n}건',
     cancel_today: '🔴 *오늘 Cancel 예정* ({n}건)',
@@ -51,6 +82,8 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *만료 예정 리포트* — {month}',
     monthly_total: '총 {n}건의 시리얼이 만료 예정입니다.',
     cancel_failures: '⚠️ *Cancel 실패:*',
+    retry_failed: '[재시도 실패]',
+    menu_button_missing: '옵션 버튼(menu-button)을 찾을 수 없습니다. 시리얼: {serial}',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 수신 시각: {time}\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
     scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
@@ -70,6 +103,8 @@ const S: Record<SlackLang, Record<string, string>> = {
     prev_summary: '📝 *Yesterday\'s Summary*',
     new_reg: '  • New registrations: {n}',
     renewal: '  • Renewals: {n}',
+    auto_renewal: '  • Auto renewals: {n}',
+    manual_renewal: '  • Manual/order renewals: {n}',
     cancel_done: '  • Cancels completed: {n}',
     cancel_fail: '  • ⚠️ Cancel failures: {n}',
     cancel_today: '🔴 *Today\'s Cancel Targets* ({n})',
@@ -89,6 +124,8 @@ const S: Record<SlackLang, Record<string, string>> = {
     monthly_report: '📋 *Expiry Forecast Report* — {month}',
     monthly_total: 'A total of {n} serials are scheduled to expire.',
     cancel_failures: '⚠️ *Cancel Failures:*',
+    retry_failed: '[Retry failed]',
+    menu_button_missing: 'Could not find the option button (menu-button). Serial: {serial}',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• Received at: {time}\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
     scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
@@ -108,6 +145,8 @@ const S: Record<SlackLang, Record<string, string>> = {
     prev_summary: '📝 *前日の作業サマリー*',
     new_reg: '  • 新規登録: {n}件',
     renewal: '  • 更新処理: {n}件',
+    auto_renewal: '  • 自動更新: {n}件',
+    manual_renewal: '  • 手動・注文更新: {n}件',
     cancel_done: '  • キャンセル完了: {n}件',
     cancel_fail: '  • ⚠️ キャンセル失敗: {n}件',
     cancel_today: '🔴 *本日のキャンセル予定* ({n}件)',
@@ -126,7 +165,9 @@ const S: Record<SlackLang, Record<string, string>> = {
     daily_report: '📊 *日次作業レポート* — {date}',
     monthly_report: '📋 *失効予定レポート* — {month}',
     monthly_total: '合計 {n} 件のシリアルが期限切れになる予定です。',
-    cancel_failures: '⚠️ *Cancel 失敗:*',
+    cancel_failures: '⚠️ *キャンセル失敗:*',
+    retry_failed: '[再試行失敗]',
+    menu_button_missing: 'オプションボタン(menu-button)が見つかりません。シリアル: {serial}',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
     scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
@@ -136,8 +177,8 @@ function normalizeSlackLang(lang: unknown): SlackLang {
   return lang === 'en' || lang === 'ja' || lang === 'ko' ? lang : 'ko';
 }
 
-function getSlackLanguage(settingsOverride?: any): SlackLang {
-  const settings = settingsOverride ? { ...getSettings(), ...settingsOverride } : getSettings();
+function getSlackLanguage(settingsOverride?: SettingsOverride): SlackLang {
+  const settings: EffectiveSettings = settingsOverride ? { ...getSettings(), ...settingsOverride } : getSettings();
   return normalizeSlackLang(settings.slack_language || settings.app_language);
 }
 
@@ -158,6 +199,28 @@ function sf(key: string, values: Record<string, string | number> = {}, langOverr
 
 function slackLocale(lang: SlackLang): string {
   return lang === 'en' ? 'en-US' : lang === 'ja' ? 'ja-JP' : 'ko-KR';
+}
+
+function localizeCancelError(error: string | undefined, lang: SlackLang): string {
+  if (!error) return '';
+  const serial = error.match(/시리얼:\s*([A-Za-z0-9-]+)/)?.[1]
+    || error.match(/Serial:\s*([A-Za-z0-9-]+)/)?.[1]
+    || error.match(/シリアル:\s*([A-Za-z0-9-]+)/)?.[1]
+    || '';
+  const retried = /^\[재시도 실패\]\s*/.test(error)
+    || /^\[Retry failed\]\s*/.test(error)
+    || /^\[再試行失敗\]\s*/.test(error);
+  const retryPrefix = retried ? `${sf('retry_failed', {}, lang)} ` : '';
+
+  if (
+    error.includes('옵션 버튼(menu-button)을 찾을 수 없습니다')
+    || error.includes('Could not find the option button')
+    || error.includes('オプションボタン(menu-button)')
+  ) {
+    return `${retryPrefix}${sf('menu_button_missing', { serial }, lang)}`.trim();
+  }
+
+  return error.replace(/^\[재시도 실패\]/, sf('retry_failed', {}, lang));
 }
 
 
@@ -219,7 +282,7 @@ export class NotificationService {
   }
 
   // === Slack Webhook 테스트 ===
-  async testSlackWebhook(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
+  async testSlackWebhook(settingsOverride?: SettingsOverride): Promise<{ success: boolean; message: string }> {
     const webhookUrl = settingsOverride?.slack_webhook_url
       || getSettings().slack_webhook_url;
 
@@ -272,13 +335,13 @@ export class NotificationService {
         req.write(data);
         req.end();
       });
-    } catch (err: any) {
-      return { success: false, message: `URL 형식 오류: ${err.message}` };
+    } catch (err: unknown) {
+      return { success: false, message: `URL 형식 오류: ${getErrorMessage(err)}` };
     }
   }
 
   // === Slack Related Mail Webhook 테스트 ===
-  async testSlackRelatedWebhook(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
+  async testSlackRelatedWebhook(settingsOverride?: SettingsOverride): Promise<{ success: boolean; message: string }> {
     const webhookUrl = settingsOverride?.slack_webhook_url_related
       || getSettings().slack_webhook_url_related;
 
@@ -331,8 +394,8 @@ export class NotificationService {
         req.write(data);
         req.end();
       });
-    } catch (err: any) {
-      return { success: false, message: `URL 형식 오류: ${err.message}` };
+    } catch (err: unknown) {
+      return { success: false, message: `URL 형식 오류: ${getErrorMessage(err)}` };
     }
   }
 
@@ -391,7 +454,7 @@ export class NotificationService {
   async sendDailySummarySlack(summary: {
     cancelTargets: { serial_number: string; customer_name: string; expiry_date: string | null; cancel_skipped: boolean }[];
     renewalRequests: { serial_number: string; customer_name: string; request_date: string }[];
-    yesterdayStats: { registered: number; renewed: number; cancelled: number; failed: number };
+    yesterdayStats: { registered: number; autoRenewed: number; manualRenewed: number; cancelled: number; failed: number };
   }): Promise<boolean> {
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const lines: string[] = [
@@ -403,7 +466,8 @@ export class NotificationService {
     lines.push(
       '\n' + sf('prev_summary'),
       sf('new_reg', { n: y.registered }),
-      sf('renewal', { n: y.renewed }),
+      sf('auto_renewal', { n: y.autoRenewed }),
+      sf('manual_renewal', { n: y.manualRenewed }),
       sf('cancel_done', { n: y.cancelled }),
     );
     if (y.failed > 0) lines.push(sf('cancel_fail', { n: y.failed }));
@@ -494,8 +558,8 @@ export class NotificationService {
 
       logger.info(`Email sent: ${subject}`);
       return true;
-    } catch (err: any) {
-      logger.error(`Email send failed: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Email send failed: ${getErrorMessage(err)}`);
       return false;
     }
   }
@@ -529,8 +593,8 @@ export class NotificationService {
         html: htmlBody,
       });
       return true;
-    } catch (err: any) {
-      logger.error(`Emergency email send failed: ${err.message}`);
+    } catch (err: unknown) {
+      logger.error(`Emergency email send failed: ${getErrorMessage(err)}`);
       return false;
     }
   }
@@ -572,14 +636,47 @@ export class NotificationService {
     await Promise.all(tasks);
   }
 
+  async sendAutoRenewalOrderNotice(input: {
+    serial: SerialWithCustomer;
+    previous_expiry_date: string | null;
+    renewed_at?: Date;
+  }): Promise<{ success: boolean; subject: string; html_body: string; recipient_email: string; message: string }> {
+    const settings = getSettings();
+    const modules = parseModules(input.serial.modules);
+    const moduleText = modules.join(', ') || '-';
+    const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ko-KR', { timeZone: 'Asia/Tokyo' });
+    const subject = `[Exocad Manager] 자동 갱신 주문서 - ${input.serial.serial_number}`;
+    const html = `
+      <h2>자동 갱신 주문서</h2>
+      <p>아래 시리얼이 자동 갱신 처리되었습니다.</p>
+      <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
+        <tr><td><strong>시리얼 넘버</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
+        <tr><td><strong>고객명</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
+        <tr><td><strong>고객 이메일</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
+        <tr><td><strong>메인 제품</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
+        <tr><td><strong>모듈</strong></td><td>${escapeHtml(moduleText)}</td></tr>
+        <tr><td><strong>이전 만료일</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
+        <tr><td><strong>갱신 후 만료일</strong></td><td>${escapeHtml(input.serial.expiry_date || '')}</td></tr>
+        <tr><td><strong>처리 시각</strong></td><td>${escapeHtml(renewedAt)}</td></tr>
+      </table>
+    `;
+    const recipientEmail = settings.report_email_to || '';
+
+    const success = await this.sendEmail(subject, html);
+    return {
+      success,
+      subject,
+      html_body: html,
+      recipient_email: recipientEmail,
+      message: success ? '메일 발송 성공' : '메일 발송 실패',
+    };
+  }
+
   // === Test Connection (SMTP) ===
-  async testSmtpConnection(settingsOverride?: any): Promise<{ success: boolean; message: string }> {
+  async testSmtpConnection(settingsOverride?: SettingsOverride): Promise<{ success: boolean; message: string }> {
     // settingsOverride에 undefined 값이 있으면 DB 저장값을 덮어쓰는 버그 방지
     // undefined/null 제거 후 병합
-    const cleanOverride = Object.fromEntries(
-      Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')
-    );
-    const settings = { ...getSettings(), ...cleanOverride };
+    const settings: EffectiveSettings = { ...getSettings(), ...cleanSettingsOverride(settingsOverride) };
 
     // 로그: 어떤 값으로 테스트하는지 확인 (비밀번호는 마스킹)
     logger.info(`SMTP 테스트 - host: ${settings.smtp_host}, port: ${settings.smtp_port}, user: ${settings.smtp_user}, hasPassword: ${!!settings.smtp_password}`);
@@ -637,11 +734,11 @@ export class NotificationService {
 
       logger.info('SMTP connection test succeeded and test email sent');
       return { success: true, message: 'SMTP 연결 성공 및 테스트 메일 발송 완료' };
-    } catch (err: any) {
-      logger.error(`SMTP connection test error: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = getErrorMessage(err);
+      logger.error(`SMTP connection test error: ${msg}`);
 
       // Gmail 530 / 535 인증 오류 → App Password 안내
-      const msg: string = err.message || '';
       if (
         msg.includes('535') || msg.includes('530') ||
         msg.includes('Authentication') || msg.includes('Username and Password not accepted')
@@ -684,18 +781,20 @@ export class NotificationService {
   }
 
   private formatDailyReportSlack(report: DailyReport): string {
+    const lang = getSlackLanguage();
     const lines = [
-      sf('daily_report', { date: report.date }),
-      sf('divider'),
-      sf('new_reg', { n: report.new_registrations }),
-      sf('renewal', { n: report.renewals }),
-      sf('cancel_done', { n: report.cancellations }),
+      sf('daily_report', { date: report.date }, lang),
+      sf('divider', {}, lang),
+      sf('new_reg', { n: report.new_registrations }, lang),
+      sf('auto_renewal', { n: report.auto_renewals ?? report.renewals }, lang),
+      sf('manual_renewal', { n: report.manual_renewals ?? 0 }, lang),
+      sf('cancel_done', { n: report.cancellations }, lang),
     ];
 
     if (report.failed_cancellations.length > 0) {
-      lines.push('\n' + sf('cancel_failures'));
+      lines.push('\n' + sf('cancel_failures', {}, lang));
       for (const f of report.failed_cancellations) {
-        lines.push(`  • ${f.serial_number}: ${f.error}`);
+        lines.push(`  • ${f.serial_number}: ${localizeCancelError(f.error, lang)}`);
       }
     }
 
@@ -707,7 +806,8 @@ export class NotificationService {
       <h2>일일 작업 리포트 - ${report.date}</h2>
       <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
         <tr><td><strong>신규 등록</strong></td><td>${report.new_registrations}건</td></tr>
-        <tr><td><strong>갱신</strong></td><td>${report.renewals}건</td></tr>
+        <tr><td><strong>자동 갱신</strong></td><td>${report.auto_renewals ?? report.renewals}건</td></tr>
+        <tr><td><strong>수동/주문 갱신</strong></td><td>${report.manual_renewals ?? 0}건</td></tr>
         <tr><td><strong>Cancel</strong></td><td>${report.cancellations}건</td></tr>
       </table>
     `;

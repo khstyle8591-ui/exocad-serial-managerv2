@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import type { SerialWithCustomer } from '../../shared/types';
+import type { CustomerInput, Serial, SerialInput, SerialWithCustomer } from '../../shared/types';
 import CustomerAutocomplete, { type CustomerChoice } from './CustomerAutocomplete';
 import ModuleListEditor from './ModuleListEditor';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { api } from '../client';
 
 interface Props {
   mode: 'create' | 'edit';
@@ -16,7 +17,7 @@ interface FormState {
   serial_number: string;
   purchase_date: string;
   expiry_date: string;
-  status: string;
+  status: Serial['status'];
   engine_build: string;
   version: string;
   main_product: string;
@@ -33,8 +34,40 @@ interface CustomerFields {
   sales_manager: string;
 }
 
+interface CustomerConflict {
+  existing: {
+    id: number;
+    name: string;
+    email?: string;
+    phone?: string;
+    dealer?: string;
+    sales_manager?: string;
+    address?: string;
+  };
+  incoming: {
+    name: string;
+    email?: string;
+    phone?: string;
+    dealer?: string;
+    sales_manager?: string;
+    address?: string;
+  };
+}
+
+type CustomerResolution = 'merge' | 'separate';
+
 const EMPTY_CUST: CustomerFields = { email: '', phone: '', address: '', dealer: '', sales_manager: '' };
 const STATUSES = ['active', 'not-activated', 'expired', 'cancelled', 'broken'] as const;
+const STATUS_LABEL_KEYS: Record<Serial['status'], Parameters<typeof t>[1]> = {
+  active: 'status_active',
+  'not-activated': 'status_not_activated',
+  expired: 'status_expired',
+  cancelled: 'status_cancelled',
+  broken: 'status_broken',
+};
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const norm = (value: unknown) => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 
 export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const { lang } = useLang();
@@ -68,6 +101,7 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [conflict, setConflict] = useState<CustomerConflict | null>(null);
 
   useEffect(() => {
     if (customer?.kind === 'existing') {
@@ -90,43 +124,116 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const setCF = (k: keyof CustomerFields, v: string) =>
     setCustFields(prev => ({ ...prev, [k]: v }));
 
-  const submit = async () => {
+  const hasCustomerChanges = () => {
+    if (customer?.kind !== 'existing') return false;
+    const c = customer.customer;
+    return custFields.email !== (c.email ?? '')
+      || custFields.phone !== (c.phone ?? '')
+      || custFields.address !== (c.address ?? '')
+      || custFields.dealer !== (c.dealer ?? '')
+      || custFields.sales_manager !== (c.sales_manager ?? '');
+  };
+
+  const incomingCustomer = () => ({
+    name: customer?.kind === 'existing' ? customer.customer.name : customer?.name ?? '',
+    email: custFields.email,
+    phone: custFields.phone,
+    address: custFields.address,
+    dealer: custFields.dealer,
+    sales_manager: custFields.sales_manager,
+  });
+
+  const fieldsDiffer = (a: CustomerConflict['incoming'], b: CustomerConflict['existing']) =>
+    norm(a.name) !== norm(b.name)
+    || norm(a.email) !== norm(b.email)
+    || norm(a.phone) !== norm(b.phone)
+    || norm(a.address) !== norm(b.address)
+    || norm(a.dealer) !== norm(b.dealer)
+    || norm(a.sales_manager) !== norm(b.sales_manager);
+
+  const findCustomerConflict = async (): Promise<CustomerConflict | null> => {
+    if (!customer) return null;
+    const incoming = incomingCustomer();
+    if (customer.kind === 'existing') {
+      if (!hasCustomerChanges()) return null;
+      return { existing: customer.customer, incoming };
+    }
+
+    const candidates = await api.getCustomerMergeCandidates({
+      name: incoming.name,
+      email: incoming.email,
+      phone: incoming.phone,
+      dealer: incoming.dealer,
+    }) as { customer: CustomerConflict['existing'] }[];
+    const candidate = candidates.find(c => fieldsDiffer(incoming, c.customer));
+    return candidate ? { existing: candidate.customer, incoming } : null;
+  };
+
+  const submit = async (resolution?: CustomerResolution, mergeTargetId?: number) => {
     if (!customer) { setError(t(lang, 'err_select_customer')); return; }
     if (!form.serial_number.trim()) { setError(t(lang, 'err_serial_required')); return; }
 
     setSaving(true);
     setError('');
     try {
-      if (customer.kind === 'existing') {
+      if (!resolution) {
+        const nextConflict = await findCustomerConflict();
+        if (nextConflict) {
+          setConflict(nextConflict);
+          setSaving(false);
+          return;
+        }
+      }
+
+      if (customer.kind === 'existing' && resolution !== 'separate') {
         const c = customer.customer;
-        const changed: any = {};
+        const changed: Partial<CustomerInput> = {};
         if (custFields.email         !== (c.email ?? ''))         changed.email         = custFields.email;
         if (custFields.phone         !== (c.phone ?? ''))         changed.phone         = custFields.phone;
         if (custFields.address       !== (c.address ?? ''))       changed.address       = custFields.address;
         if (custFields.dealer        !== (c.dealer ?? ''))        changed.dealer        = custFields.dealer;
         if (custFields.sales_manager !== (c.sales_manager ?? '')) changed.sales_manager = custFields.sales_manager;
         if (Object.keys(changed).length > 0) {
-          await window.electronAPI.updateCustomer(c.id, changed);
+          await api.updateCustomer(c.id, changed);
         }
       }
 
-      const customerPart = customer.kind === 'existing'
+      const forceSeparate = resolution === 'separate';
+      const forceMerge = resolution === 'merge' && mergeTargetId != null;
+      if (customer.kind === 'new' && forceMerge) {
+        const incoming = incomingCustomer();
+        await api.updateCustomer(mergeTargetId, incoming);
+      }
+      const customerPart = customer.kind === 'existing' && !forceSeparate
         ? { customer_id: customer.customer.id }
+        : forceMerge
+          ? {
+              customer_id: mergeTargetId,
+              customer_name: incomingCustomer().name,
+              customer_email: custFields.email,
+              customer_phone: custFields.phone,
+              customer_address: custFields.address,
+              dealer: custFields.dealer,
+              customer_manager: custFields.sales_manager,
+              customer_resolution: 'merge' as const,
+              customer_merge_target_id: mergeTargetId,
+            }
         : {
-            customer_name:    customer.name,
+            customer_name:    customer.kind === 'existing' ? customer.customer.name : customer.name,
             customer_email:   custFields.email,
             customer_phone:   custFields.phone,
             customer_address: custFields.address,
             dealer:           custFields.dealer,
             customer_manager: custFields.sales_manager,
+            ...(forceSeparate ? { customer_resolution: 'separate' as const } : {}),
           };
 
-      const input = {
+      const input: SerialInput = {
         ...customerPart,
         serial_number: form.serial_number.trim(),
         purchase_date: form.purchase_date || undefined,
         expiry_date:   form.expiry_date   || null,
-        status:        form.status as any,
+        status:        form.status,
         engine_build:  form.engine_build,
         version:       form.version,
         main_product:  form.main_product,
@@ -136,21 +243,22 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
 
       let result: SerialWithCustomer;
       if (mode === 'create') {
-        result = await window.electronAPI.createSerial(input);
+        result = await api.createSerial(input);
       } else {
-        result = (await window.electronAPI.updateSerial(initial!.id, input))!;
+        result = (await api.updateSerial(initial!.id, input))!;
       }
 
       if (mode === 'edit' && initial) {
         const wasStop = (initial.renewal_stop_requested ?? 0) === 1;
         if (wasStop !== form.renewal_stop_requested) {
-          await window.electronAPI.setStopRequested(initial.id, form.renewal_stop_requested);
+          await api.setStopRequested(initial.id, form.renewal_stop_requested);
         }
       }
 
       onSaved(result);
-    } catch (e: any) {
-      setError(e?.message ?? t(lang, 'save_fail'));
+      setConflict(null);
+    } catch (e: unknown) {
+      setError(getErrorMessage(e) || t(lang, 'save_fail'));
     } finally {
       setSaving(false);
     }
@@ -234,14 +342,8 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
 
           <div>
             <label style={labelStyle}>{t(lang, 'label_status')}</label>
-            <select value={form.status} onChange={e => setF('status', e.target.value)} style={inputStyle}>
-              {STATUSES.map(s => <option key={s} value={s}>{t(lang, ({
-                active: 'status_active',
-                'not-activated': 'status_not_activated',
-                expired: 'status_expired',
-                cancelled: 'status_cancelled',
-                broken: 'status_broken',
-              } as Record<string, string>)[s] as any)}</option>)}
+            <select value={form.status} onChange={e => setF('status', e.target.value as Serial['status'])} style={inputStyle}>
+              {STATUSES.map(s => <option key={s} value={s}>{t(lang, STATUS_LABEL_KEYS[s])}</option>)}
             </select>
           </div>
 
@@ -285,11 +387,52 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
           <button onClick={onClose} disabled={saving} style={cancelBtn}>{t(lang, 'cancel')}</button>
-          <button onClick={submit} disabled={saving} style={saveBtn}>
+          <button onClick={() => submit()} disabled={saving} style={saveBtn}>
             {saving ? t(lang, 'saving') : mode === 'create' ? t(lang, 'btn_register') : t(lang, 'save')}
           </button>
         </div>
       </div>
+
+      {conflict && (
+        <div style={overlay}>
+          <div style={{ ...modal, width: 520 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--text)' }}>{t(lang, 'customer_conflict_title')}</h3>
+            <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text2)', lineHeight: 1.5 }}>
+              {t(lang, 'customer_conflict_message')}
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <CustomerCompareBox title={t(lang, 'customer_conflict_existing')} data={conflict.existing} />
+              <CustomerCompareBox title={t(lang, 'customer_conflict_incoming')} data={conflict.incoming} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+              <button onClick={() => setConflict(null)} disabled={saving} style={cancelBtn}>{t(lang, 'cancel')}</button>
+              <button onClick={() => submit('separate')} disabled={saving} style={cancelBtn}>{t(lang, 'customer_conflict_create_separate')}</button>
+              <button onClick={() => submit('merge', conflict.existing.id)} disabled={saving} style={saveBtn}>{t(lang, 'customer_conflict_overwrite')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomerCompareBox({ title, data }: { title: string; data: CustomerConflict['incoming'] }) {
+  const rows = [
+    ['Name', data.name],
+    ['Email', data.email],
+    ['Phone', data.phone],
+    ['Dealer', data.dealer],
+    ['Manager', data.sales_manager],
+  ];
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--bg3)' }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>{title}</div>
+      {rows.map(([label, value]) => (
+        <div key={label} style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 6, fontSize: 11.5, marginBottom: 5 }}>
+          <span style={{ color: 'var(--text3)' }}>{label}</span>
+          <span style={{ color: 'var(--text2)', overflowWrap: 'anywhere' }}>{value || '-'}</span>
+        </div>
+      ))}
     </div>
   );
 }

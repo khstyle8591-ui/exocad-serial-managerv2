@@ -23,6 +23,10 @@ export const TEMPLATE_VARIABLE_NAMES = [
   'TODAY',
   'DEALER',
   'SALES_MANAGER',
+  'RESPONSE_ERRORS',
+  'DETECTED_SERIAL',
+  'RECEIVED_SUBJECT',
+  'REPLY_TEMPLATE',
 ] as const;
 
 export type TemplateVarName = (typeof TEMPLATE_VARIABLE_NAMES)[number];

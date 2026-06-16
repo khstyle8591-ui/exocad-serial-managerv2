@@ -1,6 +1,6 @@
 # Exocad Manager — Memory
 
-> Last Update: 2026-03-11 (Express Web Server Migration & GCP Deployment)
+> Last Update: 2026-05-19 (Technical debt cleanup: legacy email monitor removed)
 
 ## Project Overview
 Exocad serial number management automation system. Originally a Windows Electron Desktop App, now fully migrated to a standalone **Express Web Server for GCP deployment**.
@@ -16,7 +16,7 @@ Exocad serial number management automation system. Originally a Windows Electron
   - `server.ts` — Express main entry point (HTTP: 3000, HTTPS: 3443 fallback)
   - `database.ts` — uses `process.cwd()/data`
   - `settings.ts`, `scheduler.ts`, `utils/logger.ts`
-  - `services/`: serial, cancel, email-monitor, notification, excel, order
+  - `services/`: serial, cancel, mail/inbound, mail/template, mail/smtp, notification, excel, order
 - `src/server/routes/`: Express API endpoints (replaces `ipcMain` handlers)
   - `serials.ts`, `settings.ts`, `orders.ts`, `logs.ts`, `cancel.ts`, `reports.ts`, `renewal.ts`
 - `src/renderer/`: React frontend (Vite)
@@ -41,7 +41,7 @@ Exocad serial number management automation system. Originally a Windows Electron
 ## exocad-manager Architecture (Electron)
 
 - `src/main/`: Electron Main — `database.ts`, `settings.ts`, `ipc-handlers.ts`, `preload.ts`, `scheduler.ts`
-  - `services/`: serial, cancel, email-monitor, notification, excel, order
+  - `services/`: serial, cancel, mail/inbound, mail/template, mail/smtp, notification, excel, order
 - `src/renderer/`: React UI — `App.tsx`, `i18n.ts` (ko/en/ja), pages/
 - `src/shared/types.ts`
 
@@ -56,9 +56,9 @@ Exocad serial number management automation system. Originally a Windows Electron
 - **Auto-Cancel**: D-N days before expiry, no pending renewal → Playwright cancels on Exocad site
   - Login fallback `pm@geomedi.co.jp`, SSO button, search via fill/pressSequentially/JS nativeInputValueSetter
   - Product detection: `td.h-[72px]`, Chairside/exoplan → "Cancel subscription", DentalCAD → "Opt out upgrade"
-- **Renewal Detection**: POP3/IMAP email scan, keyword match + `dedicated_email` header detection
+- **Inbound Mail Detection**: POP3/IMAP email scan/classification via `services/mail/inbound.service.ts`
   - `testMailConnection(settingsOverride?)` — tests with unsaved form values
-  - `renewalDryRun()` — read-only preview of what would be processed
+  - `inboundDryRun()` — read-only preview of what would be processed
 - **Order Polling**: Playwright crawls geomedi.online, pagination via `a[href="#N"]`, keyword filter on 품명
   - ⭐ **CAD Pre-select**: `stock_serial.html` 접속 후 폴링 전 `select[name="s_h_code_fk"]` 값을 `"0013"(CAD)`으로 설정 → `change` 이벤트 + `sub_dir10()` 호출 → 2000ms 대기 → 날짜 설정 → 검색. `crawlSource` + `crawlSourceDryRun` 양쪽 모두 적용.
 - **Reporting**: Daily + monthly reports via Slack webhook + SMTP email
@@ -94,7 +94,7 @@ Exocad serial number management automation desktop app.
 ## Architecture
 - `src/main/`: Electron Main.
   - `database.ts`, `settings.ts`, `ipc-handlers.ts`, `preload.ts`, `scheduler.ts` (cron jobs).
-  - `services/`: `serial` (CRUD), `cancel` (Playwright), `email-monitor` (POP3/IMAP), `notification` (Slack/SMTP), `excel`, `order` (URL polling).
+  - `services/`: `serial` (CRUD), `cancel` (Playwright), `mail/inbound` (POP3/IMAP classification), `mail/template`, `mail/smtp`, `notification` (Slack/SMTP), `excel`, `order` (URL polling).
 - `src/renderer/`: React UI.
   - `App.tsx`, `i18n.ts` (ko/en/ja), `pages/` (Dashboard, Serials, Orders, Settings, Logs).
 - `src/shared/`: `types.ts` (Shared types, IPC channels).
@@ -132,11 +132,11 @@ Exocad serial number management automation desktop app.
 - **빌드**: `tsc --noEmit` 통과 확인
 
 ### 3. Renewal Detection — Dry-Run, Keyword Settings, Connection Test
-- **New methods (`email-monitor.service.ts`)**:
-  - `renewalDryRun()`: Scans POP3/IMAP (no delete/markSeen). Returns matched emails with `matched_keywords`, `is_dedicated`, `serial_number`, `serial_exists`. IMAP fetches last 50 ALL mails read-only.
+- **Current service (`services/mail/inbound.service.ts`)**:
+  - `inboundDryRun()`: Scans POP3/IMAP without saving and returns classification preview entries.
   - `testMailConnection(settingsOverride?)`: POP3 uses `UIDL()` for count; IMAP opens INBOX read-only. Accepts `settingsOverride` param so unsaved form values can be tested without saving first.
 - **Bug Fixed**: Connection test was reading DB (saved settings). Fixed by passing current `formVals.current` from Settings.tsx → IPC (`renewal:testConnection`) → service override.
-- **New types (`types.ts`)**: `RenewalDryRunEmail`, `RenewalDryRunResult`, `MailConnectionResult`. IPC channels: `renewal:dryRun`, `renewal:testConnection`.
+- **Types (`types.ts`)**: `MailConnectionResult`, `InboundMail`. IPC/API calls route through the inbound mail service.
 - **Settings UI (`Settings.tsx`)**: Added to mail section — 🔑 keyword editor (moved from `section_other`), 🔌 connection test button (+result badge), 🔍 Renewal Dry-Run button (+results table: From/Subject/Date/Keywords/Dedicated/Serial/DBExists).
 
 ## Auto-Cancel Flow

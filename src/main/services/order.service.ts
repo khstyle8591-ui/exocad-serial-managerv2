@@ -1,12 +1,24 @@
-import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { Browser, BrowserContext, Page } from 'playwright';
 import cron from 'node-cron';
 import { getDb } from '../database';
 import { getSettings, saveSettings } from '../settings';
 import { serialService } from './serial.service';
 import { logger } from '../utils/logger';
 import { getDateString, getNowTimestampString, getTodayDateString } from '../utils/date-utils';
-import type { PendingOrder, PollSource, SerialInput, PollDryRunResult, PollDryRunSourceResult, PreviewRow, ProductCodeGroup, ProductCodeRule, GroupedOrder } from '../../shared/types';
+import type { PendingOrder, PollSource, Serial, SerialInput, SerialWithCustomer, PollDryRunResult, PollDryRunSourceResult, PreviewRow, ProductCodeGroup, ProductCodeRule, GroupedOrder } from '../../shared/types';
 import { customerService } from './customer.service';
+import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
+import { waitForSettledPage } from './playwright-waits';
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function logMemoryUsage(label: string): void {
+  const memory = process.memoryUsage();
+  logger.info(
+    `[memory] ${label} rss=${Math.round(memory.rss / 1024 / 1024)}MB ` +
+    `heapUsed=${Math.round(memory.heapUsed / 1024 / 1024)}MB`
+  );
+}
 
 // ────────────────────────────────────────────────────────────
 // 폴링 상태
@@ -25,6 +37,10 @@ const pollStatus: PollStatus = {
 
 let cronTasks: Map<string, cron.ScheduledTask[]> = new Map();
 
+// 폴링 시작 시각(ms). 워치독이 멈춘(stuck) 폴링을 감지해 잠금을 해제하는 데 사용.
+let pollStartedAtMs = 0;
+const MAX_POLL_DURATION_MS = 15 * 60 * 1000; // 15분
+
 // ────────────────────────────────────────────────────────────
 // Product Code 그룹 상수
 // ────────────────────────────────────────────────────────────
@@ -35,20 +51,22 @@ const BUILT_IN_CODES: Record<ProductCodeGroup, string[]> = {
   ],
   addon: [
     '006-001002', '006-001003', '006-001004', '006-001005', '006-001006', '006-001007',
-    '006-001008', '006-001009', '006-001010', '006-001011', '006-001012', '006-001013',
+    '006-001008', '006-001009', '006-001011', '006-001012', '006-001013',
     '006-001014', '006-001015', '006-001016', '006-001037', '006-001039',
     '006-005100', '006-005101', '006-005102', '006-005103', '006-005104', '006-005105',
     '006-005106', '006-005107', '006-005108', '006-005109', '006-005110',
   ],
   main: [
-    '006-001001', '006-001034', '006-001020',
+    '006-001001', '006-001010', '006-001020', '006-001032', '006-001034',
+    '006-005080',
     '006-005082', '006-005083', '006-005098', '006-005099',
+    '006-006100',
   ],
   memo: [
     '006-001031', '006-001033', '006-001036', '006-001040', '006-001041',
-    '006-005080', '006-005081', '006-006100', '006-006104',
+    '006-005081', '006-006104',
   ],
-  version_update: ['006-001032'],
+  version_update: [],
   ignore: [
     '006-001018', '006-001019', '006-001021', '006-001022', '006-001023', '006-001024',
     '006-001025', '006-001026', '006-001027', '006-001028', '006-001029', '006-001030',
@@ -58,8 +76,10 @@ const BUILT_IN_CODES: Record<ProductCodeGroup, string[]> = {
   ],
 };
 
+const RECLASSIFIED_MAIN_CODES = new Set(['006-001010', '006-001032', '006-006100', '006-005080']);
+
 // resolveGroup: 코드 → 그룹 결정 (내장 횤옜 커스텀 순서)
-function resolveGroup(code: string, customRules: ProductCodeRule[]): ProductCodeGroup | null {
+export function resolveGroup(code: string, customRules: ProductCodeRule[]): ProductCodeGroup | null {
   const c = code.trim();
   if (!c) return null;
   // 먼저 사용자 커스텀 코드 체크
@@ -145,7 +165,7 @@ export function listGroupedOrders(): GroupedOrder[] {
 export function updatePendingOrder(id: number, data: Partial<PendingOrder>): PendingOrder | undefined {
   const db = getDb();
   const fields: string[] = [];
-  const values: any[] = [];
+  const values: unknown[] = [];
 
   const allowed = [
     'serial_number', 'customer_name', 'customer_email', 'customer_address',
@@ -169,14 +189,15 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
 
 export async function approvePendingOrder(
   id: number,
-  options?: { serial_status?: string; customer_id?: number; customer_data?: { name: string; email?: string; phone?: string; address?: string; dealer?: string; sales_manager?: string; notes?: string } },
+  options?: { serial_status?: Serial['status']; customer_id?: number; customer_data?: { name: string; email?: string; phone?: string; address?: string; dealer?: string; sales_manager?: string; notes?: string } },
 ): Promise<{ success: boolean; error?: string; customer_id?: number; was_renewed?: boolean }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
 
   try {
-    const targetStatus = (options?.serial_status as any) || 'active';
+    return db.transaction(() => {
+    const targetStatus: Serial['status'] = options?.serial_status || 'active';
     let was_renewed = false;
     const customerInput = options?.customer_data ?? {
       name: order.customer_name,
@@ -191,10 +212,11 @@ export async function approvePendingOrder(
     const today = getTodayDateString();
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+    const approvedExpiryDate = resolveApprovedExpiryDate(order.expiry_date, targetStatus, oneYearLater);
     const pollGroup = getPendingOrderPollGroup(order);
 
     if (pollGroup === 'memo') {
-      const memoText = order.notes || `[${today}] ${order.version || order.product_code || 'memo'}`;
+      const memoText = getOrderProductMemo(order, today) || `[${today}] ${order.product_code || 'memo'}`;
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (!existing) {
         serialService.create({
@@ -207,8 +229,7 @@ export async function approvePendingOrder(
           customer_manager: customerInput.sales_manager,
           dealer: customerInput.dealer,
           purchase_date: order.purchase_date || today,
-          expiry_date: order.expiry_date || today,
-          version: order.version,
+          expiry_date: approvedExpiryDate,
           notes: memoText,
           status: targetStatus,
         });
@@ -221,6 +242,7 @@ export async function approvePendingOrder(
     }
 
     if (pollGroup === 'version_update') {
+      const memoText = getOrderProductMemo(order, today) || `[${today}] ${order.product_code || 'version update'}`;
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (!existing) {
         serialService.create({
@@ -233,32 +255,34 @@ export async function approvePendingOrder(
           customer_manager: customerInput.sales_manager,
           dealer: customerInput.dealer,
           purchase_date: order.purchase_date || today,
-          expiry_date: order.expiry_date || today,
-          version: order.version,
-          notes: order.notes,
+          expiry_date: approvedExpiryDate,
+          notes: memoText,
           status: targetStatus,
         });
       } else {
-        serialService.update(existing.id, { version: order.version || '', notes: order.notes || existing.notes });
+        const newNotes = existing.notes ? `${existing.notes}\n${memoText}` : memoText;
+        serialService.update(existing.id, { notes: newNotes });
       }
       db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
       return { success: true, customer_id: selectedCustomerId };
     }
 
-    if (order.order_type === 'new') {
+    if (order.order_type === 'new' || pollGroup === 'main') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
         // 이미 존재 → 갱신 처리 (flag_duplicate가 설정된 경우). 호출자에게 was_renewed로 알림
         was_renewed = true;
         serialService.renewSerial(existing.id, 'manual');
-        const customerUpdates: any = {};
+        const customerUpdates: Partial<SerialInput> = {};
         if (order.customer_name) customerUpdates.customer_name = order.customer_name;
         if (order.customer_email) customerUpdates.customer_email = order.customer_email;
         if (order.customer_phone) customerUpdates.customer_phone = order.customer_phone;
         if (order.customer_address) customerUpdates.customer_address = order.customer_address;
         if (order.sales_manager) customerUpdates.customer_manager = order.sales_manager;
-        if (order.version) customerUpdates.version = order.version;
-        if (order.main_product) customerUpdates.main_product = order.main_product;
+        if (order.version && pollGroup !== 'main' && pollGroup !== null) customerUpdates.version = order.version;
+        if (order.main_product || ((pollGroup === 'main' || pollGroup === null) && order.version)) {
+          customerUpdates.main_product = order.main_product || order.version;
+        }
         const modules = parseOrderModules(order);
         if (modules.length > 0) customerUpdates.modules = modules;
         if (order.notes) customerUpdates.notes = order.notes;
@@ -278,9 +302,9 @@ export async function approvePendingOrder(
           customer_manager: customerInput.sales_manager,
           dealer: customerInput.dealer,
           purchase_date: order.purchase_date || today,
-          expiry_date: order.expiry_date || (targetStatus === 'active' ? getDateString(oneYearLater) : ''),
+          expiry_date: approvedExpiryDate,
           engine_build: order.engine_build,
-          version: order.version,
+          version: pollGroup === 'main' || pollGroup === null ? '' : order.version,
           main_product: order.main_product || order.version,
           modules: parseOrderModules(order),
           notes: order.notes,
@@ -299,29 +323,38 @@ export async function approvePendingOrder(
       } else {
         serialService.renewSerial(serial.id, 'manual');
       }
+      const renewalMemo = getOrderProductMemo(order, today);
+      if (renewalMemo) {
+        const renewed = serialService.getById(serial.id);
+        const newNotes = renewed?.notes ? `${renewed.notes}\n${renewalMemo}` : renewalMemo;
+        serialService.update(serial.id, { notes: newNotes });
+      }
     } else if (order.order_type === 'addon') {
       // addon: serial DB에 add_ons 추가
       const serial = serialService.getBySerialNumber(order.serial_number);
-      if (serial) {
-        try {
-          const rawObj = JSON.parse(order.raw_data || '{}');
-          const addOns: Array<{ name: string; added_date: string }> = rawObj._add_ons || [];
-          for (const addon of addOns) {
-            serialService.addAddon(serial.id, addon);
-          }
-        } catch { /* raw_data 파싱 실패 시 무시 */ }
+      if (!serial) {
+        return { success: false, error: `Add-on 대상 시리얼 ${order.serial_number}을 찾을 수 없습니다.` };
       }
-    }
+      try {
+        const rawObj = JSON.parse(order.raw_data || '{}');
+        const addOns: Array<{ name: string; added_date: string }> = rawObj._add_ons || [];
+        for (const addon of addOns) {
+          serialService.addAddon(serial.id, addon);
+        }
+      } catch { /* raw_data 파싱 실패 시 무시 */ }
+      }
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
     return { success: true, customer_id: selectedCustomerId, was_renewed: was_renewed || undefined };
-  } catch (err: any) {
-    logger.error(`Approval error: ${err.message}`);
-    return { success: false, error: err.message };
+    })();
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    logger.error(`Approval error: ${errorMessage}`);
+    return { success: false, error: errorMessage };
   }
 }
 
-export async function updateDataFromPendingOrder(id: number, form: Partial<PendingOrder>): Promise<{ success: boolean; data?: any; error?: string }> {
+export async function updateDataFromPendingOrder(id: number, form: Partial<PendingOrder>): Promise<{ success: boolean; data?: SerialWithCustomer; error?: string }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
@@ -331,14 +364,23 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
     const existing = serialService.getBySerialNumber(targetSerialName);
     if (!existing) return { success: false, error: `DB에 시리얼 ${targetSerialName}이 존재하지 않습니다.` };
 
-    const updates: any = {};
-    const fields = ['customer_name', 'customer_email', 'customer_phone', 'customer_address', 'sales_manager', 'purchase_date', 'version', 'main_product', 'notes'];
-    fields.forEach(f => {
+    const updates: Partial<SerialInput> = {};
+    const copyIfPresent = <K extends keyof PendingOrder, T extends keyof SerialInput>(formKey: K, updateKey: T) => {
+      const value = form[formKey];
       // undefined/null인 경우만 제외 — 빈 문자열도 업데이트 허용
-      if ((form as any)[f] !== undefined && (form as any)[f] !== null) {
-        updates[f] = (form as any)[f];
+      if (value !== undefined && value !== null) {
+        updates[updateKey] = value as Partial<SerialInput>[T];
       }
-    });
+    };
+    copyIfPresent('customer_name', 'customer_name');
+    copyIfPresent('customer_email', 'customer_email');
+    copyIfPresent('customer_phone', 'customer_phone');
+    copyIfPresent('customer_address', 'customer_address');
+    copyIfPresent('sales_manager', 'customer_manager');
+    copyIfPresent('purchase_date', 'purchase_date');
+    copyIfPresent('version', 'version');
+    copyIfPresent('main_product', 'main_product');
+    copyIfPresent('notes', 'notes');
 
     if (form.serial_status) updates.status = form.serial_status;
     if (form.modules !== undefined && form.modules !== null) updates.modules = parseOrderModules(form as PendingOrder);
@@ -354,9 +396,10 @@ export async function updateDataFromPendingOrder(id: number, form: Partial<Pendi
 
     db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
     return { success: true, data: serialService.getBySerialNumber(targetSerialName) };
-  } catch (err: any) {
-    logger.error(`Existing data update error: ${err.message}`);
-    return { success: false, error: err.message };
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    logger.error(`Existing data update error: ${errorMessage}`);
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -421,6 +464,7 @@ function withPollingMetadata(rawData: string, metadata: Record<string, unknown>)
 }
 
 function getPendingOrderPollGroup(order: PendingOrder): ProductCodeGroup | null {
+  if (RECLASSIFIED_MAIN_CODES.has(order.product_code?.trim())) return 'main';
   try {
     const rawObj = JSON.parse(order.raw_data || '{}');
     if (typeof rawObj._poll_group === 'string') return rawObj._poll_group as ProductCodeGroup;
@@ -430,8 +474,12 @@ function getPendingOrderPollGroup(order: PendingOrder): ProductCodeGroup | null 
 
 function parseOrderModules(order: Pick<PendingOrder, 'modules' | 'raw_data'>): string[] {
   const modules = new Set<string>();
-  const addName = (item: any) => {
-    const name = typeof item === 'string' ? item : item?.name;
+  const addName = (item: unknown) => {
+    const name = typeof item === 'string'
+      ? item
+      : item && typeof item === 'object' && 'name' in item
+        ? (item as { name?: unknown }).name
+        : undefined;
     if (name) modules.add(String(name).trim());
   };
 
@@ -446,6 +494,41 @@ function parseOrderModules(order: Pick<PendingOrder, 'modules' | 'raw_data'>): s
   } catch { /* ignore */ }
 
   return Array.from(modules).filter(Boolean);
+}
+
+function appendNote(notes: string, note: string): string {
+  return [notes, note].filter(Boolean).join(' / ');
+}
+
+function getPolledProductNote(productVal: string, today: string): string {
+  return productVal ? `[${today}] Polling product: ${productVal}` : '';
+}
+
+function getOrderProductMemo(order: PendingOrder, today: string): string {
+  const productNote = getPolledProductNote(order.version || order.main_product || '', today);
+  return order.notes.includes(productNote) || !productNote
+    ? order.notes
+    : appendNote(order.notes, productNote);
+}
+
+export function getPolledProductFields(
+  group: ProductCodeGroup | null,
+  productVal: string,
+  today: string,
+  orderType: PendingOrder['order_type'],
+): Pick<PendingOrderInsert, 'main_product' | 'version' | 'notes'> {
+  const baseNotes = '';
+  if (group === 'main' || (group === null && orderType === 'new')) {
+    return { main_product: productVal, version: '', notes: baseNotes };
+  }
+  if (group === 'renewal' || group === 'memo' || group === 'version_update') {
+    return {
+      main_product: '',
+      version: '',
+      notes: getPolledProductNote(productVal, today),
+    };
+  }
+  return { main_product: '', version: '', notes: baseNotes };
 }
 
 function buildPolledSourceId(
@@ -469,6 +552,7 @@ function insertPendingFromPolledRow(
 ): boolean {
   const serial = (row.serial || '').trim();
   const productVal = getProductFallback(row);
+  const productFields = getPolledProductFields(group, productVal, getTodayDateString(), orderType);
   const sourceId = options.source_id || buildPolledSourceId(source, row, group, code, serial);
   if (isAlreadyFetched(sourceId)) {
     logger.info(`[Polling] already fetched order skipped: source_id=${sourceId} serial=${serial || '(empty)'}`);
@@ -486,18 +570,18 @@ function insertPendingFromPolledRow(
     dealer: '',
     sales_manager: '',
     trade_number: row.invoice_no || '',
-    main_product: orderType === 'new' ? productVal : '',
+    main_product: productFields.main_product,
     modules: '[]',
     purchase_date: normalizeDate(row.purchase) || '',
     expiry_date: normalizeDate(row.expiry) || '',
     engine_build: '',
-    version: productVal,
-    notes: [
+    version: productFields.version,
+    notes: appendNote([
       `자동수집: ${source.name}`,
       row.invoice_no ? `출고번호: ${row.invoice_no}` : '',
       code ? `상품코드: ${code}` : '',
       group ? `분류: ${group}` : '',
-    ].filter(Boolean).join(' / '),
+    ].filter(Boolean).join(' / '), productFields.notes),
     order_type: orderType,
     raw_data: withPollingMetadata(row._raw || '{}', { _poll_group: group, _product_code: code }),
     status: 'pending',
@@ -541,12 +625,12 @@ async function loginToSource(page: Page, source: PollSource): Promise<void> {
     }
   }
   await page.waitForLoadState('domcontentloaded').catch(() => { });
-  await page.waitForTimeout(2000);
+  await waitForSettledPage(page, `${source.name} login`, 10000);
 }
 
-async function setupOrderPage(page: Page, source: PollSource, logPrefix: string): Promise<void> {
+async function setupOrderPage(page: Page, source: PollSource, logPrefix: string, targetDate?: string): Promise<void> {
   await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2000);
+  await waitForSettledPage(page, `${source.name} order page`, 10000);
 
   if (!source.url.includes('stock_serial.html')) return;
 
@@ -555,42 +639,63 @@ async function setupOrderPage(page: Page, source: PollSource, logPrefix: string)
     if (!sel) return false;
     sel.value = '0013';
     sel.dispatchEvent(new Event('change', { bubbles: true }));
-    if (typeof (window as any).sub_dir10 === 'function') (window as any).sub_dir10();
+    const legacyWindow = window as Window & { sub_dir10?: () => void };
+    if (typeof legacyWindow.sub_dir10 === 'function') legacyWindow.sub_dir10();
     return true;
   });
   if (categorySelected) {
     logger.info(`${logPrefix} ${source.name}: selected item category CAD(0013)`);
-    await page.waitForTimeout(2000);
+    await waitForSettledPage(page, `${source.name} category change`, 10000);
   } else {
     logger.warn(`${logPrefix} ${source.name}: s_h_code_fk dropdown not found.`);
   }
 
-  const today = getTodayDateString();
-  await page.evaluate((date) => {
-    const dateInput = document.getElementById('s_date1') as HTMLInputElement;
-    if (dateInput) {
+  const pollingDateRange = resolvePollingDateRange(targetDate);
+  const dateInputs = await page.evaluate(({ startDate, endDate }) => {
+    const setDateInput = (id: string, value: string): boolean => {
+      const dateInput = document.getElementById(id) as HTMLInputElement | null;
+      if (!dateInput) return false;
       dateInput.readOnly = false;
-      dateInput.value = date;
+      dateInput.value = value;
       dateInput.dispatchEvent(new Event('input', { bubbles: true }));
       dateInput.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  }, today);
+      return true;
+    };
+
+    return {
+      startSet: setDateInput('s_date1', startDate),
+      endSet: setDateInput('s_date2', endDate),
+    };
+  }, pollingDateRange);
+  logger.info(
+    `${logPrefix} ${source.name}: polling date range ${pollingDateRange.startDate}..${pollingDateRange.endDate} ` +
+    `(s_date1=${dateInputs.startSet ? 'set' : 'missing'}, s_date2=${dateInputs.endSet ? 'set' : 'missing'})`
+  );
 
   const searchBtn = page.locator('button:has-text("検索"), button.btn_black, input[type="button"][value*="検索"]').first();
   if (await searchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await searchBtn.click();
   }
-  await page.waitForTimeout(2500);
+  await waitForSettledPage(page, `${source.name} order search`, 10000);
 }
 
-function buildFieldMap(source: PollSource): Record<string, string> {
+const UNRELIABLE_PHONE_FIELDS = new Set(['入荷日']);
+const UNRELIABLE_EXPIRY_FIELDS = new Set(['出荷伝票']);
+
+function getSafePolledField(field: string | undefined, blockedFields: Set<string>): string {
+  const configuredField = field?.trim() || '';
+  return blockedFields.has(configuredField) ? '' : configuredField;
+}
+
+export function buildFieldMap(source: PollSource): Record<string, string> {
   return {
     serial: source.field_serial || 'LOT',
+    serial_sn: 'SN',
     serial_alt: 'シリアル番号',
     customer: source.field_customer || '注文先',
-    phone: source.field_phone || '',
+    phone: getSafePolledField(source.field_phone, UNRELIABLE_PHONE_FIELDS),
     purchase: source.field_purchase || '入荷日',
-    expiry: source.field_expiry || '出荷日',
+    expiry: getSafePolledField(source.field_expiry, UNRELIABLE_EXPIRY_FIELDS),
     product: source.field_product || '品名',
     delivery_to: '納品先',
     invoice_no: '出荷伝票',
@@ -627,7 +732,9 @@ async function parseTablePage(page: Page, fieldMap: Record<string, string>): Pro
     }
     return results;
   }, { fieldMap, minCols: MIN_DATA_COLS });
-  for (const r of rows) { if (!r.serial && r.serial_alt) r.serial = r.serial_alt; }
+  for (const r of rows) {
+    r.serial = r.serial || r.serial_sn || r.serial_alt || '';
+  }
   return rows;
 }
 
@@ -711,21 +818,19 @@ async function collectAllPages(
 // ────────────────────────────────────────────────────────────
 // Playwright 크롤링 핵심 로직
 // ────────────────────────────────────────────────────────────
-async function crawlSource(source: PollSource): Promise<{ found: number; errors: string[] }> {
+async function crawlSource(source: PollSource, targetDate?: string): Promise<{ found: number; errors: string[] }> {
   const errors: string[] = [];
   let found = 0;
   let browser: Browser | null = null;
 
   try {
     logger.info(`[Crawling] started: ${source.name} (${source.url})`);
-    browser = await chromium.launch({ headless: true });
-    const context: BrowserContext = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    });
+    browser = await launchAutomationBrowser(true);
+    const context: BrowserContext = await newAutomationContext(browser);
     const page = await context.newPage();
 
     await loginToSource(page, source);
-    await setupOrderPage(page, source, '[Crawling]');
+    await setupOrderPage(page, source, '[Crawling]', targetDate);
 
     const fieldMap = buildFieldMap(source);
     const tableData = await collectAllPages(page, source, fieldMap, '[폴링]');
@@ -758,13 +863,13 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         try {
           if (insertPendingFromPolledRow(source, row, null, code, 'new', {
             source_id: buildPolledSourceId(source, row, null, code, serial),
-            version: productVal,
             main_product: productVal,
             flag_duplicate: 0,
           })) found++;
-        } catch (insertErr: any) {
-          logger.error(`[Polling] DB save failed (null group) serial=${serial}: ${insertErr.message}`);
-          errors.push(`DB 저장 실패: ${insertErr.message}`);
+        } catch (insertErr: unknown) {
+          const errorMessage = getErrorMessage(insertErr);
+          logger.error(`[Polling] DB save failed (null group) serial=${serial}: ${errorMessage}`);
+          errors.push(`DB 저장 실패: ${errorMessage}`);
         }
         continue;
       }
@@ -781,9 +886,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       // GROUP D: Memo — 대기 주문으로 저장 후 사용자 승인 시 처리
       if (group === 'memo') {
         if (!serial) continue;
-        if (insertPendingFromPolledRow(source, row, group, code, 'new', {
-          notes: `[${today}] ${row.product || code}`,
-        })) found++;
+        if (insertPendingFromPolledRow(source, row, group, code, 'new')) found++;
         continue;
       }
 
@@ -820,11 +923,11 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
       // main row 또는 첫 번째 항목
       const baseRow = mainEntry ? mainEntry.row : entries[0].row;
       const mainCode = mainEntry ? mainEntry.code : entries[0].code;
-      const mainProduct = mainEntry ? (mainEntry.row.product || '') : '';
+      const mainProduct = mainEntry ? getProductFallback(mainEntry.row) : '';
 
       // add_ons 리스트
       const addOns = addonEntries.map(e => ({
-        name: e.row.product || e.code,
+        name: getProductFallback(e.row) || e.code,
         added_date: today,
       }));
 
@@ -851,7 +954,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
         purchase_date: normalizeDate(baseRow.purchase) || '',
         expiry_date: normalizeDate(baseRow.expiry) || '',
         engine_build: '',
-        version: mainProduct,
+        version: '',
         notes: [
           `자동수집: ${source.name}`,
           baseRow.invoice_no ? `출고번호: ${baseRow.invoice_no}` : '',
@@ -875,9 +978,10 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
 
       try {
         if (insertPendingOrder(pendingData)) found++;
-      } catch (insertErr: any) {
-        logger.error(`[Polling] DB save failed (group B/C) serial=${serial} source_id=${sourceId}: ${insertErr.message}`);
-        errors.push(`DB 저장 실패 (${serial}): ${insertErr.message}`);
+      } catch (insertErr: unknown) {
+        const errorMessage = getErrorMessage(insertErr);
+        logger.error(`[Polling] DB save failed (group B/C) serial=${serial} source_id=${sourceId}: ${errorMessage}`);
+        errors.push(`DB 저장 실패 (${serial}): ${errorMessage}`);
       }
     }
 
@@ -903,23 +1007,25 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
           purchase_date: normalizeDate(row.purchase) || '',
           expiry_date: normalizeDate(row.expiry) || '',
           engine_build: '',
-          version: row.product || '',
-          notes: `자동수집: ${source.name}`,
+          main_product: group === 'main' ? getProductFallback(row) : '',
+          version: '',
+          notes: appendNote(`자동수집: ${source.name}`, getPolledProductFields(group, getProductFallback(row), today, group === 'main' ? 'new' : 'addon').notes),
           order_type: group === 'main' ? 'new' : 'addon',
           raw_data: withPollingMetadata(row._raw || '{}', { _poll_group: group, _product_code: code }),
           status: 'pending',
           product_code: code,
           flag_duplicate: 0,
         })) found++;
-      } catch (insertErr: any) {
-        logger.error(`[Polling] DB save failed (standalone) code=${code} source_id=${sourceId}: ${insertErr.message}`);
-        errors.push(`DB 저장 실패 (standalone): ${insertErr.message}`);
+      } catch (insertErr: unknown) {
+        const errorMessage = getErrorMessage(insertErr);
+        logger.error(`[Polling] DB save failed (standalone) code=${code} source_id=${sourceId}: ${errorMessage}`);
+        errors.push(`DB 저장 실패 (standalone): ${errorMessage}`);
       }
     }
 
     logger.info(`[Crawling] finished: ${source.name} (collected=${found}, errors=${errors.length})`);
-  } catch (err: any) {
-    const msg = `[Crawling] ${source.name} error: ${err.message}`;
+  } catch (err: unknown) {
+    const msg = `[Crawling] ${source.name} error: ${getErrorMessage(err)}`;
     logger.error(msg);
     errors.push(msg);
   } finally {
@@ -932,7 +1038,7 @@ async function crawlSource(source: PollSource): Promise<{ found: number; errors:
 // ────────────────────────────────────────────────────────────
 // 날짜 정규화
 // ────────────────────────────────────────────────────────────
-function normalizeDate(value: string | undefined): string {
+export function normalizeDate(value: string | undefined): string {
   if (!value) return '';
   const s = value.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
@@ -952,11 +1058,47 @@ function normalizeDate(value: string | undefined): string {
   return '';
 }
 
+export function resolveApprovedExpiryDate(
+  polledExpiryDate: string | undefined,
+  targetStatus: Serial['status'],
+  activeFallbackDate = new Date(),
+): string | null {
+  if (polledExpiryDate) return polledExpiryDate;
+  if (targetStatus !== 'active') return null;
+  return getDateString(activeFallbackDate);
+}
+
+export function resolvePollingDateRange(
+  targetDate?: string,
+  defaultDate = getTodayDateString(),
+): { startDate: string; endDate: string } {
+  const pollingDate = targetDate || defaultDate;
+  return { startDate: pollingDate, endDate: pollingDate };
+}
+
 // ────────────────────────────────────────────────────────────
 // 폴링 스케줄러
 // ────────────────────────────────────────────────────────────
-export async function pollNow(sourceId?: string): Promise<{ found: number; errors: string[] }> {
-  logger.info(`[Polling] polling job started (Source: ${sourceId || 'all'})`);
+export async function pollNow(sourceId?: string, targetDate?: string): Promise<{ found: number; errors: string[] }> {
+  if (pollStatus.running) {
+    const elapsedMs = pollStartedAtMs > 0 ? Date.now() - pollStartedAtMs : 0;
+    if (pollStartedAtMs > 0 && elapsedMs > MAX_POLL_DURATION_MS) {
+      // 워치독: 직전 폴링이 최대 허용 시간을 초과(브라우저 행 등)했으면 잠금을 강제 해제하고 진행.
+      logger.warn(
+        `[Polling] watchdog: previous polling stuck for ${Math.round(elapsedMs / 1000)}s ` +
+        `(> ${MAX_POLL_DURATION_MS / 60000}min); forcibly releasing lock`
+      );
+      pollStatus.running = false;
+    } else {
+      const message = '폴링이 이미 실행 중입니다. 잠시 후 다시 시도하세요.';
+      logger.warn(
+        `[Polling] skipped because another polling job is already running (Source: ${sourceId || 'all'}${targetDate ? `, Date: ${targetDate}` : ''})`
+      );
+      return { found: 0, errors: [message] };
+    }
+  }
+
+  logger.info(`[Polling] polling job started (Source: ${sourceId || 'all'}${targetDate ? `, Date: ${targetDate}` : ''})`);
   const settings = getSettings();
   const sources = (settings.poll_sources || []).filter(s =>
     s.enabled && (sourceId ? s.id === sourceId : true)
@@ -965,34 +1107,47 @@ export async function pollNow(sourceId?: string): Promise<{ found: number; error
   if (sources.length === 0) return { found: 0, errors: ['활성화된 폴링 소스가 없습니다.'] };
 
   pollStatus.running = true;
+  pollStartedAtMs = Date.now();
   pollStatus.message = '폴링 중...';
 
   let totalFound = 0;
   const allErrors: string[] = [];
 
-  for (const source of sources) {
-    const { found, errors } = await crawlSource(source);
-    totalFound += found;
-    allErrors.push(...errors);
+  try {
+    for (const source of sources) {
+      const { found, errors } = await crawlSource(source, targetDate);
+      totalFound += found;
+      allErrors.push(...errors);
 
-    // last_polled 업데이트
-    const updatedSources = settings.poll_sources.map(s =>
-      s.id === source.id ? { ...s, last_polled: getNowTimestampString() } : s
-    );
-    saveSettings({ poll_sources: updatedSources });
+      // last_polled 업데이트
+      const updatedSources = settings.poll_sources.map(s =>
+        s.id === source.id ? { ...s, last_polled: getNowTimestampString() } : s
+      );
+      saveSettings({ poll_sources: updatedSources });
+    }
+
+    pollStatus.lastRun = getNowTimestampString();
+    pollStatus.message = `마지막 폴링: ${totalFound}건 수집`;
+    logger.info(`[Polling] polling job completed (sources=${sources.length}, total_collected=${totalFound})`);
+    return { found: totalFound, errors: allErrors };
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    const message = `폴링 실패: ${errorMessage}`;
+    allErrors.push(message);
+    pollStatus.message = message;
+    logger.error(`[Polling] polling job failed: ${errorMessage}`);
+    return { found: totalFound, errors: allErrors };
+  } finally {
+    pollStatus.running = false;
+    pollStartedAtMs = 0;
+    logMemoryUsage('pollNow completed');
   }
-
-  pollStatus.running = false;
-  pollStatus.lastRun = getNowTimestampString();
-  pollStatus.message = `마지막 폴링: ${totalFound}건 수집`;
-  logger.info(`[Polling] polling job completed (sources=${sources.length}, total_collected=${totalFound})`);
-  return { found: totalFound, errors: allErrors };
 }
 
 // ────────────────────────────────────────────────────────────
 // Dry-run 크롤링: DB에 저장하지 않고 수집될 행 미리보기
 // ────────────────────────────────────────────────────────────
-async function crawlSourceDryRun(source: PollSource): Promise<PollDryRunSourceResult> {
+async function crawlSourceDryRun(source: PollSource, targetDate?: string): Promise<PollDryRunSourceResult> {
   const result: PollDryRunSourceResult = {
     source_name: source.name,
     source_id: source.id,
@@ -1005,14 +1160,12 @@ async function crawlSourceDryRun(source: PollSource): Promise<PollDryRunSourceRe
   let browser: Browser | null = null;
 
   try {
-    browser = await chromium.launch({ headless: true });
-    const context: BrowserContext = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    });
+    browser = await launchAutomationBrowser(true);
+    const context: BrowserContext = await newAutomationContext(browser);
     const page = await context.newPage();
 
     await loginToSource(page, source);
-    await setupOrderPage(page, source, '[Dry-Run]');
+    await setupOrderPage(page, source, '[Dry-Run]', targetDate);
 
     const fieldMap = buildFieldMap(source);
     const tableData = await collectAllPages(page, source, fieldMap, '[Dry-Run]');
@@ -1058,8 +1211,8 @@ async function crawlSourceDryRun(source: PollSource): Promise<PollDryRunSourceRe
 
     logger.info(`[Dry-Run Poll] ${source.name}: rows_found=${result.rows.length}, new=${result.would_insert}, duplicates=${result.already_fetched}`);
 
-  } catch (err: any) {
-    const msg = `[Dry-Run Poll] ${source.name} error: ${err.message}`;
+  } catch (err: unknown) {
+    const msg = `[Dry-Run Poll] ${source.name} error: ${getErrorMessage(err)}`;
     logger.error(msg);
     result.error = msg;
   } finally {
@@ -1069,7 +1222,7 @@ async function crawlSourceDryRun(source: PollSource): Promise<PollDryRunSourceRe
   return result;
 }
 
-export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<PollSource>): Promise<PollDryRunResult> {
+export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<PollSource>, targetDate?: string): Promise<PollDryRunResult> {
   const settings = getSettings();
   const sources = (settings.poll_sources || []).filter(s =>
     s.enabled && (sourceId ? s.id === sourceId : true)
@@ -1092,7 +1245,7 @@ export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<Po
   for (const source of sources) {
     // sourceOverrides 적용 (저장 전 form 값 반영)
     const effectiveSource = sourceOverrides ? { ...source, ...sourceOverrides } : source;
-    const sourceResult = await crawlSourceDryRun(effectiveSource);
+    const sourceResult = await crawlSourceDryRun(effectiveSource, targetDate);
     dryResult.sources.push(sourceResult);
   }
 
@@ -1120,15 +1273,15 @@ export function startPollingScheduler(): void {
           
           const task = cron.schedule(cronExpr, async () => {
             logger.info(`[Scheduler] scheduled polling started: ${source.name} (${time})`);
-            await pollNow(source.id).catch(err => {
-              logger.error(`[Scheduler] scheduled polling failed (${source.name}): ${err.message}`);
+            await pollNow(source.id).catch((err: unknown) => {
+              logger.error(`[Scheduler] scheduled polling failed (${source.name}): ${getErrorMessage(err)}`);
             });
           }, { timezone: 'Asia/Tokyo' });
           
           tasks.push(task);
           logger.info(`[Scheduler] schedule registered: ${source.name} -> ${cronExpr} (KST)`);
-        } catch (err: any) {
-          logger.error(`[Scheduler] schedule registration error (${source.name}, ${time}): ${err.message}`);
+        } catch (err: unknown) {
+          logger.error(`[Scheduler] schedule registration error (${source.name}, ${time}): ${getErrorMessage(err)}`);
         }
       }
       cronTasks.set(source.id, tasks);
@@ -1147,4 +1300,8 @@ export function stopPollingScheduler(): void {
 
 export function getPollStatus(): PollStatus {
   return { ...pollStatus };
+}
+
+export function setPollStatusForTesting(patch: Partial<PollStatus>): void {
+  Object.assign(pollStatus, patch);
 }

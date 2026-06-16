@@ -12,9 +12,28 @@ import { getDb, getLegacyDbPath } from '../database';
 import { findMergeCandidates, createCustomer, getCustomerById } from './customer.service';
 import { logActivity } from './activity-log.service';
 import { getNowTimestampString } from '../utils/date-utils';
-import type { MergeCandidate, LegacyImportInput, LegacyImportResult } from '../../shared/types';
+import type { AddOn, MergeCandidate, LegacyImportInput, LegacyImportResult, Serial } from '../../shared/types';
 
 // ── 타입 ──────────────────────────────────────────────────────────────────────
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function parseLegacyAddOns(value: string): string[] {
+  try {
+    const raw = JSON.parse(value || '[]') as unknown;
+    if (Array.isArray(raw)) {
+      return raw.map((addOn: string | Partial<AddOn>) =>
+        typeof addOn === 'string' ? addOn : addOn.name || String(addOn),
+      );
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function normalizeLegacyStatus(value: string): Serial['status'] {
+  const allowed: Serial['status'][] = ['active', 'cancelled', 'expired', 'not-activated', 'broken'];
+  return allowed.includes(value as Serial['status']) ? value as Serial['status'] : 'not-activated';
+}
 
 export interface LegacyDetectResult {
   available: boolean;
@@ -212,18 +231,9 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
 
     // 3. Build serial fields (legacy → new schema mapping)
     const overrides = input.field_overrides ?? {};
-    const modules: string[] = (() => {
-      try {
-        const raw = JSON.parse(legacyRow.add_ons || '[]');
-        // Legacy add_ons may be string[] or {name,added_date}[]
-        if (Array.isArray(raw)) {
-          return raw.map((a: any) => (typeof a === 'string' ? a : a.name || String(a)));
-        }
-      } catch { /* ignore */ }
-      return [];
-    })();
+    const modules = parseLegacyAddOns(legacyRow.add_ons);
 
-    const status = input.status_override ?? (legacyRow.status as any) ?? 'not-activated';
+    const status: Serial['status'] = input.status_override ?? normalizeLegacyStatus(legacyRow.status);
     const now = getNowTimestampString();
 
     // 4. INSERT into new serials table (inside transaction)
@@ -273,8 +283,8 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
     });
 
     return { success: true, serial_id: serialId! };
-  } catch (err: any) {
-    const msg = err?.message ?? String(err);
+  } catch (err: unknown) {
+    const msg = getErrorMessage(err);
     // serial_number UNIQUE constraint
     if (msg.includes('UNIQUE constraint')) {
       return { success: false, error: '이미 동일한 시리얼 번호가 존재합니다.' };

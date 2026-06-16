@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { api } from '../client';
 
 type TestResult = { success: boolean; message: string } | null;
 
@@ -12,13 +13,14 @@ export default function Notification() {
   const [smtpResult, setSmtpResult] = useState<TestResult>(null);
   const [automationResult, setAutomationResult] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { void load(); }, []);
 
   const load = async () => {
     const [nextSettings, nextTimes] = await Promise.all([
-      window.electronAPI.getSettings(),
-      window.electronAPI.listReportTimes(),
+      api.getSettings(),
+      api.listReportTimes(),
     ]);
     setSettings(nextSettings);
     setReportTimes(nextTimes?.length ? nextTimes : ['10:00']);
@@ -38,7 +40,7 @@ export default function Notification() {
     const cleaned = Array.from(new Set(reportTimes.map(time => time.trim()).filter(Boolean))).sort();
     setBusy('times');
     try {
-      await window.electronAPI.setReportTimes(cleaned.length ? cleaned : ['10:00']);
+      await api.setReportTimes(cleaned.length ? cleaned : ['10:00']);
       await load();
       alert(t(lang, 'notification_times_saved'));
     } finally { setBusy(null); }
@@ -46,20 +48,20 @@ export default function Notification() {
 
   const runSlackTest = async () => {
     setBusy('slack'); setSlackResult(null);
-    try { setSlackResult(await window.electronAPI.testSlackWebhook()); }
+    try { setSlackResult(await api.testSlackWebhook()); }
     finally { setBusy(null); }
   };
 
   const runSmtpTest = async () => {
     setBusy('smtp'); setSmtpResult(null);
-    try { setSmtpResult(await window.electronAPI.testSmtp()); }
+    try { setSmtpResult(await api.testSmtp()); }
     finally { setBusy(null); }
   };
 
   const sendDailyNow = async () => {
     setBusy('daily');
     try {
-      await window.electronAPI.sendDailyReportNow();
+      await api.sendDailyReportNow();
       alert(t(lang, 'notification_daily_sent'));
     } finally { setBusy(null); }
   };
@@ -68,10 +70,10 @@ export default function Notification() {
     setBusy(mode); setAutomationResult(null);
     try {
       const result = mode === 'renew'
-        ? await window.electronAPI.runAutoRenewNow()
+        ? await api.runAutoRenewNow()
         : mode === 'cancel'
-          ? await window.electronAPI.runAutoCancelNow()
-          : await window.electronAPI.runLimboFallbackNow();
+          ? await api.runAutoCancelNow()
+          : await api.runLimboFallbackNow();
 
       if (mode === 'renew') {
         setAutomationResult(
@@ -93,15 +95,16 @@ export default function Notification() {
   const exportSettings = async () => {
     setBusy('export');
     try {
-      const result = await window.electronAPI.exportSettings();
+      const result = await api.exportSettings();
       if (result.success) alert(`${t(lang, 'notification_exported')}\n${result.filePath || ''}`);
     } finally { setBusy(null); }
   };
 
-  const importSettings = async () => {
+  const importSettings = async (file: File) => {
     setBusy('import');
     try {
-      const result = await window.electronAPI.importSettings();
+      const parsed = JSON.parse(await file.text());
+      const result = await api.importSettings(parsed);
       if (result.success) { await load(); alert(t(lang, 'notification_imported')); }
     } finally { setBusy(null); }
   };
@@ -197,7 +200,18 @@ export default function Notification() {
           <button onClick={exportSettings} disabled={busy === 'export'} style={ghostButtonStyle}>
             {busy === 'export' ? t(lang, 'notification_exporting') : t(lang, 'notification_export')}
           </button>
-          <button onClick={importSettings} disabled={busy === 'import'} style={ghostButtonStyle}>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void importSettings(file);
+            }}
+          />
+          <button onClick={() => importInputRef.current?.click()} disabled={busy === 'import'} style={ghostButtonStyle}>
             {busy === 'import' ? t(lang, 'notification_importing') : t(lang, 'notification_import')}
           </button>
         </div>

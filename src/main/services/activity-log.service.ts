@@ -136,3 +136,10 @@ export function getTodayLogs(): ActivityLog[] {
     )
     .all() as ActivityLog[];
 }
+
+export function deleteOldActivityLogs(keepDays = 180): number {
+  const result = getDb()
+    .prepare("DELETE FROM activity_logs WHERE datetime(created_at) < datetime('now', 'localtime', ?)")
+    .run(`-${keepDays} days`);
+  return result.changes;
+}

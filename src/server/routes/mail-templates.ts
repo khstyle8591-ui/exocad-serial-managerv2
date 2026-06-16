@@ -10,6 +10,10 @@ import { sendTemplate, sendTestDryRun } from '../../main/services/mail/smtp.serv
 
 const router = Router();
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 router.get('/', (_req: Request, res: Response) => {
   res.json(listTemplates());
 });
@@ -24,8 +28,8 @@ router.get('/:code/preview', (req: Request, res: Response) => {
   try {
     const result = previewTemplate(req.params.code, Number(req.query.serialId));
     res.json(result);
-  } catch (e: any) {
-    res.status(400).json({ error: e.message });
+  } catch (e: unknown) {
+    res.status(400).json({ error: errorMessage(e) });
   }
 });
 

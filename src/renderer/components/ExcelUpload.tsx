@@ -3,6 +3,13 @@ import { api } from '../client';
 import { useLang } from '../App';
 import { t } from '../i18n';
 
+interface BulkImportResult {
+  imported: number;
+  errors: string[];
+}
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
 interface Props {
   onImportComplete: () => void;
 }
@@ -18,7 +25,7 @@ export default function ExcelUpload({ onImportComplete }: Props) {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const result = await api.bulkImport(file) as any;
+        const result = await api.bulkImport(file) as BulkImportResult;
         if (result.imported > 0) {
           alert(t(lang, 'excel_import_success').replace('{n}', String(result.imported)));
           onImportComplete();
@@ -29,8 +36,8 @@ export default function ExcelUpload({ onImportComplete }: Props) {
         if (result.imported === 0 && result.errors.length === 0) {
           alert(t(lang, 'excel_import_empty'));
         }
-      } catch (err: any) {
-        alert(t(lang, 'import_failed').replace('{error}', err.message));
+      } catch (err: unknown) {
+        alert(t(lang, 'import_failed').replace('{error}', getErrorMessage(err)));
       }
     };
     input.click();

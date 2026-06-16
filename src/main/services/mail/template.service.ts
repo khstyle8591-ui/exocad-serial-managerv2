@@ -3,6 +3,18 @@ import { getNowTimestampString } from '../../utils/date-utils';
 import { renderTemplate, type TemplateVars } from './renderer';
 import type { MailTemplate, MailTemplateUpsert } from '../../../shared/types';
 
+interface TemplatePreviewRow {
+  serial_number: string;
+  expiry_date: string | null;
+  purchase_date: string | null;
+  main_product: string;
+  modules: string;
+  c_name: string | null;
+  c_email: string | null;
+  c_dealer: string | null;
+  c_sm: string | null;
+}
+
 const BUILTIN_TEMPLATES: Array<{ code: string; name: string; subject: string; body: string; enabled: boolean }> = [
   {
     code: 'renewal_reminder',
@@ -108,6 +120,26 @@ const BUILTIN_TEMPLATES: Array<{ code: string; name: string; subject: string; bo
     enabled: true,
   },
   {
+    code: 'invalid_cancellation_response',
+    name: '更新停止回答の再提出依頼',
+    subject: '【再提出依頼】更新停止リクエストの回答内容をご確認ください',
+    body: `{{CUSTOMER_NAME}} 様
+
+いつもお世話になっております。
+
+更新停止リクエストの回答内容を確認できませんでした。以下のエラーをご確認のうえ、回答ブロック内の各項目をご記入して再度ご返信ください。
+
+■ エラー：{{RESPONSE_ERRORS}}
+■ 検出済みシリアル：{{DETECTED_SERIAL}}
+■ 対象メール件名：{{RECEIVED_SUBJECT}}
+
+{{REPLY_TEMPLATE}}
+
+回答ブロック以外の文章は自由に追加していただけます。
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'cancel_confirmation',
     name: 'キャンセル確認',
     subject: '【確認】{{SERIAL_NUMBER}} のサブスクリプションキャンセルについて',
@@ -196,7 +228,7 @@ export function previewTemplate(
     FROM serials s
     LEFT JOIN customers c ON s.customer_id = c.id
     WHERE s.id = ?
-  `).get(serialId) as any;
+  `).get(serialId) as TemplatePreviewRow | undefined;
 
   if (!row) throw new Error(`Serial not found: ${serialId}`);
 

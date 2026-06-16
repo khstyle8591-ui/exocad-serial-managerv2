@@ -4,6 +4,18 @@ import { logger } from '../../utils/logger';
 import { getTemplate } from './template.service';
 import { renderTemplate, type TemplateVars } from './renderer';
 import { logActivity } from '../activity-log.service';
+import type { AppSettings } from '../../../shared/types';
+
+type SettingsOverride = Partial<AppSettings>;
+type EffectiveSettings = ReturnType<typeof getSettings>;
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
+  return Object.fromEntries(
+    Object.entries(settingsOverride ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+  ) as SettingsOverride;
+}
 
 function buildTransporter(settings: ReturnType<typeof getSettings>) {
   const port = Number(settings.smtp_port) || 587;
@@ -68,48 +80,44 @@ export async function sendTemplate(
     });
 
     return { success: true, message: `メール送信完了 → ${to}` };
-  } catch (err: any) {
-    logger.error(`[mail] Failed to send '${code}' to ${to}: ${err.message}`);
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    logger.error(`[mail] Failed to send '${code}' to ${to}: ${errorMessage}`);
     await logActivity({
       serial_id: options?.serial_id ?? null,
       action: 'mail_failed',
       actor: options?.actor ?? 'manual',
-      details: `template=${code} to=${to} error=${err.message}`,
+      details: `template=${code} to=${to} error=${errorMessage}`,
       severity: 'error',
     });
-    return { success: false, message: `送信失敗: ${err.message}` };
+    return { success: false, message: `送信失敗: ${errorMessage}` };
   }
 }
 
 export async function testSmtp(
-  settingsOverride?: any,
+  settingsOverride?: SettingsOverride,
 ): Promise<{ success: boolean; message: string }> {
-  const cleanOverride = Object.fromEntries(
-    Object.entries(settingsOverride ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
-  );
-  const settings = { ...getSettings(), ...cleanOverride };
+  const settings: EffectiveSettings = { ...getSettings(), ...cleanSettingsOverride(settingsOverride) };
 
   if (!settings.smtp_host) return { success: false, message: 'SMTP 서버 주소가 없습니다.' };
   if (!settings.smtp_user) return { success: false, message: 'SMTP 사용자명이 없습니다.' };
   if (!settings.smtp_password) return { success: false, message: 'SMTP 비밀번호가 없습니다.' };
 
   try {
-    await buildTransporter(settings as ReturnType<typeof getSettings>).verify();
+    await buildTransporter(settings).verify();
     logger.info('[mail] SMTP verify OK');
     return { success: true, message: 'SMTP 연결 성공' };
-  } catch (err: any) {
-    logger.error(`[mail] SMTP verify failed: ${err.message}`);
-    return { success: false, message: `연결 실패: ${err.message}` };
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    logger.error(`[mail] SMTP verify failed: ${errorMessage}`);
+    return { success: false, message: `연결 실패: ${errorMessage}` };
   }
 }
 
 export async function sendTestDryRun(
-  settingsOverride?: any,
+  settingsOverride?: SettingsOverride,
 ): Promise<{ success: boolean; message: string }> {
-  const cleanOverride = Object.fromEntries(
-    Object.entries(settingsOverride ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
-  );
-  const settings = { ...getSettings(), ...cleanOverride } as ReturnType<typeof getSettings>;
+  const settings: EffectiveSettings = { ...getSettings(), ...cleanSettingsOverride(settingsOverride) };
   const to = settings.smtp_test_address || settings.report_email_to;
 
   if (!to) {
@@ -130,8 +138,9 @@ export async function sendTestDryRun(
     });
     logger.info(`[mail] Test email sent to ${to}`);
     return { success: true, message: `테스트 메일 발송 완료 → ${to}` };
-  } catch (err: any) {
-    logger.error(`[mail] Test email failed: ${err.message}`);
-    return { success: false, message: `발송 실패: ${err.message}` };
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    logger.error(`[mail] Test email failed: ${errorMessage}`);
+    return { success: false, message: `발송 실패: ${errorMessage}` };
   }
 }

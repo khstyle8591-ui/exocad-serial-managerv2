@@ -5,6 +5,8 @@ import { startPollingScheduler } from './order.service';
 
 type SchedulerName = 'mailCheck' | 'preExpiryCancel' | 'dailyReport' | 'expiryNotice' | 'orderPolling';
 
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
 function stableStringify(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
@@ -95,9 +97,10 @@ export function refreshSchedulersForSettingsChange(before: AppSettings, after: A
     try {
       restartScheduler(scheduler);
       restarted.push(scheduler);
-    } catch (err: any) {
-      failed.push(`${scheduler}: ${err.message}`);
-      logger.error(`Scheduler refresh failed after settings save (${scheduler}): ${err.message}`);
+    } catch (err: unknown) {
+      const errorMessage = getErrorMessage(err);
+      failed.push(`${scheduler}: ${errorMessage}`);
+      logger.error(`Scheduler refresh failed after settings save (${scheduler}): ${errorMessage}`);
     }
   }
 

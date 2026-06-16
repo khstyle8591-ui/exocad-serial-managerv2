@@ -1,18 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
-import { t } from '../i18n';
+import { t, type TranslationKey } from '../i18n';
 import { api } from '../client';
+import type { ActivityLog } from '../../shared/types';
 
 export default function Logs() {
   const { lang } = useLang();
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadLogs(); }, []);
 
   const loadLogs = async () => {
     try {
-      const data = await api.getLogs(200, 0) as any[];
+      const data = await api.getLogs(200, 0) as ActivityLog[];
 
       setLogs(data);
     } catch (err) {
@@ -24,7 +25,7 @@ export default function Logs() {
 
   // 액션 라벨을 i18n으로 반환
   const actionLabel = (action: string): string => {
-    const keyMap: Record<string, string> = {
+    const keyMap: Partial<Record<ActivityLog['action'], TranslationKey>> = {
       registered: 'log_action_registered',
       renewed: 'log_action_renewed',
       cancelled: 'log_action_cancelled',
@@ -32,7 +33,7 @@ export default function Logs() {
       bulk_imported: 'log_action_bulk_imported',
     };
     const key = keyMap[action];
-    return key ? t(lang, key as any) : action;
+    return key ? t(lang, key) : action;
   };
 
   if (loading) return <div>{t(lang, 'loading')}</div>;

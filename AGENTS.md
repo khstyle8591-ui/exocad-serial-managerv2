@@ -67,7 +67,9 @@ All IPC handlers are registered in `src/main/ipc-handlers.ts`. Adding a new feat
 | `serial.service.ts` | Serial CRUD, bulk Excel import |
 | `cancel.service.ts` | Playwright automation against Exocad SSO site |
 | `order.service.ts` | URL polling (Playwright), pending orders DB |
-| `email-monitor.service.ts` | POP3/IMAP email monitoring for renewal detection |
+| `mail/inbound.service.ts` | POP3/IMAP inbound mail classification and stop-request handling |
+| `mail/template.service.ts` | Built-in and custom mail template CRUD |
+| `mail/smtp.service.ts` | Template-based transactional mail sending |
 | `notification.service.ts` | Slack webhook + SMTP email notifications |
 | `excel.service.ts` | Excel template generation and parsing |
 

@@ -1,5 +1,7 @@
 import Pop3Command from 'node-pop3';
 import Imap from 'imap';
+import net from 'net';
+import tls from 'tls';
 import { simpleParser } from 'mailparser';
 import { getSettings } from '../../settings';
 import { getDb } from '../../database';
@@ -9,14 +11,15 @@ import { sendStopRequestReceivedNotice } from './lifecycle-notice.service';
 import { sendTemplate } from './smtp.service';
 import { logger } from '../../utils/logger';
 import { getNowTimestampString, getTimestampDaysAgo } from '../../utils/date-utils';
-import type { MailConnectionResult, InboundMail } from '../../../shared/types';
+import type { AppSettings, MailConnectionResult, InboundMail } from '../../../shared/types';
+import type { AddressObject, HeaderValue } from 'mailparser';
 
-// ── Serial number lookup cache (TTL 60s, avoids repeated getAll() per email) ──
+// ── Serial number lookup cache (TTL 60s, avoids repeated DB scans per email) ──
 let serialCacheResult: { serial_number: string }[] | null = null;
 let serialCacheExpiry = 0;
 function getCachedSerials(): { serial_number: string }[] {
   if (!serialCacheResult || Date.now() > serialCacheExpiry) {
-    serialCacheResult = serialService.getAll();
+    serialCacheResult = serialService.listSerialNumbers();
     serialCacheExpiry = Date.now() + 60_000;
   }
   return serialCacheResult;
@@ -24,7 +27,7 @@ function getCachedSerials(): { serial_number: string }[] {
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-interface ParsedEmail {
+export interface ParsedEmail {
   messageId: string | null;
   from: string;
   replyTo: string;
@@ -42,15 +45,29 @@ interface ParsedEmail {
   rawHeaders: string;
 }
 
-type Classification = 'renewal_request' | 'stop_request_candidate' | 'stop_request' | 'missing_info' | 'unrelated' | 'unclassified' | 'error';
+type Classification = 'renewal_request' | 'stop_request_candidate' | 'stop_request' | 'missing_info' | 'invalid_cancellation_response' | 'unrelated' | 'unclassified' | 'error';
+type SettingsOverride = Partial<AppSettings>;
+type EffectiveSettings = ReturnType<typeof getSettings>;
+type Pop3Client = InstanceType<typeof Pop3Command>;
 
-interface AnalysisResult {
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+export interface AnalysisResult {
   classification: Classification;
   extractedSerial: string | null;
   matchedKeywords: string[];
   missingFields: string[];
   isDedicated: boolean;
   evidence: string[];
+  structuredResponse?: StructuredCancellationResponse;
+  responseErrors?: string[];
+  requiresAdminReview?: boolean;
+}
+
+export interface StructuredCancellationResponse {
+  serialNumber: string;
+  confirmation: string;
+  customerName: string;
 }
 
 export interface InboundDryRunEntry {
@@ -89,21 +106,40 @@ export async function inboundDryRun(): Promise<InboundDryRunResult> {
     return settings.mail_protocol === 'imap'
       ? dryRunWithImap()
       : dryRunWithPop3();
-  } catch (err: any) {
-    return { total_checked: 0, would_save: 0, would_skip: 0, entries: [], error: err.message };
+  } catch (err: unknown) {
+    return { total_checked: 0, would_save: 0, would_skip: 0, entries: [], error: getErrorMessage(err) };
   }
 }
 
 export async function testMailConnection(
-  settingsOverride?: any,
+  settingsOverride?: SettingsOverride,
 ): Promise<MailConnectionResult> {
-  const settings = { ...getSettings(), ...(settingsOverride || {}) };
+  const cleanOverride = Object.fromEntries(
+    Object.entries(settingsOverride || {}).filter(([, value]) =>
+      value !== undefined && value !== null && value !== '' && value !== '***'
+    )
+  ) as SettingsOverride;
+  const settings: EffectiveSettings = { ...getSettings(), ...cleanOverride };
+  const protocol = settings.mail_protocol === 'imap' ? 'IMAP' : 'POP3';
+  const host = settings.mail_protocol === 'imap' ? settings.imap_host : settings.pop3_host;
+  const port = settings.mail_protocol === 'imap' ? settings.imap_port : settings.pop3_port;
+  const user = settings.mail_protocol === 'imap' ? settings.imap_user : settings.pop3_user;
+  const password = settings.mail_protocol === 'imap' ? settings.imap_password : settings.pop3_password;
+  if (!host || !port || !user || !password) {
+    const missing = [
+      !host ? 'host' : '',
+      !port ? 'port' : '',
+      !user ? 'username' : '',
+      !password ? 'password' : '',
+    ].filter(Boolean).join(', ');
+    return { success: false, message: `${protocol} 필수 설정 누락: ${missing}` };
+  }
   try {
     return settings.mail_protocol === 'imap'
       ? testImapConnection(settings)
       : testPop3Connection(settings);
-  } catch (err: any) {
-    return { success: false, message: `오류: ${err.message}` };
+  } catch (err: unknown) {
+    return { success: false, message: `${protocol} 연결 오류 (${host}:${port}): ${getErrorMessage(err)}` };
   }
 }
 
@@ -147,8 +183,8 @@ export async function confirmStopRequestFromMail(id: number): Promise<{ success:
 
   db.prepare('UPDATE inbound_mails SET processed = 1, linked_serial_id = ?, classification = ? WHERE id = ?')
     .run(serial.id, 'stop_request_candidate', id);
-  await sendStopRequestReceivedNotice(updated).catch((err: any) =>
-    logger.error(`[inbound] stop request notice failed: ${err.message}`),
+  await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
+    logger.error(`[inbound] stop request notice failed: ${getErrorMessage(err)}`),
   );
 
   return { success: true, serial_number: serial.serial_number };
@@ -188,6 +224,10 @@ function saveInboundMail(
     matchedTemplate?: string | null;
     templateSentAt?: string | null;
     error?: string;
+    responseErrors?: string[];
+    responseAttempt?: number;
+    responseCustomerName?: string | null;
+    adminReview?: boolean;
   },
 ): number | null {
   const db = getDb();
@@ -199,8 +239,9 @@ function saveInboundMail(
       INSERT INTO inbound_mails
         (message_id, mail_from, mail_to, subject, body, received_at,
          classification, matched_template, matched_keywords, extracted_serial, linked_serial_id,
-         missing_fields, template_sent_at, processed, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         missing_fields, template_sent_at, processed, response_errors, response_attempt,
+         response_customer_name, admin_review, admin_review_resolved, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     `).run(
       email.messageId,
       resolveMailFrom(email),
@@ -216,11 +257,15 @@ function saveInboundMail(
       JSON.stringify(opts.missingFields ?? []),
       opts.templateSentAt ?? null,
       opts.templateSentAt ? 1 : 0,
+      JSON.stringify(opts.responseErrors ?? []),
+      opts.responseAttempt ?? 0,
+      opts.responseCustomerName ?? null,
+      opts.adminReview ? 1 : 0,
       opts.error ?? null,
     );
     return result.changes > 0 ? (result.lastInsertRowid as number) : null;
-  } catch (err: any) {
-    logger.error(`[inbound] saveInboundMail failed: ${err.message}`);
+  } catch (err: unknown) {
+    logger.error(`[inbound] saveInboundMail failed: ${getErrorMessage(err)}`);
     return null;
   }
 }
@@ -253,7 +298,58 @@ async function processEmail(
         linkedSerialId: linkedSerial?.id ?? null,
       });
       logger.info(`[inbound] stop request candidate saved: ${analysis.extractedSerial ?? 'no-serial'} (${analysis.evidence.join(',')})`);
+      if (inboundId !== null && analysis.structuredResponse && linkedSerial) {
+        const updated = serialService.setStopRequested(linkedSerial.id, true, `mail:${inboundId}`);
+        if (updated) {
+          getDb().prepare('UPDATE inbound_mails SET processed = 1 WHERE id = ?').run(inboundId);
+          await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
+            logger.error(`[inbound] structured stop request notice failed: ${getErrorMessage(err)}`),
+          );
+          logger.info(`[inbound] structured cancellation response confirmed automatically: serial=${linkedSerial.serial_number} [mailId=${inboundId}]`);
+        }
+      }
       return { classification: 'stop_request_candidate', saved: inboundId !== null, pendingOrderCreated: inboundId !== null };
+
+    } else if (analysis.classification === 'invalid_cancellation_response') {
+      const sender = resolveMailFrom(email);
+      const previous = getDb().prepare(`
+        SELECT response_attempt FROM inbound_mails
+        WHERE mail_from = ? AND classification = 'invalid_cancellation_response'
+          AND admin_review_resolved = 0
+        ORDER BY received_at DESC, id DESC LIMIT 1
+      `).get(sender) as { response_attempt: number } | undefined;
+      const attempt = (previous?.response_attempt || 0) + 1;
+      const adminReview = !!analysis.requiresAdminReview || attempt >= 2;
+      let templateSentAt: string | null = null;
+      let error: string | undefined;
+      const settings = getSettings();
+      const shouldAutoSend = settings.invalid_response_auto_reply_enabled && !adminReview;
+      if (shouldAutoSend && !isDuplicate(email.messageId)) {
+        const to = resolveReplyAddress(email);
+        if (to) {
+          const sendResult = await sendInvalidResponseNotice(email, to, analysis);
+          if (sendResult.success) templateSentAt = getNowTimestampString();
+          else error = sendResult.message;
+        } else {
+          error = '발신자 이메일 주소를 찾을 수 없습니다.';
+        }
+      }
+      const inboundId = saveInboundMail(email, 'invalid_cancellation_response', {
+        matchedKeywords: [],
+        extractedSerial: analysis.extractedSerial,
+        linkedSerialId: linkedSerial?.id ?? null,
+        matchedTemplate: shouldAutoSend ? settings.invalid_response_template || 'invalid_cancellation_response' : null,
+        templateSentAt,
+        responseErrors: analysis.responseErrors,
+        responseAttempt: attempt,
+        responseCustomerName: analysis.structuredResponse?.customerName || null,
+        adminReview,
+        error,
+      });
+      if (adminReview && inboundId !== null) {
+        logger.warn(`[System Log] Cancellation response requires admin review: from=${sender}, subject=${email.subject}, errors=${(analysis.responseErrors || []).join(', ')} [mailId=${inboundId}]`);
+      }
+      return { classification: 'invalid_cancellation_response', saved: inboundId !== null, pendingOrderCreated: false };
 
     } else if (analysis.classification === 'missing_info') {
       let templateSentAt: string | null = null;
@@ -323,7 +419,7 @@ async function checkWithPop3(): Promise<{ processed: number; saved: number; erro
   const errors: string[] = [];
   let processed = 0;
   let saved = 0;
-  let pop3: any = null;
+  let pop3: Pop3Client | null = null;
 
   try {
     pop3 = new Pop3Command({
@@ -340,7 +436,6 @@ async function checkWithPop3(): Promise<{ processed: number; saved: number; erro
 
     const MAX_SCAN = 100;
     const startIdx = Math.max(0, list.length - MAX_SCAN);
-    let oldEmailCount = 0;
 
     for (let i = list.length - 1; i >= startIdx; i--) {
       try {
@@ -360,31 +455,38 @@ async function checkWithPop3(): Promise<{ processed: number; saved: number; erro
         const email = await parseEmail(rawStr, `pop3-${uid}`);
 
         if (!isWithin1Day(email.date)) {
-          if (email.date) {
-            oldEmailCount++;
-            if (oldEmailCount >= 3) break;
-          }
+          // 오래된 메일은 처리/삭제하지 않고 건너뛴다.
+          // (이전의 "오래된 메일 3연속 시 break"는 POP3 도착순 ≠ 날짜순일 때
+          //  뒤에 묻힌 최신 메일을 놓칠 수 있어 제거. MAX_SCAN 한도 내에서 끝까지 스캔.)
           continue;
         }
-        oldEmailCount = 0;
 
+        // 메일이 안전하게 처리(노이즈/중복/저장 성공)된 경우에만 삭제 대상으로 표시한다.
+        // 분류 대상인데 저장에 실패한 메일은 삭제하지 않아 데이터 유실을 방지한다.
+        let handled = false;
         const analysis = analyzeEmail(email);
-        if (analysis.classification !== 'unclassified') {
+        if (analysis.classification === 'unclassified') {
+          handled = true; // 분류 불가(노이즈) — 저장 대상 아님
+        } else if (isDuplicate(email.messageId)) {
+          handled = true; // 이미 저장된 중복 — 재처리 불필요
+        } else {
           const result = await processEmail(email, true);
           if (result.saved) saved++;
           if (result.pendingOrderCreated) processed++;
+          handled = result.saved; // 저장 성공해야만 삭제
         }
 
-        if (!settings.pop3_keep_copy) {
+        if (!settings.pop3_keep_copy && handled) {
           try { await pop3.DELE(msgNum); } catch { /* ignore */ }
         }
-      } catch (err: any) {
-        errors.push(`메일 처리 오류: ${err.message}`);
+      } catch (err: unknown) {
+        errors.push(`메일 처리 오류: ${getErrorMessage(err)}`);
       }
     }
-  } catch (err: any) {
-    errors.push(`POP3 연결 오류: ${err.message}`);
-    logger.error(`[inbound] POP3 error: ${err.message}`);
+  } catch (err: unknown) {
+    const errorMessage = getErrorMessage(err);
+    errors.push(`POP3 연결 오류: ${errorMessage}`);
+    logger.error(`[inbound] POP3 error: ${errorMessage}`);
   } finally {
     if (pop3) { try { await pop3.QUIT(); } catch { /* ignore */ } }
   }
@@ -396,7 +498,7 @@ async function dryRunWithPop3(): Promise<InboundDryRunResult> {
   const settings = getSettings();
   const entries: InboundDryRunEntry[] = [];
   let totalChecked = 0;
-  let pop3: any = null;
+  let pop3: Pop3Client | null = null;
 
   try {
     pop3 = new Pop3Command({
@@ -427,7 +529,7 @@ async function dryRunWithPop3(): Promise<InboundDryRunResult> {
         const email = await parseEmail(rawStr, `pop3-${uid}`);
 
         if (!isWithin1Day(email.date)) {
-          if (email.date) break;
+          // 오래된 메일은 건너뛴다(조기 break 제거 — 뒤에 묻힌 최신 메일 누락 방지).
           continue;
         }
 
@@ -516,8 +618,8 @@ function checkWithImap(): Promise<{ processed: number; saved: number; errors: st
                     if (result.saved) saved++;
                     if (result.pendingOrderCreated) processed++;
                   }
-                } catch (e: any) {
-                  errors.push(`메일 파싱 오류: ${e.message}`);
+                } catch (e: unknown) {
+                  errors.push(`메일 파싱 오류: ${getErrorMessage(e)}`);
                 }
                 resolve();
               });
@@ -629,34 +731,87 @@ function dryRunWithImap(): Promise<InboundDryRunResult> {
 
 // ── Connection Test ───────────────────────────────────────────────────────────
 
-async function testPop3Connection(settings: any): Promise<MailConnectionResult> {
-  let pop3: any = null;
-  try {
-    pop3 = new Pop3Command({
-      host: settings.pop3_host, port: settings.pop3_port,
-      user: settings.pop3_user, password: settings.pop3_password,
-      tls: settings.pop3_tls, timeout: 10000,
-      tlsOptions: { rejectUnauthorized: false }, servername: settings.pop3_host,
+async function testPop3Connection(settings: EffectiveSettings): Promise<MailConnectionResult> {
+  return new Promise((resolve) => {
+    const socket = settings.pop3_tls
+      ? tls.connect({
+          host: settings.pop3_host,
+          port: settings.pop3_port,
+          servername: settings.pop3_host,
+          rejectUnauthorized: false,
+        })
+      : net.connect({ host: settings.pop3_host, port: settings.pop3_port });
+    let buffer = '';
+    let step: 'greeting' | 'user' | 'pass' | 'stat' | 'quit' = 'greeting';
+    let settled = false;
+
+    const done = (result: MailConnectionResult) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    const fail = (message: string) =>
+      done({ success: false, message: `POP3 연결 실패 (${settings.pop3_host}:${settings.pop3_port}): ${message}` });
+
+    socket.setTimeout(10000, () => fail(`${step} 단계 시간 초과`));
+    socket.once('error', err => fail(getErrorMessage(err)));
+    socket.on('data', chunk => {
+      buffer += chunk.toString('utf8');
+      let lineEnd = buffer.indexOf('\r\n');
+      while (lineEnd >= 0 && !settled) {
+        const line = buffer.slice(0, lineEnd);
+        buffer = buffer.slice(lineEnd + 2);
+        const ok = line.startsWith('+OK');
+
+        if (!ok) {
+          const serverMessage = line.replace(/^-ERR\s*/i, '').trim() || 'server rejected request';
+          const label = step === 'pass' ? '인증 거부' : `${step} 단계 거부`;
+          fail(`${label}: ${serverMessage}`);
+          return;
+        }
+
+        if (step === 'greeting') {
+          step = 'user';
+          socket.write(`USER ${settings.pop3_user}\r\n`);
+        } else if (step === 'user') {
+          step = 'pass';
+          socket.write(`PASS ${settings.pop3_password}\r\n`);
+        } else if (step === 'pass') {
+          step = 'stat';
+          socket.write('STAT\r\n');
+        } else if (step === 'stat') {
+          const match = line.match(/^\+OK\s+(\d+)/i);
+          const count = match ? Number(match[1]) : undefined;
+          step = 'quit';
+          socket.write('QUIT\r\n');
+          done({ success: true, message: 'POP3 연결 성공', mail_count: count });
+        }
+        lineEnd = buffer.indexOf('\r\n');
+      }
     });
-    const list = await pop3.UIDL();
-    const count = Array.isArray(list) ? list.length : 0;
-    return { success: true, message: `POP3 연결 성공`, mail_count: count };
-  } catch (err: any) {
-    return { success: false, message: `POP3 연결 실패: ${err.message}` };
-  } finally {
-    if (pop3) { try { await pop3.QUIT(); } catch { /* ignore */ } }
-  }
+  });
 }
 
-function testImapConnection(settings: any): Promise<MailConnectionResult> {
+function testImapConnection(settings: EffectiveSettings): Promise<MailConnectionResult> {
   return new Promise((resolve) => {
     const imap = new Imap({
       user: settings.imap_user, password: settings.imap_password,
       host: settings.imap_host, port: settings.imap_port,
       tls: settings.imap_tls, tlsOptions: { rejectUnauthorized: false },
+      connTimeout: 10000, authTimeout: 10000,
     });
-    const done = (r: MailConnectionResult) => { try { imap.end(); } catch { /* ignore */ } resolve(r); };
-    imap.once('error', (err: Error) => done({ success: false, message: `IMAP 연결 실패: ${err.message}` }));
+    let settled = false;
+    const done = (r: MailConnectionResult) => {
+      if (settled) return;
+      settled = true;
+      try { imap.end(); } catch { /* ignore */ }
+      resolve(r);
+    };
+    imap.once('error', (err: Error) => done({
+      success: false,
+      message: `IMAP 연결 실패 (${settings.imap_host}:${settings.imap_port}): ${err.message}`,
+    }));
     imap.once('ready', () => {
       imap.openBox('INBOX', true, (err, box) => {
         if (err) {
@@ -672,6 +827,22 @@ function testImapConnection(settings: any): Promise<MailConnectionResult> {
 
 // ── Email parsing ─────────────────────────────────────────────────────────────
 
+function headerValueToText(value: HeaderValue | undefined): string {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(item => headerValueToText(item)).filter(Boolean).join(', ');
+  if (value instanceof Date) return value.toISOString();
+  if ('text' in value && typeof value.text === 'string') return value.text;
+  return '';
+}
+
+function addressToText(value: AddressObject | AddressObject[] | undefined): string {
+  if (!value) return '';
+  return Array.isArray(value)
+    ? value.map(address => address.text || '').filter(Boolean).join(', ')
+    : value.text || '';
+}
+
 async function parseEmail(raw: string, fallbackMsgId: string | null): Promise<ParsedEmail> {
   const parsed = await simpleParser(raw);
   const rawHeaders = raw.split(/\r?\n\r?\n/)[0] || '';
@@ -683,25 +854,21 @@ async function parseEmail(raw: string, fallbackMsgId: string | null): Promise<Pa
   const getMailparserHeader = (name: string): string => {
     try {
       if (parsed.headerLines && Array.isArray(parsed.headerLines)) {
-        const found = (parsed.headerLines as any[]).find(h => h.key?.toLowerCase() === name.toLowerCase());
+        const found = parsed.headerLines.find(h => h.key?.toLowerCase() === name.toLowerCase());
         if (found) {
           const idx = found.line.indexOf(':');
           return idx >= 0 ? found.line.substring(idx + 1).trim() : found.line.trim();
         }
       }
-      if (parsed.headers && typeof (parsed.headers as any).get === 'function') {
-        return (parsed.headers as any).get(name) || '';
+      if (parsed.headers) {
+        return headerValueToText(parsed.headers.get(name));
       }
     } catch { /* ignore */ }
     return '';
   };
 
-  const toText = parsed.to
-    ? (Array.isArray(parsed.to) ? (parsed.to as any[]).map(a => a.text || '').join(', ') : (parsed.to as any).text || '')
-    : '';
-  const ccText = parsed.cc
-    ? (Array.isArray(parsed.cc) ? (parsed.cc as any[]).map(a => a.text || '').join(', ') : (parsed.cc as any).text || '')
-    : '';
+  const toText = addressToText(parsed.to);
+  const ccText = addressToText(parsed.cc);
 
   return {
     messageId: parsed.messageId || fallbackMsgId,
@@ -724,9 +891,37 @@ async function parseEmail(raw: string, fallbackMsgId: string | null): Promise<Pa
 
 // ── Email analysis ────────────────────────────────────────────────────────────
 
-function analyzeEmail(email: ParsedEmail): AnalysisResult {
+export function analyzeEmail(email: ParsedEmail): AnalysisResult {
   const settings = getSettings();
   const dedicated = isDedicatedEmailTarget(email);
+  const structured = parseStructuredCancellationResponse(email.body);
+  if (structured) {
+    const errors: string[] = [];
+    const serialPattern = serialPatternToRegex(settings.mail_serial_pattern || 'XXXXXXXX-XXXX-XXXXXXXX');
+    const formatValid = new RegExp(`^(?:${serialPattern.source.replace(/^\\b|\\b$/g, '')})$`, 'i').test(structured.serialNumber);
+    const linkedSerial = formatValid ? serialService.getBySerialNumber(structured.serialNumber) : undefined;
+    if (!structured.serialNumber) errors.push('SERIAL_NUMBER is required');
+    else if (!formatValid) errors.push('SERIAL_NUMBER format is invalid');
+    else if (!linkedSerial) errors.push('SERIAL_NUMBER does not exist');
+    if (structured.confirmation.trim().toUpperCase() !== 'YES') errors.push('CANCELLATION_CONFIRMATION must be YES');
+    if (!structured.customerName) errors.push('CUSTOMER_NAME is required');
+    const expectedName = linkedSerial?.customer?.name?.trim() || '';
+    const customerMismatch = !!structured.customerName && !!expectedName
+      && structured.customerName.trim().toLocaleLowerCase() !== expectedName.toLocaleLowerCase();
+    if (customerMismatch) errors.push('CUSTOMER_NAME does not match the registered customer');
+
+    return {
+      classification: errors.length ? 'invalid_cancellation_response' : 'stop_request_candidate',
+      extractedSerial: linkedSerial?.serial_number || structured.serialNumber || null,
+      matchedKeywords: [],
+      missingFields: [],
+      isDedicated: dedicated,
+      evidence: ['structured_response'],
+      structuredResponse: structured,
+      responseErrors: errors,
+      requiresAdminReview: customerMismatch,
+    };
+  }
 
   const productKws = settings.renewal_product_keywords || [];
   const actionKws = (settings.renewal_action_keywords?.length > 0
@@ -801,6 +996,27 @@ function analyzeEmail(email: ParsedEmail): AnalysisResult {
     return { classification: 'unrelated', extractedSerial: null, matchedKeywords, missingFields: [], isDedicated: false, evidence: ['product'] };
   }
   return { classification: 'unclassified', extractedSerial: null, matchedKeywords: [], missingFields: [], isDedicated: false, evidence: [] };
+}
+
+export function parseStructuredCancellationResponse(body: string): StructuredCancellationResponse | null {
+  const blocks = Array.from(String(body || '').matchAll(
+    /\[CANCELLATION_RESPONSE_START\]([\s\S]*?)\[CANCELLATION_RESPONSE_END\]/gi,
+  ));
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const values: Record<string, string> = {};
+    for (const match of blocks[i][1].matchAll(
+      /^\s*(SERIAL_NUMBER|CANCELLATION_CONFIRMATION|CUSTOMER_NAME)\s*:\s*(.*?)\s*$/gim,
+    )) {
+      values[match[1].toUpperCase()] = match[2].trim();
+    }
+    if (!Object.values(values).some(Boolean)) continue;
+    return {
+      serialNumber: (values.SERIAL_NUMBER || '').toUpperCase(),
+      confirmation: values.CANCELLATION_CONFIRMATION || '',
+      customerName: values.CUSTOMER_NAME || '',
+    };
+  }
+  return null;
 }
 
 function isDedicatedEmailTarget(email: ParsedEmail): boolean {
@@ -906,7 +1122,7 @@ function extractForwardedSenderAddress(body: string): string | null {
   return null;
 }
 
-function resolveReplyAddress(email: ParsedEmail): string | null {
+export function resolveReplyAddress(email: ParsedEmail): string | null {
   return firstExternalEmail([email.replyTo, email.xForwardedFrom, email.from], false)
     || extractForwardedSenderAddress(email.body)
     || firstExternalEmail([email.body], false)
@@ -920,7 +1136,7 @@ function resolveReplyAddressFromStoredMail(mail: InboundMail): string | null {
     || firstExternalEmail([mail.mail_from]);
 }
 
-function resolveMailFrom(email: ParsedEmail): string {
+export function resolveMailFrom(email: ParsedEmail): string {
   const replyAddress = resolveReplyAddress(email);
   if (replyAddress) return replyAddress;
   return email.from;
@@ -953,6 +1169,32 @@ async function sendMissingInfoNotice(mail: InboundMail, to: string): Promise<{ s
       DETECTED_SERIAL: mail.extracted_serial || '',
       RECEIVED_SUBJECT: mail.subject || '',
       MISSING_FIELDS: missingFields.map(missingFieldLabel).join(', ') || '必要情報',
+    },
+    { actor: 'email' },
+  );
+}
+
+async function sendInvalidResponseNotice(
+  email: ParsedEmail,
+  to: string,
+  analysis: AnalysisResult,
+): Promise<{ success: boolean; message: string }> {
+  const settings = getSettings();
+  const replyTemplate = `[CANCELLATION_RESPONSE_START]
+SERIAL_NUMBER:
+CANCELLATION_CONFIRMATION: YES
+CUSTOMER_NAME:
+[CANCELLATION_RESPONSE_END]`;
+  return sendTemplate(
+    settings.invalid_response_template || 'invalid_cancellation_response',
+    to,
+    {
+      CUSTOMER_NAME: to,
+      CUSTOMER_EMAIL: to,
+      RESPONSE_ERRORS: (analysis.responseErrors || []).join(', '),
+      DETECTED_SERIAL: analysis.extractedSerial || '',
+      RECEIVED_SUBJECT: email.subject || '',
+      REPLY_TEMPLATE: replyTemplate,
     },
     { actor: 'email' },
   );

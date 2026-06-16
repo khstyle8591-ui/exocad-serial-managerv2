@@ -75,7 +75,7 @@ src/
       automation.service.ts    auto-renew / auto-cancel / limbo-fallback
       cancel.service.ts        Playwright 캔슬 자동화
       order.service.ts         ERP 폴링 + pending_orders CRUD
-      email-monitor.service.ts POP3/IMAP 수신 (레거시 — 신규는 mail/inbound)
+      mail/inbound.service.ts POP3/IMAP 수신/분류
       notification.service.ts
           Slack webhook + SMTP 리포트/긴급 알림 전송
           (daily reports, automation failures, limbo escalation)

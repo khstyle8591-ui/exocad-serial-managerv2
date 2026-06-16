@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { app, BrowserWindow, powerMonitor, powerSaveBlocker, session } from 'electron';
 import path from 'path';
 import { initDatabase, closeDatabase } from './database';
@@ -8,6 +9,7 @@ import { seedBuiltinTemplates } from './services/mail/template.service';
 import { logger } from './utils/logger';
 import { stopWebhookServer } from './webhook-server';
 import { startApiServer, stopApiServer } from './api-server';
+import { cancelService } from './services/cancel.service';
 
 let mainWindow: BrowserWindow | null = null;
 let powerSaveBlockerId: number | null = null;
@@ -157,6 +159,7 @@ app.on('before-quit', async () => {
   stopPowerProtection();
   stopScheduler();
   stopPollingScheduler(); // URL 폴링 스케줄러 정리
+  await cancelService.cleanup();
   closeDatabase();
   logger.info('App exiting');
 });

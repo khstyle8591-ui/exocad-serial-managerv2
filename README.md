@@ -1,57 +1,62 @@
 # Exocad Serial Number Management Automation
 
-Exocad 시리얼 넘버의 판매/관리를 자동화하는 Electron 데스크톱 앱입니다.
+Exocad 시리얼 넘버의 등록, 갱신, 갱신 중단 요청, 주문 수집, 리포트 발송을 자동화하는 Electron 데스크톱 앱입니다.
 
 ## 주요 기능
 
-### ✅ 완성된 기능
+### 완료된 운영 기능
 
-1. **시리얼 넘버 관리**
-   - 시리얼 CRUD (생성/수정/삭제/조회)
-   - 엑셀 파일을 통한 벌크 업로드
-   - Add-on 관리 (추가/제거)
-   - 검색 및 필터링
+1. **시리얼 / 고객 관리**
+   - 고객 테이블과 시리얼 테이블 분리
+   - 시리얼 CRUD, 활성화, 갱신, 갱신 중단 요청 플래그 관리
+   - 고객 자동 병합 후보 탐색
+   - 엑셀 업로드와 레거시 DB 이관 마법사
 
-2. **Subscription Cancel 자동화** (Playwright)
-   - Align Tech SSO 로그인 자동화
-   - 시리얼 검색 → 옵션 → Cancel → 확인 자동 클릭
-   - 만료일 기준 자동 cancel 스케줄링
-   - Settings에서 버튼 텍스트 커스터마이징 가능
+2. **메일 시스템**
+   - POP3/IMAP 수신 메일 분류
+   - `inbound_mails` 저장 및 중복 방지
+   - 갱신 중단 요청 후보 확인
+   - 정보 누락 메일 템플릿 발송
+   - SMTP 템플릿 메일 발송
 
-3. **알림 & 리포트**
-   - Slack + 이메일로 일일 작업 리포트
-   - 매월 10일 만료 예정 시리얼 리포트
-   - node-cron 스케줄러로 자동화
+3. **주문 수집 / 승인**
+   - URL 폴링 기반 pending order 수집
+   - `trade_number` 기준 그룹 승인
+   - 신규, 갱신, Add-on, 메모, 버전 업데이트 상품 코드 그룹 처리
+   - 승인 전 주문 데이터 편집과 고객 연결 방식 선택
 
-4. **React Dashboard UI**
-   - Dashboard: 통계 & 오늘의 활동
-   - Serials: 시리얼 목록/검색/등록/수정/갱신/Cancel
-   - Settings: 모든 설정 관리
-   - Logs: 활동 로그 조회
+4. **자동화 / 스케줄러**
+   - 자동 갱신
+   - 갱신 중단 요청 건의 Exocad 사이트 자동 Cancel
+   - limbo fallback 처리
+   - 일일 리포트 다중 시각 스케줄
+   - Notification 화면에서 수동 실행
 
-### 🚧 진행 중인 기능
+5. **알림 / 리포트**
+   - Slack Webhook 알림
+   - SMTP 일일 리포트 및 운영 메일
+   - 실패 로그와 Dashboard failure tail
 
-5. **메일 기반 갱신 요청 처리** (POP3/IMAP 지원)
-   - ✅ POP3 구현 완료
-   - 🔄 IMAP 구현 중
-   - 갱신 키워드 감지하여 자동 만료일 연장
-
-6. **주문 연동** (Webhook 서버)
-   - 🔄 order.service.ts 생성 중
-   - Express 서버로 Webhook 수신
-   - Secret key 검증
-   - 신규/갱신/Add-on 주문 자동 처리
+6. **React 운영 UI**
+   - Dashboard
+   - SerialData / SerialDetail
+   - Customers
+   - RequestedOrder
+   - MailSystem
+   - Notification
+   - Settings
+   - Logs / SystemLogs
 
 ## 기술 스택
 
-- **Frontend**: Electron + React + TypeScript + Vite
-- **Backend**: Electron Main Process (Node.js)
-- **Database**: SQLite (better-sqlite3)
+- **Desktop**: Electron 28
+- **Frontend**: React 18 + TypeScript + Vite
+- **Backend**: Electron Main Process, Express loopback/API server
+- **Database**: SQLite (`better-sqlite3`)
 - **Browser Automation**: Playwright
-- **Mail**: POP3 (node-pop3) + IMAP (imap) + SMTP (nodemailer)
-- **Scheduler**: node-cron
-- **Excel**: xlsx (SheetJS)
-- **Webhook**: Express
+- **Mail**: POP3 (`node-pop3`), IMAP (`imap`), SMTP (`nodemailer`)
+- **Scheduler**: `node-cron`
+- **Excel**: `xlsx`
 
 ## 설치 및 실행
 
@@ -69,146 +74,152 @@ npx playwright install chromium
 npm run dev
 ```
 
-별도 터미널 2개에서 각각 실행:
-- Terminal 1: `npm run dev:main` (Electron Main Process)
-- Terminal 2: `npm run dev:renderer` (React Vite Dev Server)
+개별 실행이 필요하면 아래 명령을 나눠 실행합니다.
 
-또는 `npm run dev`로 한번에 실행 (concurrently 사용)
+```bash
+npm run dev:main
+npm run dev:renderer
+npm run dev:electron
+```
 
-### 3. 프로덕션 빌드
+### 3. 빌드 / 실행
 
 ```bash
 npm run build
 npm start
 ```
 
-### 4. 설치 파일 생성
+### 4. 패키징
 
 ```bash
-npm run dist
+npm run package
+```
+
+## 개발 명령
+
+```bash
+npm run build:main
+npm run build:renderer
+npm run build
+npm test
+npm run test:db
+npm run verify
+npm run start
+npm run dev
+```
+
+`npm run test:db`는 Electron 런타임에서 `better-sqlite3` 스키마 테스트를 실행합니다.
+테스트와 `better-sqlite3` 네이티브 런타임 주의사항은 [docs/testing.md](docs/testing.md)를 참고하세요.
+
+네이티브 모듈 mismatch가 발생하면 아래 명령을 먼저 실행합니다.
+
+```bash
+npx electron-rebuild -f -w better-sqlite3
 ```
 
 ## 프로젝트 구조
 
+```text
+src/
+├── main/
+│   ├── index.ts
+│   ├── database.ts
+│   ├── settings.ts
+│   ├── ipc-handlers.ts
+│   ├── preload.ts
+│   ├── scheduler.ts
+│   ├── api-server.ts
+│   ├── server.ts
+│   ├── services/
+│   │   ├── serial.service.ts
+│   │   ├── customer.service.ts
+│   │   ├── activity-log.service.ts
+│   │   ├── legacy-import.service.ts
+│   │   ├── cancel.service.ts
+│   │   ├── order.service.ts
+│   │   ├── automation.service.ts
+│   │   ├── scheduler-refresh.service.ts
+│   │   ├── notification.service.ts
+│   │   ├── excel.service.ts
+│   │   └── mail/
+│   │       ├── inbound.service.ts
+│   │       ├── lifecycle-notice.service.ts
+│   │       ├── renderer.ts
+│   │       ├── smtp.service.ts
+│   │       └── template.service.ts
+│   └── utils/
+├── server/
+│   └── routes/
+├── renderer/
+│   ├── App.tsx
+│   ├── client.ts
+│   ├── api.ts
+│   ├── electronMock.ts
+│   ├── i18n.ts
+│   ├── components/
+│   └── pages/
+│       ├── Dashboard.tsx
+│       ├── SerialData.tsx
+│       ├── SerialDetail.tsx
+│       ├── Customers.tsx
+│       ├── RequestedOrder.tsx
+│       ├── MailSystem.tsx
+│       ├── Notification.tsx
+│       ├── Settings.tsx
+│       ├── Logs.tsx
+│       └── SystemLogs.tsx
+└── shared/
+    ├── constants.ts
+    └── types.ts
 ```
-exocad-manager/
-├── src/
-│   ├── main/                          # Electron Main Process
-│   │   ├── index.ts                   # 앱 엔트리
-│   │   ├── database.ts                # SQLite 초기화
-│   │   ├── settings.ts                # 설정 CRUD
-│   │   ├── ipc-handlers.ts            # IPC 핸들러
-│   │   ├── scheduler.ts               # Cron 스케줄러
-│   │   ├── services/
-│   │   │   ├── serial.service.ts      # 시리얼 CRUD
-│   │   │   ├── cancel.service.ts      # Playwright 자동화
-│   │   │   ├── email-monitor.service.ts  # POP3/IMAP 메일 감시
-│   │   │   ├── notification.service.ts   # Slack + SMTP 알림
-│   │   │   ├── excel.service.ts       # 엑셀 파싱
-│   │   │   └── order.service.ts       # Webhook 서버 (생성 중)
-│   │   └── utils/
-│   │       └── logger.ts              # 파일 로거
-│   ├── renderer/                      # React UI
-│   │   ├── App.tsx                    # 메인 앱
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx
-│   │   │   ├── Serials.tsx
-│   │   │   ├── Settings.tsx
-│   │   │   └── Logs.tsx
-│   │   ├── components/
-│   │   │   ├── SerialForm.tsx
-│   │   │   ├── AddOnManager.tsx
-│   │   │   └── ExcelUpload.tsx
-│   │   └── styles/
-│   │       └── global.css
-│   └── shared/
-│       └── types.ts                   # 공유 타입 정의
-├── package.json
-├── tsconfig.json
-├── tsconfig.main.json
-├── vite.config.ts
-└── electron-builder.json
-```
 
-## 설정
+## 설정 요약
 
-앱을 처음 실행하면 Settings 페이지에서 다음 정보를 입력해야 합니다:
+Settings 화면에서 아래 운영 설정을 관리합니다.
 
-### 1. 메일 설정 (POP3 또는 IMAP)
-- 프로토콜 선택 (POP3 / IMAP)
-- Host, Port, Username, Password
-- TLS 사용 여부
+- 앱 / Slack 표시 언어
+- Exocad 자동 Cancel 로그인 정보와 실행 시각
+- POP3/IMAP 수신 설정
+- 갱신 중단 요청 키워드와 제외 키워드
+- SMTP 발신 설정
+- Slack Webhook URL
+- 주문 폴링 소스
+- Product Code 그룹 규칙
+- 만료 안내 / 갱신 중단 / Cancel 완료 메일 템플릿 규칙
 
-### 2. SMTP 설정 (리포트 발신용)
-- Host, Port, Username, Password
-- 리포트 수신 이메일 주소
-
-### 3. Slack Webhook (선택사항)
-- Webhook URL
-
-### 4. Exocad 사이트 설정
-- 라이선스 관리 페이지 URL
-- 로그인 페이지 URL
-- 로그인 이메일/비밀번호
-- Cancel 버튼 텍스트
-- 확인 팝업 버튼 텍스트
-
-### 5. Webhook 설정 (주문 연동)
-- Webhook 활성화 여부
-- Webhook 포트 (기본: 3000)
-- Webhook Secret Key
-
-### 6. 기타
-- 갱신 요청 키워드 (쉼표로 구분)
-- 메일 체크 간격 (분)
-
-## 사용 방법
+## 운영 흐름
 
 ### 시리얼 등록
 
-1. **수동 등록**: Serials 페이지에서 "+ 신규 등록" 버튼
-2. **엑셀 업로드**: "엑셀 업로드" 버튼으로 벌크 임포트
+1. `SerialData`에서 직접 등록하거나 엑셀로 업로드합니다.
+2. 기존 DB가 감지되면 Legacy Import 마법사로 선택 이관합니다.
+3. 고객 정보는 `customers` 테이블에 연결됩니다.
 
-### Subscription Cancel
+### 메일 기반 갱신 중단 요청
 
-1. **개별 Cancel**: Serials 목록에서 "Cancel" 버튼 클릭
-2. **자동 Cancel**: 매일 자정에 만료된 시리얼 자동 cancel
+1. POP3/IMAP으로 수신 메일을 확인합니다.
+2. `inbound.service.ts`가 메일을 분류하고 `inbound_mails`에 저장합니다.
+3. 운영자가 MailSystem 화면에서 후보를 확인합니다.
+4. 확인된 요청은 시리얼의 `renewal_stop_requested` 플래그로 반영됩니다.
 
-### 갱신 처리
+### 주문 수집 / 승인
 
-1. **메일 기반**: 갱신 요청 이메일이 오면 자동 감지 및 만료일 연장
-2. **수동 갱신**: Serials 목록에서 "갱신" 버튼 클릭
+1. 주문 관리 사이트를 URL 폴링합니다.
+2. 수집된 주문은 `pending_orders`로 저장됩니다.
+3. RequestedOrder 화면에서 그룹을 편집하고 승인합니다.
+4. 승인 시 고객/시리얼/Add-on/갱신 정보가 실제 DB에 반영됩니다.
 
-### 주문 연동 (Webhook)
+### 자동화
 
-주문 사이트에서 아래 형식으로 POST 요청:
-
-```bash
-curl -X POST http://localhost:3000/webhook/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "secret": "your-secret-key",
-    "order_id": "ORD-12345",
-    "type": "new",
-    "serial_number": "EXO-001",
-    "customer": {
-      "name": "John Doe",
-      "email": "john@example.com"
-    },
-    "purchase_date": "2024-01-15",
-    "expiry_date": "2025-01-15",
-    "add_ons": ["DentalCAD", "ChairsideCAD"]
-  }'
-```
+1. 자동 갱신은 만료된 활성/만료 시리얼 중 갱신 중단 요청이 없는 건을 처리합니다.
+2. 자동 Cancel은 갱신 중단 요청이 있는 활성 시리얼을 Exocad 사이트에서 처리합니다.
+3. Notification 화면에서 자동화 작업을 수동으로 즉시 실행할 수 있습니다.
 
 ## 다음 작업
 
-1. email-monitor.service.ts에 IMAP 로직 완성
-2. order.service.ts 생성 (Webhook 서버)
-3. Settings.tsx에 메일 프로토콜 선택 UI 추가
-4. Settings.tsx에 Webhook 설정 UI 추가
-5. index.ts에 Webhook 서버 자동 시작 코드 추가
-6. Dashboard.tsx에 Webhook 서버 상태 표시
+1. 주요 화면 smoke test
+2. 실제 운영 데이터 기준 메일 수신 / 주문 승인 / 자동화 플로우 검증
+3. README 외 문서(`memory.md`, `.claude/decisions.md`)의 과거 기록 정리 여부 결정
 
 ## 라이선스
 

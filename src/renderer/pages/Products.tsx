@@ -2,13 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import { api } from '../client';
-
-interface Serial {
-  id: number;
-  status: string;
-  version: string;
-  engine_build: string;
-}
+import type { SerialVersionSummary } from '../../shared/types';
 
 const ProductIcon = () => (
   <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
@@ -19,26 +13,15 @@ const ProductIcon = () => (
 
 export default function Products() {
   const { lang } = useLang();
-  const [serials, setSerials] = useState<Serial[]>([]);
+  const [versions, setVersions] = useState<SerialVersionSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.getSerials()
-      .then(data => setSerials(data as Serial[]))
+    api.getSerialVersionSummary()
+      .then(data => setVersions(data as SerialVersionSummary[]))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
-
-  // Group by version (closest to "product" in the current schema)
-  const versionMap = new Map<string, Serial[]>();
-  serials.forEach(s => {
-    const key  = s.version?.trim() || t(lang, 'label_empty_version');
-    const list = versionMap.get(key) || [];
-    list.push(s);
-    versionMap.set(key, list);
-  });
-
-  const versions = [...versionMap.entries()].sort(([a], [b]) => b.localeCompare(a));
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'loading')}</div>;
@@ -54,21 +37,18 @@ export default function Products() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {versions.map(([ver, vSerials]) => {
-          const active    = vSerials.filter(s => s.status === 'active').length;
-          const cancelled = vSerials.filter(s => s.status === 'cancelled').length;
-          const expired   = vSerials.filter(s => s.status === 'expired').length;
-          const notAct    = vSerials.filter(s => s.status === 'not-activated').length;
+        {versions.map(summary => {
+          const ver = summary.version || t(lang, 'label_empty_version');
 
           const stats = [
-            { label: t(lang, 'status_active'),        value: active,    color: 'var(--green)',  dim: 'var(--green-dim)' },
-            { label: t(lang, 'status_cancelled'),     value: cancelled, color: 'var(--red)',    dim: 'var(--red-dim)' },
-            { label: t(lang, 'status_expired'),       value: expired,   color: 'var(--text2)',  dim: 'var(--bg4)' },
-            { label: t(lang, 'status_not_activated'), value: notAct,    color: 'var(--yellow)', dim: 'var(--yellow-dim)' },
+            { label: t(lang, 'status_active'),        value: summary.active,        color: 'var(--green)',  dim: 'var(--green-dim)' },
+            { label: t(lang, 'status_cancelled'),     value: summary.cancelled,     color: 'var(--red)',    dim: 'var(--red-dim)' },
+            { label: t(lang, 'status_expired'),       value: summary.expired,       color: 'var(--text2)',  dim: 'var(--bg4)' },
+            { label: t(lang, 'status_not_activated'), value: summary.not_activated, color: 'var(--yellow)', dim: 'var(--yellow-dim)' },
           ];
 
           return (
-            <div key={ver} style={{
+            <div key={summary.version || '__empty__'} style={{
               background: 'var(--bg2)', border: '1px solid var(--border)',
               borderRadius: 10, padding: '16px 18px',
             }}>
@@ -86,7 +66,7 @@ export default function Products() {
                     {ver}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                    {t(lang, 'label_version_license_count').replace('{n}', String(vSerials.length))}
+                    {t(lang, 'label_version_license_count').replace('{n}', String(summary.total))}
                   </div>
                 </div>
               </div>

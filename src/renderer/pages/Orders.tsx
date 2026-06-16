@@ -4,9 +4,14 @@ import { t } from '../i18n';
 import type { Language } from '../i18n';
 import { api } from '../client';
 
-import type { PendingOrder } from '../../shared/types';
+import type { PendingOrder, Serial, SerialWithCustomer } from '../../shared/types';
 
 type FilterType = 'pending' | 'approved' | 'rejected' | 'all';
+type PollNowResult = { found: number; errors: string[] };
+type ApproveResult = { success: boolean; error?: string };
+type UpdateDataResult = { success: boolean; data?: SerialWithCustomer; error?: string };
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export default function Orders() {
   const { lang } = useLang();
@@ -32,12 +37,12 @@ export default function Orders() {
     setPolling(true);
     setPollMsg(t(lang, 'orders_polling'));
     try {
-      const result = await api.pollNow() as any;
+      const result = await api.pollNow() as PollNowResult;
       setPollMsg(`${t(lang, 'orders_poll_done')}${result.found}${t(lang, 'orders_poll_unit')}`);
       if (result.errors?.length > 0) alert(t(lang, 'orders_poll_errors') + result.errors.join('\n'));
       loadOrders();
-    } catch (e: any) {
-      setPollMsg(`${t(lang, 'orders_poll_error')}${e.message}`);
+    } catch (e: unknown) {
+      setPollMsg(`${t(lang, 'orders_poll_error')}${getErrorMessage(e)}`);
     } finally {
       setPolling(false);
     }
@@ -60,27 +65,28 @@ export default function Orders() {
     try {
       if (mode === 'register') {
         await api.updateOrder(updated.id, updated);
-        const res = await api.approveOrder(updated.id, { serial_status: updated.serial_status }) as any;
+        const res = await api.approveOrder(updated.id, { serial_status: updated.serial_status }) as ApproveResult;
         if (res.success) {
           alert(t(lang, 'orders_approve_success'));
         } else {
           alert(`${t(lang, 'orders_approve_fail')}${res.error}`);
         }
       } else if (mode === 'update') {
-        const res = await api.updateDataOrder(updated.id, updated) as any;
+        const res = await api.updateDataOrder(updated.id, updated) as UpdateDataResult;
         if (res.success) {
           const d = res.data;
+          if (!d) throw new Error(t(lang, 'orders_update_fail').replace('{error}', 'missing data'));
           alert(t(lang, 'orders_update_success')
             .replace('{serial}', d.serial_number)
-            .replace('{customer}', d.customer_name)
+            .replace('{customer}', d.customer.name)
             .replace('{version}', d.version)
-            .replace('{expiry}', d.expiry_date));
+            .replace('{expiry}', d.expiry_date ?? ''));
         } else {
           alert(t(lang, 'orders_update_fail').replace('{error}', res.error));
         }
       }
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(getErrorMessage(e));
     }
     setEditOrder(null);
     loadOrders();
@@ -316,7 +322,8 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
   onClose: () => void;
 }) {
   const [form, setForm] = useState({ ...order });
-  const set = (field: string, value: string) => setForm(f => ({ ...f, [field]: value }));
+  const set = <K extends keyof PendingOrder>(field: K, value: PendingOrder[K]) =>
+    setForm(f => ({ ...f, [field]: value }));
 
   const handleApprove = () => {
     onSave(form);
@@ -339,7 +346,7 @@ function EditOrderModal({ order, mode, lang, onSave, onClose }: {
           <div className="form-row">
             <div className="form-group">
               <label>{t(lang, 'label_status')}</label>
-              <select value={form.serial_status || order.existing_status || 'active'} onChange={e => set('serial_status', e.target.value)}>
+              <select value={form.serial_status || order.existing_status || 'active'} onChange={e => set('serial_status', e.target.value as Serial['status'])}>
                 <option value="active">{t(lang, 'status_active')}</option>
                 <option value="expired">{t(lang, 'status_expired')}</option>
                 <option value="cancelled">{t(lang, 'status_cancelled')}</option>

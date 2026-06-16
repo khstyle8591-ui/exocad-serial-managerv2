@@ -1,8 +1,8 @@
 import React from 'react';
 import { useLang } from '../App';
-import { t } from '../i18n';
+import { t, type TranslationKey } from '../i18n';
 
-const VARS: { key: string; labelKey: string }[] = [
+const VARS: { key: string; labelKey: TranslationKey }[] = [
   { key: 'CUSTOMER_NAME', labelKey: 'var_customer_name' },
   { key: 'CUSTOMER_EMAIL', labelKey: 'var_customer_email' },
   { key: 'SERIAL_NUMBER', labelKey: 'var_serial_number' },
@@ -41,7 +41,7 @@ export default function VariableChips({ onInsert }: Props) {
             lineHeight: '18px',
           }}
         >
-          {t(lang, v.labelKey as any)}
+          {t(lang, v.labelKey)}
         </button>
       ))}
     </div>

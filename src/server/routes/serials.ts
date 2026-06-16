@@ -3,14 +3,35 @@ import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
 import { excelService } from '../../main/services/excel.service';
 import { sendStopRequestReceivedNotice } from '../../main/services/mail/lifecycle-notice.service';
-import type { SerialInput, AddOn } from '../../shared/types';
+import { listSerialMailNoticeLogs } from '../../main/services/serial-mail-notice-log.service';
+import {
+    parseAddOnInput,
+    parseSerialInput,
+    parseSerialListQuery,
+    parseSerialUpdateInput,
+} from '../../shared/serial-contract';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+function errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
 // GET /api/serials
-router.get('/', (_req: Request, res: Response) => {
-    res.json(serialService.getAll());
+router.get('/', (req: Request, res: Response) => {
+    try {
+        if (req.query.paged === '1' || req.query.limit !== undefined || req.query.offset !== undefined) {
+            res.json(serialService.list(parseSerialListQuery(req.query)));
+            return;
+        }
+        res.setHeader('Deprecation', 'true');
+        res.setHeader('Link', '</api/serials?paged=1>; rel="successor-version"');
+        res.setHeader('Warning', '299 - "Deprecated: use /api/serials?paged=1"');
+        res.json(serialService.getAll());
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
+    }
 });
 
 // GET /api/serials/stats
@@ -31,8 +52,8 @@ router.get('/stats/series', (req: Request, res: Response) => {
 });
 
 // GET /api/serials/template/download
-router.get('/template/download', (_req: Request, res: Response) => {
-    const buf = excelService.generateTemplateBuffer();
+router.get('/template/download', async (_req: Request, res: Response) => {
+    const buf = await excelService.generateTemplateBuffer();
     res.setHeader('Content-Disposition', 'attachment; filename="serial_template.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
@@ -42,6 +63,25 @@ router.get('/template/download', (_req: Request, res: Response) => {
 router.get('/search', (req: Request, res: Response) => {
     const q = String(req.query.q || '');
     res.json(serialService.search(q));
+});
+
+// GET /api/serials/expiring-soon?days=60&limit=50
+router.get('/expiring-soon', (req: Request, res: Response) => {
+    const days = Number(req.query.days) || 60;
+    const limit = Number(req.query.limit) || 50;
+    res.json(serialService.getExpiringSoon(days, limit));
+});
+
+// GET /api/serials/version-summary
+router.get('/version-summary', (_req: Request, res: Response) => {
+    res.json(serialService.getVersionSummary());
+});
+
+// GET /api/serials/:id/mail-notice-logs
+router.get('/:id/mail-notice-logs', (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid serial id' });
+    res.json(listSerialMailNoticeLogs(id));
 });
 
 // GET /api/serials/:id
@@ -54,21 +94,21 @@ router.get('/:id', (req: Request, res: Response) => {
 // POST /api/serials
 router.post('/', (req: Request, res: Response) => {
     try {
-        const result = serialService.create(req.body as SerialInput);
+        const result = serialService.create(parseSerialInput(req.body));
         res.json(result);
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
 // POST /api/serials/bulk-import  (multipart/form-data)
-router.post('/bulk-import', upload.single('file'), (req: Request, res: Response) => {
+router.post('/bulk-import', upload.single('file'), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: '파일이 없습니다' });
         }
 
-        const { serials, errors: parseErrors } = excelService.parseExcelBuffer(req.file.buffer);
+        const { serials, errors: parseErrors } = await excelService.parseExcelBuffer(req.file.buffer);
 
         if (serials.length === 0) {
             return res.json({
@@ -79,19 +119,32 @@ router.post('/bulk-import', upload.single('file'), (req: Request, res: Response)
 
         const importResult = serialService.bulkImport(serials);
         res.json({ imported: importResult.imported, errors: [...parseErrors, ...importResult.errors] });
-    } catch (err: any) {
+    } catch (err) {
         console.error('Bulk import error:', err);
-        res.status(500).json({ error: '임포트 중 오류 발생: ' + err.message });
+        res.status(500).json({ error: '임포트 중 오류 발생: ' + errorMessage(err) });
+    }
+});
+
+// POST /api/serials/export
+router.post('/export', async (req: Request, res: Response) => {
+    try {
+        const serials = Array.isArray(req.body?.serials) ? req.body.serials : [];
+        const buf = await excelService.exportSerialsBuffer(serials);
+        res.setHeader('Content-Disposition', 'attachment; filename="serials.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buf);
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
 // POST /api/serials/:id/addon
 router.post('/:id/addon', (req: Request, res: Response) => {
     try {
-        const result = serialService.addAddon(Number(req.params.id), req.body as AddOn);
+        const result = serialService.addAddon(Number(req.params.id), parseAddOnInput(req.body));
         res.json(result);
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
@@ -99,8 +152,8 @@ router.post('/:id/addon', (req: Request, res: Response) => {
 router.post('/:id/activate', (req: Request, res: Response) => {
     try {
         res.json(serialService.activate(Number(req.params.id)));
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
@@ -115,8 +168,8 @@ router.post('/:id/stop-requested', async (req: Request, res: Response) => {
             await sendStopRequestReceivedNotice(result).catch(() => {});
         }
         res.json(result);
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
@@ -124,8 +177,8 @@ router.post('/:id/stop-requested', async (req: Request, res: Response) => {
 router.post('/:id/cancel-db', (req: Request, res: Response) => {
     try {
         res.json(serialService.cancelManual(Number(req.params.id)));
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
@@ -133,8 +186,8 @@ router.post('/:id/cancel-db', (req: Request, res: Response) => {
 router.post('/:id/remove-module', (req: Request, res: Response) => {
     try {
         res.json(serialService.removeModule(Number(req.params.id), String(req.body?.name || '')));
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
@@ -143,18 +196,18 @@ router.post('/:id/renew', (req: Request, res: Response) => {
     try {
         const result = serialService.renewSerial(Number(req.params.id), 'manual');
         res.json(result);
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 
 // PUT /api/serials/:id
 router.put('/:id', (req: Request, res: Response) => {
     try {
-        const result = serialService.update(Number(req.params.id), req.body as Partial<SerialInput>);
+        const result = serialService.update(Number(req.params.id), parseSerialUpdateInput(req.body));
         res.json(result);
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
     }
 });
 

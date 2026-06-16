@@ -5,9 +5,15 @@ import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import express from 'express';
+import basicAuth from 'express-basic-auth';
+import bcrypt from 'bcryptjs';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { initDatabase, closeDatabase } from './database';
 import { startScheduler, stopScheduler } from './scheduler';
 import { startPollingScheduler, stopPollingScheduler } from './services/order.service';
+import { cancelService } from './services/cancel.service';
 import { logger } from './utils/logger';
 
 // ── 라우터 ──────────────────────────────────────────────────────────────────
@@ -24,6 +30,40 @@ import legacyRouter from '../server/routes/legacy';
 import mailRouter from '../server/routes/mail';
 import automationRouter from '../server/routes/automation';
 
+const HTTP_PORT = Number(process.env.HTTP_PORT) || 3000;
+const HTTPS_PORT = Number(process.env.HTTPS_PORT) || 3443;
+const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
+const isProduction = process.env.NODE_ENV === 'production';
+const authDisabled = process.env.AUTH_DISABLED === 'true' && !isProduction;
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required. Set it before starting the server.`);
+  }
+  return value;
+}
+
+function getAllowedOrigins(): string[] {
+  return (process.env.ALLOWED_ORIGIN || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+}
+
+if (process.env.AUTH_DISABLED === 'true' && isProduction) {
+  throw new Error('AUTH_DISABLED cannot be used with NODE_ENV=production.');
+}
+
+if (!authDisabled) {
+  requireEnv('API_USER');
+  requireEnv('API_PASSWORD_HASH');
+}
+
+if (isProduction && getAllowedOrigins().length === 0) {
+  throw new Error('ALLOWED_ORIGIN is required with NODE_ENV=production.');
+}
+
 // ── 초기화 ───────────────────────────────────────────────────────────────────
 logger.init();
 logger.info('=== Server mode started ===');
@@ -34,13 +74,57 @@ startPollingScheduler();
 
 // ── Express ──────────────────────────────────────────────────────────────────
 const app = express();
-const HTTP_PORT = Number(process.env.HTTP_PORT) || 3000;
-const HTTPS_PORT = Number(process.env.HTTPS_PORT) || 3443;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(helmet());
+
+const allowedOrigins = getAllowedOrigins();
+app.use(cors({
+  credentials: true,
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (!isProduction && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+}));
+
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: Number(process.env.RATE_LIMIT_PER_MINUTE) || 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const strictApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: Number(process.env.STRICT_RATE_LIMIT_PER_MINUTE) || 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authMiddleware = authDisabled
+  ? (_req: express.Request, _res: express.Response, next: express.NextFunction) => next()
+  : basicAuth({
+      challenge: true,
+      authorizer(username: string, password: string) {
+        const expectedUser = process.env.API_USER || '';
+        const expectedHash = process.env.API_PASSWORD_HASH || '';
+        return basicAuth.safeCompare(username, expectedUser) &&
+          bcrypt.compareSync(password, expectedHash);
+      },
+      unauthorizedResponse: () => ({ error: 'Authentication required' }),
+    });
+
+app.use(globalLimiter);
 
 // API 라우터
+app.use('/api', authMiddleware);
+app.use('/api/cancel', strictApiLimiter);
+app.use('/api/orders/poll-now', strictApiLimiter);
 app.use('/api/serials', serialsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/orders', ordersRouter);
@@ -59,6 +143,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptim
 
 // React 빌드 정적 파일 서빙
 const staticDir = path.join(__dirname, '../renderer');
+app.use(authMiddleware);
 app.use(express.static(staticDir));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(staticDir, 'index.html'));
@@ -66,7 +151,7 @@ app.get('*', (_req, res) => {
 
 // ── HTTPS 인증서 경로 (Let's Encrypt) ────────────────────────────────────────
 const CERT_DOMAIN = process.env.CERT_DOMAIN || 'geomedi-exocad.duckdns.org';
-const certDir = `/etc/letsencrypt/live/${CERT_DOMAIN}`;
+const certDir = process.env.CERT_DIR || `/etc/letsencrypt/live/${CERT_DOMAIN}`;
 const hasCerts = fs.existsSync(`${certDir}/privkey.pem`) &&
   fs.existsSync(`${certDir}/fullchain.pem`);
 
@@ -81,8 +166,8 @@ httpServer = http.createServer(app);
 httpServer.keepAliveTimeout = 65000;       // 65초 (nginx 기본값 60초보다 길게)
 httpServer.headersTimeout = 70000;         // 70초
 httpServer.timeout = 120000;               // 요청 자체 타임아웃 2분
-httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
-  logger.info(`HTTP server running: http://0.0.0.0:${HTTP_PORT}`);
+httpServer.listen(HTTP_PORT, BIND_HOST, () => {
+  logger.info(`HTTP server running: http://${BIND_HOST}:${HTTP_PORT}`);
 });
 
 // HTTPS 서버 (인증서 있을 때만 실행)
@@ -95,8 +180,8 @@ if (hasCerts) {
   httpsServer.keepAliveTimeout = 65000;
   httpsServer.headersTimeout = 70000;
   httpsServer.timeout = 120000;
-  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-    logger.info(`HTTPS server running: https://0.0.0.0:${HTTPS_PORT}`);
+  httpsServer.listen(HTTPS_PORT, BIND_HOST, () => {
+    logger.info(`HTTPS server running: https://${BIND_HOST}:${HTTPS_PORT}`);
   });
 } else {
   logger.warn(`SSL certificate not found (${certDir}); HTTP-only mode`);
@@ -105,24 +190,33 @@ if (hasCerts) {
 logger.info('All schedulers are running. Press Ctrl+C to exit.');
 
 // ── 종료 처리 ─────────────────────────────────────────────────────────────────
-const shutdown = () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info('Server shutting down...');
-  httpServer.close(() => {
-    httpsServer?.close(() => {
-      stopScheduler();
-      stopPollingScheduler();
-      closeDatabase();
-      logger.info('Server shutdown complete');
-      process.exit(0);
-    });
-    if (!httpsServer) {
-      stopScheduler();
-      stopPollingScheduler();
-      closeDatabase();
-      logger.info('Server shutdown complete');
-      process.exit(0);
+  const forceExitTimer = setTimeout(() => {
+    logger.error('Server shutdown timed out; forcing exit');
+    process.exit(1);
+  }, 15_000);
+
+  try {
+    await new Promise<void>(resolve => httpServer.close(() => resolve()));
+    if (httpsServer) {
+      await new Promise<void>(resolve => httpsServer?.close(() => resolve()));
     }
-  });
+    await cancelService.cleanup();
+    stopScheduler();
+    stopPollingScheduler();
+    closeDatabase();
+    clearTimeout(forceExitTimer);
+    logger.info('Server shutdown complete');
+    process.exit(0);
+  } catch (err: unknown) {
+    clearTimeout(forceExitTimer);
+    logger.error(`Server shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 };
 
 process.on('SIGTERM', shutdown);

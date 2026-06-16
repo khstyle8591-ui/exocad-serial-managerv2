@@ -32,6 +32,16 @@ export interface MergeCandidate {
   matched_field: 'email' | 'name_phone' | 'name_dealer' | 'name_partial';
 }
 
+export interface CustomerSerialSummary {
+  customer_id: number;
+  total: number;
+  active: number;
+  cancelled: number;
+  expired: number;
+  not_activated: number;
+  broken: number;
+}
+
 /** Serial — 신규 스키마. customer_id FK. */
 export interface Serial {
   id: number;
@@ -73,6 +83,40 @@ export interface ActivityLog {
   created_at: string;
 }
 
+export interface SerialMailNoticeLog {
+  id: number;
+  serial_id: number | null;
+  serial_number: string;
+  template_code: string;
+  notice_kind: 'expiry_renewal' | 'expiry_stop';
+  days_before: number;
+  recipient_email: string;
+  status: 'sent' | 'failed';
+  message: string;
+  sent_at: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface AutoRenewalOrderNoticeLog {
+  id: number;
+  serial_id: number | null;
+  serial_number: string;
+  customer_name: string;
+  customer_email: string;
+  main_product: string;
+  modules: string;
+  previous_expiry_date: string;
+  renewed_expiry_date: string;
+  recipient_email: string;
+  subject: string;
+  html_body: string;
+  status: 'sent' | 'failed';
+  message: string;
+  sent_at: string;
+  created_at: string;
+}
+
 // ── Mail ──────────────────────────────────────────────────────────────────────
 
 export interface MailTemplate {
@@ -103,7 +147,7 @@ export interface InboundMail {
   subject: string;
   body: string;
   received_at: string;
-  classification: 'unclassified' | 'renewal_request' | 'stop_request_candidate' | 'stop_request' | 'missing_info' | 'unrelated' | 'error';
+  classification: 'unclassified' | 'renewal_request' | 'stop_request_candidate' | 'stop_request' | 'missing_info' | 'invalid_cancellation_response' | 'unrelated' | 'error';
   matched_template: string | null;
   matched_keywords: string;     // JSON string[]
   extracted_serial: string | null;
@@ -111,6 +155,11 @@ export interface InboundMail {
   processed: number;
   missing_fields: string | null; // JSON string[]
   template_sent_at: string | null;
+  response_errors: string;
+  response_attempt: number;
+  response_customer_name: string | null;
+  admin_review: number;
+  admin_review_resolved: number;
   error: string | null;
 }
 
@@ -162,6 +211,8 @@ export interface GroupedOrder {
 export interface SerialInput {
   serial_number: string;
   customer_id?: number;
+  customer_resolution?: 'merge' | 'separate';
+  customer_merge_target_id?: number;
   customer_name?: string;
   customer_email?: string;
   customer_address?: string;
@@ -178,6 +229,41 @@ export interface SerialInput {
   notes?: string;
   status?: Serial['status'];
   renewal_stop_requested?: boolean | number;
+}
+
+export interface SerialListQuery {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  status?: Serial['status'] | 'all';
+  customer_id?: number;
+  renewal_stop_requested?: boolean;
+  expiring_this_month?: boolean;
+}
+
+export interface SerialExportQuery {
+  search?: string;
+  status?: Serial['status'] | 'all';
+  customer_id?: number;
+  renewal_stop_requested?: boolean;
+  expiring_this_month?: boolean;
+}
+
+export interface SerialListResult {
+  items: SerialWithCustomer[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SerialVersionSummary {
+  version: string;
+  total: number;
+  active: number;
+  cancelled: number;
+  expired: number;
+  not_activated: number;
+  broken: number;
 }
 
 /** Legacy AddOn — kept for backward compatibility */
@@ -387,6 +473,8 @@ export interface DailyReport {
   date: string;
   new_registrations: number;
   renewals: number;
+  auto_renewals: number;
+  manual_renewals: number;
   cancellations: number;
   failed_cancellations: CancelResult[];
   details: ActivityLog[];
@@ -445,6 +533,8 @@ export interface AppSettings {
   mail_serial_pattern: string;
   missing_info_auto_reply_enabled: boolean;
   missing_info_template: string;
+  invalid_response_auto_reply_enabled: boolean;
+  invalid_response_template: string;
   renewal_keywords: string[];
   mail_check_times: string[];
   auto_cancel_enabled: boolean;
@@ -471,7 +561,11 @@ export interface AppSettings {
 // =========================================================
 
 export const IPC_CHANNELS = {
+  // @deprecated Use SERIAL_LIST or domain-specific serial channels.
   SERIAL_GET_ALL: 'serial:getAll',
+  SERIAL_LIST: 'serial:list',
+  SERIAL_GET_EXPIRING_SOON: 'serial:getExpiringSoon',
+  SERIAL_GET_VERSION_SUMMARY: 'serial:getVersionSummary',
   SERIAL_GET_BY_ID: 'serial:getById',
   SERIAL_CREATE: 'serial:create',
   SERIAL_UPDATE: 'serial:update',
@@ -486,6 +580,7 @@ export const IPC_CHANNELS = {
   SERIAL_REMOVE_MODULE: 'serial:removeModule',
 
   CUSTOMER_LIST: 'customer:list',
+  CUSTOMER_SERIAL_SUMMARIES: 'customer:serialSummaries',
   CUSTOMER_GET_BY_ID: 'customer:getById',
   CUSTOMER_CREATE: 'customer:create',
   CUSTOMER_UPDATE: 'customer:update',
@@ -495,6 +590,7 @@ export const IPC_CHANNELS = {
 
   EXCEL_DOWNLOAD_TEMPLATE: 'excel:downloadTemplate',
   EXCEL_EXPORT_SERIALS: 'excel:exportSerials',
+  EXCEL_EXPORT_SERIALS_BY_FILTER: 'excel:exportSerialsByFilter',
 
   CANCEL_SUBSCRIPTION: 'cancel:subscription',
   CANCEL_CHECK_EXPIRING: 'cancel:checkExpiring',
@@ -532,14 +628,15 @@ export const IPC_CHANNELS = {
   SETTINGS_IMPORT: 'settings:import',
 
   LOGS_LIST: 'logs:list',
+  // Main-to-renderer event, not an ipcMain.handle request channel.
   LOGS_PUSH: 'logs:push',
 
   ORDER_GET_PENDING: 'order:getPending',
-  ORDER_LIST_ALL: 'order:listAll',
   ORDER_LIST_GROUPED: 'order:listGrouped',
   ORDER_APPROVE: 'order:approve',
   ORDER_REJECT: 'order:reject',
   ORDER_UPDATE: 'order:update',
+  ORDER_UPDATE_DATA: 'order:updateData',
   ORDER_DELETE: 'order:delete',
   ORDER_POLL_NOW: 'order:pollNow',
   ORDER_GET_POLL_STATUS: 'order:getPollStatus',

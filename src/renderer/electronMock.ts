@@ -6,8 +6,29 @@
  * Handles data-shape transformations (flat serial → nested customer).
  */
 import { api } from './api';
+import type {
+  AddOn,
+  AppSettings,
+  CustomerInput,
+  LogFilter,
+  MailTemplateUpsert,
+  PendingOrder,
+  PollSource,
+  SerialExportQuery,
+  SerialInput,
+  SerialWithCustomer,
+} from '../shared/types';
 
-function transformSerial(s: any): any {
+type FlatSerial = Partial<SerialWithCustomer> & {
+  customer_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
+  customer_address?: string;
+  customer_dealer?: string;
+  customer_manager?: string;
+};
+
+function transformSerial(s: FlatSerial | null | undefined): SerialWithCustomer | null | undefined {
   if (!s) return s;
   if (s.customer && typeof s.customer === 'object') return s;
   return {
@@ -31,27 +52,37 @@ function stub<T>(name: string, fallback: T): () => Promise<T> {
   };
 }
 
-const mock: any = {
+const mock: Record<string, unknown> = {
   // ── Serials ────────────────────────────────────────────────────────────────
+  // @deprecated Compatibility API. New browser UI should use listSerials.
   getSerials: async () => {
-    const list = await api.getSerials() as any[];
+    const list = await api.getSerials() as FlatSerial[];
     return list.map(transformSerial);
   },
+  listSerials: async (query: unknown) => {
+    const result = await api.listSerials(query as Record<string, unknown>) as { items: FlatSerial[] };
+    return { ...result, items: result.items.map(transformSerial) };
+  },
+  getExpiringSoonSerials: async (days?: number, limit?: number) => {
+    const list = await api.getExpiringSoonSerials(days, limit) as FlatSerial[];
+    return list.map(transformSerial);
+  },
+  getSerialVersionSummary: () => api.getSerialVersionSummary(),
   getSerialById: async (id: number) => {
-    const s = await api.getSerialById(id) as any;
+    const s = await api.getSerialById(id) as FlatSerial | undefined;
     return s ? transformSerial(s) : undefined;
   },
-  createSerial: async (input: any) => transformSerial(await api.createSerial(input)),
-  updateSerial: async (id: number, input: any) => {
-    const s = await api.updateSerial(id, input) as any;
+  createSerial: async (input: SerialInput) => transformSerial(await api.createSerial(input) as FlatSerial),
+  updateSerial: async (id: number, input: Partial<SerialInput>) => {
+    const s = await api.updateSerial(id, input) as FlatSerial;
     return s ? transformSerial(s) : undefined;
   },
   deleteSerial: (id: number) => api.deleteSerial(id),
   searchSerials: async (q: string) => {
-    const list = await api.searchSerials(q) as any[];
+    const list = await api.searchSerials(q) as FlatSerial[];
     return list.map(transformSerial);
   },
-  addAddon: (id: number, addon: any) => api.addAddon(id, addon),
+  addAddon: (id: number, addon: AddOn) => api.addAddon(id, addon),
   bulkImport: (): Promise<{ imported: number; errors: string[] }> =>
     new Promise((resolve, reject) => {
       const input = document.createElement('input');
@@ -62,8 +93,8 @@ const mock: any = {
         if (!file) { resolve({ imported: 0, errors: [] }); return; }
         try {
           const result = await api.bulkImport(file);
-          resolve(result as any);
-        } catch (e: any) {
+          resolve(result);
+        } catch (e: unknown) {
           reject(e);
         }
       };
@@ -73,7 +104,8 @@ const mock: any = {
     api.downloadTemplate();
     return { success: true };
   },
-  exportSerials: (serials: any[]) => api.exportSerials(serials),
+  exportSerials: (serials: SerialWithCustomer[]) => api.exportSerials(serials),
+  exportSerialsByFilter: (query: SerialExportQuery) => api.exportSerialsByFilter(query),
 
   // ── Serial domain actions ──────────────────────────────────────────────────
   activateSerial: async (id: number) => transformSerial(await api.activateSerial(id)),
@@ -85,12 +117,14 @@ const mock: any = {
 
   // ── Customer CRUD ──────────────────────────────────────────────────────────
   listCustomers: () => api.listCustomers(),
+  listCustomerSerialSummaries: () => api.listCustomerSerialSummaries(),
   getCustomerById: (id: number) => api.getCustomerById(id),
-  createCustomer: (input: any) => api.createCustomer(input),
-  updateCustomer: (id: number, input: any) => api.updateCustomer(id, input),
+  createCustomer: (input: CustomerInput) => api.createCustomer(input),
+  updateCustomer: (id: number, input: Partial<CustomerInput>) => api.updateCustomer(id, input),
   deleteCustomer: (id: number) => api.deleteCustomer(id),
   searchCustomers: (q: string) => api.searchCustomers(q),
-  getCustomerMergeCandidates: (q: any) => api.getCustomerMergeCandidates(q),
+  getCustomerMergeCandidates: (q: { email?: string; name?: string; phone?: string; dealer?: string }) =>
+    api.getCustomerMergeCandidates(q),
 
   // ── Cancel ────────────────────────────────────────────────────────────────
   cancelSubscription: (serialNumber: string) => api.cancelSubscription(serialNumber),
@@ -106,68 +140,69 @@ const mock: any = {
   // ── Mail Inbound ──────────────────────────────────────────────────────────
   checkInboundNow: () => api.checkInboundNow(),
   inboundDryRun: () => api.inboundDryRun(),
-  testMailConnection: (override?: any) => api.testMailConnection(override),
-  listInboundMails: (filter?: any) => api.listInboundMails(filter),
+  testMailConnection: (override?: Partial<AppSettings>) => api.testMailConnection(override),
+  listInboundMails: (filter?: { classification?: string[]; limit?: number; offset?: number }) =>
+    api.listInboundMails(filter),
   confirmStopRequestFromMail: (id: number) => api.confirmStopRequestFromMail(id),
   sendMissingInfoTemplateForMail: (id: number) => api.sendMissingInfoTemplateForMail(id),
 
   // ── Mail Templates ────────────────────────────────────────────────────────
-  sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: any) =>
+  sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: Record<string, unknown>) =>
     api.sendMailTemplate(code, to, vars, options),
-  testSmtp: (override?: any) => api.testSmtp(override),
-  sendTestDryRun: (override?: any) => api.sendTestDryRun(override),
+  testSmtp: (override?: Partial<AppSettings>) => api.testSmtp(override),
+  sendTestDryRun: (override?: Partial<AppSettings>) => api.sendTestDryRun(override),
   listMailTemplates: () => api.listMailTemplates(),
   getMailTemplate: (code: string) => api.getMailTemplate(code),
-  upsertMailTemplate: (tmpl: any) => api.upsertMailTemplate(tmpl),
+  upsertMailTemplate: (tmpl: MailTemplateUpsert) => api.upsertMailTemplate(tmpl),
   deleteMailTemplate: (code: string) => api.deleteMailTemplate(code),
   previewMailTemplate: (code: string, serialId: number) => api.previewMailTemplate(code, serialId),
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   getStatsCounts: () => api.getStatsCounts(),
-  getStatsSeries: (g: any, r: number) => api.getStatsSeries(g, r),
+  getStatsSeries: (g: 'day' | 'month' | 'year', r: number) => api.getStatsSeries(g, r),
   getStatsFailures: () => api.getStatsFailures(),
 
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings: () => api.getSettings(),
-  saveSettings: (settings: any) => api.saveSettings(settings),
+  saveSettings: (settings: Partial<AppSettings>) => api.saveSettings(settings),
   exportSettings: () => api.exportSettings(),
   importSettings: () => api.importSettings(),
 
   // ── Logs ──────────────────────────────────────────────────────────────────
-  listLogs: (filter?: any) => api.listLogs(filter),
+  listLogs: (filter?: LogFilter) => api.listLogs(filter),
   onLogsPush: (cb: (payload: { id: number }) => void): () => void => api.onLogsPush(cb),
 
   // ── Orders ────────────────────────────────────────────────────────────────
   getOrders: () => api.getOrders(),
   listGroupedOrders: () => api.listGroupedOrders(),
-  approveOrder: (id: number, options?: any) => api.approveOrder(id, options),
+  approveOrder: (id: number, options?: { serial_status?: string; customer_id?: number; customer_data?: CustomerInput }) =>
+    api.approveOrder(id, options),
   rejectOrder: (id: number) => api.rejectOrder(id),
-  updateOrder: (id: number, data: any) => api.updateOrder(id, data),
+  updateOrder: (id: number, data: Partial<PendingOrder>) => api.updateOrder(id, data),
+  updateDataOrder: (id: number, data: Partial<PendingOrder>) => api.updateDataOrder(id, data),
   deleteOrder: (id: number) => api.deleteOrder(id),
   pollNow: (sourceId?: string) => api.pollNow(sourceId),
-  pollDryRun: (sourceId?: string, overrides?: any) => api.pollDryRun(sourceId, overrides),
+  pollDryRun: (sourceId?: string, overrides?: Partial<PollSource>) => api.pollDryRun(sourceId, overrides),
   getPollStatus: () => api.getPollStatus(),
   restartScheduler: () => api.restartOrderScheduler(),
 
   // ── Extra stubs ───────────────────────────────────────────────────────────
   checkRenewalEmails: () => api.checkRenewalEmails(),
   renewalDryRun: () => api.renewalDryRun(),
-  testSlackRelated: (override?: any) => api.testSlackRelated(override),
-  updateDataOrder: (id: number, data: any) => api.updateDataOrder(id, data),
-
+  testSlackRelated: (override?: Partial<AppSettings>) => api.testSlackRelated(override),
   // ── Notification ──────────────────────────────────────────────────────────
-  testSlackWebhook: (override?: any) => api.testSlackWebhook(override),
+  testSlackWebhook: (override?: Partial<AppSettings>) => api.testSlackWebhook(override),
   sendDailyReportNow: () => api.sendDailyReportNow(),
   listReportTimes: () => api.listReportTimes(),
   setReportTimes: (times: string[]) => api.setReportTimes(times),
-  runExpiryNoticeDryRun: (input: any) => api.runExpiryNoticeDryRun(input),
-  runStopLifecycleNoticeDryRun: (input: any) => api.runStopLifecycleNoticeDryRun(input),
+  runExpiryNoticeDryRun: (input: unknown) => api.runExpiryNoticeDryRun(input),
+  runStopLifecycleNoticeDryRun: (input: unknown) => api.runStopLifecycleNoticeDryRun(input),
 
   // ── Legacy Import ─────────────────────────────────────────────────────────
   detectLegacy: () => api.detectLegacy(),
-  listLegacySerials: (filter?: any) => api.listLegacySerials(filter),
-  suggestLegacyMerge: (row: any) => api.suggestLegacyMerge(row),
-  importLegacySerial: (input: any) => api.importLegacySerial(input),
+  listLegacySerials: (filter?: { status?: string[]; limit?: number; offset?: number }) => api.listLegacySerials(filter),
+  suggestLegacyMerge: (row: unknown) => api.suggestLegacyMerge(row),
+  importLegacySerial: (input: unknown) => api.importLegacySerial(input),
 
   // ── Webhook ───────────────────────────────────────────────────────────────
   getWebhookStatus: () => api.getWebhookStatus(),
@@ -175,6 +210,7 @@ const mock: any = {
   stopWebhookServer: () => api.stopWebhookServer(),
 };
 
-if (!(window as any).electronAPI) {
-  (window as any).electronAPI = mock;
+const browserWindow = window as Window & { electronAPI?: unknown };
+if (!browserWindow.electronAPI) {
+  browserWindow.electronAPI = mock;
 }

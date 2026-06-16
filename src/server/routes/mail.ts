@@ -4,6 +4,10 @@ import { sendTemplate, sendTestDryRun, testSmtp } from '../../main/services/mail
 
 const router = Router();
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 router.post('/check-inbound-now', async (_req: Request, res: Response) => {
   res.json(await checkInboundNow());
 });
@@ -33,8 +37,8 @@ router.post('/send-template', async (req: Request, res: Response) => {
   try {
     const result = await sendTemplate(code, to, vars, options);
     res.json(result);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+  } catch (e: unknown) {
+    res.status(500).json({ error: errorMessage(e) });
   }
 });
 
