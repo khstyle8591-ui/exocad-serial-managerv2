@@ -4,6 +4,7 @@ const AUTOMATION_BROWSER_ARGS = [
   '--disable-save-password-bubble',
   '--disable-features=PasswordManager,AutofillServerCommunication',
   '--password-store=basic',
+  '--disable-dev-shm-usage',  // GCP e2-micro 등 저메모리 VM에서 공유 메모리 크래시 방지
 ];
 
 export async function launchAutomationBrowser(headless: boolean): Promise<Browser> {

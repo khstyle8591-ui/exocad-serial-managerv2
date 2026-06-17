@@ -92,6 +92,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   stop_request_notice_template: 'stop_request_received',
   cancel_complete_notice_enabled: true,
   cancel_complete_notice_template: 'cancel_confirmation',
+  // ── 고객 포털 (feature/credit-system) ─────────────────────────────────────
+  portal_enabled: false,
+  credit_auto_alloc_enabled: false,
+  credit_notification_email: '',
+  credit_packages: [],
 };
 
 let cachedSettings: AppSettings | null = null;

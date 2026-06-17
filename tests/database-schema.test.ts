@@ -80,14 +80,14 @@ describeSqlite('database schema', () => {
   });
 
   it('sets the schema user_version to the current migration version', () => {
-    expect(getDb().pragma('user_version', { simple: true })).toBe(6);
+    expect(getDb().pragma('user_version', { simple: true })).toBe(7);
   });
 
   it('can initialize a fresh in-memory database repeatedly', () => {
     initDatabaseForTesting();
 
     expect(tableNames()).toContain('inbound_mails');
-    expect(getDb().pragma('user_version', { simple: true })).toBe(6);
+    expect(getDb().pragma('user_version', { simple: true })).toBe(7);
   });
 });
 

@@ -1,0 +1,202 @@
+import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
+import type { Request, Response } from 'express';
+import {
+  createSession,
+  destroySession,
+  setSessionCookie,
+  clearSessionCookie,
+  requirePortalAuth,
+  requireCsrf,
+  generateToken,
+  SESSION_COOKIE,
+  type PortalRequest,
+} from '../middleware';
+import {
+  findAccountByLoginId,
+  findAccountById,
+  loginIdExists,
+  createAccount,
+  updateAccountPassword,
+  createResetToken,
+  consumeResetToken,
+} from '../db';
+import { sendTemplate } from '../../../main/services/mail/smtp.service';
+
+const router = Router();
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const GENERIC_ERROR = '입력하신 정보가 일치하지 않습니다.';
+
+function validatePassword(pw: string): string | null {
+  if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
+  if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
+  if (!/[a-z]/.test(pw)) return '소문자를 포함해야 합니다.';
+  if (!/[0-9]/.test(pw)) return '숫자를 포함해야 합니다.';
+  return null;
+}
+
+function toLanguage(val: unknown): 'ko' | 'en' | 'ja' {
+  if (val === 'en' || val === 'ja') return val;
+  return 'ko';
+}
+
+// POST /portal/auth/signup
+router.post('/signup', authLimiter, async (req: Request, res: Response) => {
+  const {
+    login_id,
+    email,
+    phone = '',
+    address = '',
+    name,
+    exocad_id = '',
+    password,
+    confirm_password,
+    language,
+  } = req.body as Record<string, string>;
+
+  if (!login_id?.trim() || !email?.trim() || !name?.trim() || !password) {
+    res.status(400).json({ error: '필수 항목을 모두 입력해주세요.' });
+    return;
+  }
+  if (password !== confirm_password) {
+    res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
+    return;
+  }
+  const pwError = validatePassword(password);
+  if (pwError) { res.status(400).json({ error: pwError }); return; }
+
+  if (loginIdExists(login_id.trim())) {
+    res.status(409).json({ error: '이미 사용 중인 로그인 ID입니다.' });
+    return;
+  }
+
+  const hash = await bcrypt.hash(password, 12);
+  const accountId = createAccount({
+    login_id: login_id.trim(),
+    email: email.trim(),
+    phone: phone.trim(),
+    address: address.trim(),
+    name: name.trim(),
+    exocad_id: exocad_id.trim(),
+    password_hash: hash,
+    language: toLanguage(language),
+  });
+
+  const { token, csrfToken } = createSession(accountId);
+  setSessionCookie(res, token);
+  res.json({ account_id: accountId, csrf_token: csrfToken });
+});
+
+// POST /portal/auth/login
+router.post('/login', authLimiter, async (req: Request, res: Response) => {
+  const { login_id, password } = req.body as Record<string, string>;
+
+  if (!login_id || !password) {
+    res.status(400).json({ error: GENERIC_ERROR });
+    return;
+  }
+
+  const account = findAccountByLoginId(login_id.trim());
+  if (!account || account.status !== 'active') {
+    // 타이밍 균등화 — 계정 없어도 bcrypt 비용 소모
+    await bcrypt.compare('dummy', '$2b$12$invalidhashinvalidhashinvalidhas');
+    res.status(401).json({ error: GENERIC_ERROR });
+    return;
+  }
+
+  const ok = await bcrypt.compare(password, account.password_hash);
+  if (!ok) {
+    res.status(401).json({ error: GENERIC_ERROR });
+    return;
+  }
+
+  const { token, csrfToken } = createSession(account.id);
+  setSessionCookie(res, token);
+  res.json({ account_id: account.id, language: account.language, csrf_token: csrfToken });
+});
+
+// POST /portal/auth/logout
+router.post('/logout', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
+  const pr = req as PortalRequest;
+  const sessionToken = pr.portalCookies?.[SESSION_COOKIE];
+  if (sessionToken) destroySession(sessionToken);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// POST /portal/auth/reset-request — 등록 이메일로 일회용 재설정 링크 발송
+router.post('/reset-request', authLimiter, async (req: Request, res: Response) => {
+  // 계정 열거 방지 — 항상 동일 메시지 반환
+  const OK = { ok: true, message: '해당 정보로 등록된 이메일에 링크를 발송했습니다. 없을 경우 PM에 문의해주세요.' };
+
+  const { login_id, email } = req.body as Record<string, string>;
+  if (!login_id || !email) { res.json(OK); return; }
+
+  const account = findAccountByLoginId(login_id.trim());
+  if (!account || account.email.toLowerCase() !== email.trim().toLowerCase()) {
+    res.json(OK);
+    return;
+  }
+
+  const resetToken = generateToken(32);
+  createResetToken(account.id, resetToken);
+
+  const baseUrl = process.env.PORTAL_BASE_URL || '';
+  const resetUrl = `${baseUrl}/portal/reset?token=${resetToken}`;
+
+  try {
+    await sendTemplate('portal_reset_password', account.email, {
+      NAME: account.name,
+      RESET_URL: resetUrl,
+    });
+  } catch {
+    // 메일 발송 실패도 동일 응답 (정보 노출 방지)
+  }
+
+  res.json(OK);
+});
+
+// POST /portal/auth/reset-confirm — 토큰 + 새 비밀번호로 재설정
+router.post('/reset-confirm', authLimiter, async (req: Request, res: Response) => {
+  const { token, password, confirm_password } = req.body as Record<string, string>;
+
+  if (!token || !password) {
+    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    return;
+  }
+  if (password !== confirm_password) {
+    res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
+    return;
+  }
+  const pwError = validatePassword(password);
+  if (pwError) { res.status(400).json({ error: pwError }); return; }
+
+  const resetToken = consumeResetToken(token);
+  if (!resetToken) {
+    res.status(400).json({ error: '유효하지 않거나 만료된 링크입니다.' });
+    return;
+  }
+
+  const hash = await bcrypt.hash(password, 12);
+  updateAccountPassword(resetToken.account_id, hash);
+  res.json({ ok: true });
+});
+
+// GET /portal/auth/me — 현재 로그인 계정 정보 (비밀번호 해시 제외)
+router.get('/me', requirePortalAuth, (req: Request, res: Response) => {
+  const pr = req as PortalRequest;
+  const account = findAccountById(pr.portalSession!.account_id);
+  if (!account) { res.status(404).json({ error: 'Not found' }); return; }
+  const { password_hash: _, ...safe } = account;
+  res.json({ ...safe, csrf_token: pr.portalSession!.csrf_token });
+});
+
+export default router;

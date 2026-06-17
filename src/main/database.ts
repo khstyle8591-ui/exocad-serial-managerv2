@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 
 type Migration = {
   version: number;
@@ -326,6 +326,81 @@ function createAutoRenewalOrderNoticeLogsTable(): void {
   `);
 }
 
+function createPortalTables(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS portal_accounts (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      login_id       TEXT    NOT NULL UNIQUE,
+      email          TEXT    NOT NULL DEFAULT '',
+      phone          TEXT    NOT NULL DEFAULT '',
+      address        TEXT    NOT NULL DEFAULT '',
+      name           TEXT    NOT NULL DEFAULT '',
+      exocad_id      TEXT    NOT NULL DEFAULT '',
+      password_hash  TEXT    NOT NULL,
+      language       TEXT    NOT NULL DEFAULT 'ko' CHECK(language IN ('ko','en','ja')),
+      status         TEXT    NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      last_synced_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_account_links (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id      INTEGER NOT NULL,
+      customer_id     INTEGER NOT NULL,
+      verified_serial TEXT    NOT NULL DEFAULT '',
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (account_id)  REFERENCES portal_accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (customer_id) REFERENCES customers(id)       ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pal_account  ON portal_account_links(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pal_customer ON portal_account_links(customer_id);
+
+    CREATE TABLE IF NOT EXISTS portal_requests (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id    INTEGER NOT NULL,
+      type          TEXT    NOT NULL CHECK(type IN ('credit','renewal_stop','renewal_resume')),
+      target_serial TEXT    NOT NULL DEFAULT '',
+      exocad_id     TEXT    NOT NULL DEFAULT '',
+      package_code  TEXT    NOT NULL DEFAULT '',
+      status        TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected')),
+      note          TEXT    NOT NULL DEFAULT '',
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      processed_at  TEXT,
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pr_account ON portal_requests(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pr_type    ON portal_requests(type, status);
+    CREATE INDEX IF NOT EXISTS idx_pr_serial  ON portal_requests(target_serial) WHERE target_serial != '';
+
+    CREATE TABLE IF NOT EXISTS portal_sessions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      token       TEXT    NOT NULL UNIQUE,
+      account_id  INTEGER NOT NULL,
+      csrf_token  TEXT    NOT NULL DEFAULT '',
+      expires_at  TEXT    NOT NULL,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_token   ON portal_sessions(token);
+    CREATE INDEX IF NOT EXISTS idx_ps_account ON portal_sessions(account_id);
+    CREATE INDEX IF NOT EXISTS idx_ps_expires ON portal_sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS portal_reset_tokens (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      token       TEXT    NOT NULL UNIQUE,
+      account_id  INTEGER NOT NULL,
+      expires_at  TEXT    NOT NULL,
+      used        INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_prt_token   ON portal_reset_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_prt_account ON portal_reset_tokens(account_id);
+  `);
+}
+
 function getUserVersion(): number {
   return db.pragma('user_version', { simple: true }) as number;
 }
@@ -364,6 +439,11 @@ const migrations: Migration[] = [
     version: 6,
     name: 'auto renewal order notice logs',
     run: createAutoRenewalOrderNoticeLogsTable,
+  },
+  {
+    version: 7,
+    name: 'portal tables',
+    run: createPortalTables,
   },
 ];
 

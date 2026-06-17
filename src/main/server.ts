@@ -29,6 +29,7 @@ import mailTemplatesRouter from '../server/routes/mail-templates';
 import legacyRouter from '../server/routes/legacy';
 import mailRouter from '../server/routes/mail';
 import automationRouter from '../server/routes/automation';
+import portalRouter from '../server/portal/index';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT) || 3000;
 const HTTPS_PORT = Number(process.env.HTTPS_PORT) || 3443;
@@ -137,6 +138,9 @@ app.use('/api/mail-templates', mailTemplatesRouter);
 app.use('/api/legacy', legacyRouter);
 app.use('/api/mail', mailRouter);
 app.use('/api/automation', automationRouter);
+
+// 고객 포털 (portal_enabled=false 이면 503)
+app.use('/portal', portalRouter);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

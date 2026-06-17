@@ -489,6 +489,13 @@ export interface MonthlyExpiryReport {
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
+export interface CreditPackage {
+  id: string;
+  label: string;
+  quantity: number;
+  price: number;
+}
+
 export interface AppSettings {
   mail_protocol: 'pop3' | 'imap';
   pop3_host: string;
@@ -554,6 +561,11 @@ export interface AppSettings {
   stop_request_notice_template: string;
   cancel_complete_notice_enabled: boolean;
   cancel_complete_notice_template: string;
+  // ── 고객 포털 (feature/credit-system) ─────────────────────────────────────
+  portal_enabled: boolean;
+  credit_auto_alloc_enabled: boolean;
+  credit_notification_email: string;
+  credit_packages: CreditPackage[];
 }
 
 // =========================================================

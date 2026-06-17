@@ -77,10 +77,47 @@ function getCandidateFailsafeTargets(): CandidateFailsafeTarget[] {
     .filter((serial): serial is CandidateFailsafeTarget => serial !== null);
 }
 
+// ── 포털 발 failsafe 대상 ─────────────────────────────────────────────────────
+// 포털에서 갱신 중단 신청 후 관리자가 만료 윈도우 내 미처리한 건을 자동 확정한다.
+
+interface PortalFailsafeTarget extends SerialWithCustomer {
+  portal_request_id: number;
+}
+
+function getPortalFailsafeTargets(): PortalFailsafeTarget[] {
+  const today = getTodayDateString();
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = tomorrowDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+  const rows = getDb()
+    .prepare(
+      `SELECT s.id AS serial_id, MIN(pr.id) AS portal_request_id
+       FROM portal_requests pr
+       JOIN serials s ON LOWER(s.serial_number) = LOWER(pr.target_serial)
+       WHERE pr.type = 'renewal_stop'
+         AND pr.status = 'pending'
+         AND s.status IN ('active', 'expired')
+         AND s.expiry_date IN (?, ?)
+         AND s.renewal_stop_requested = 0
+       GROUP BY s.id`,
+    )
+    .all(today, tomorrow) as Array<{ serial_id: number; portal_request_id: number }>;
+
+  return rows
+    .map(row => {
+      const serial = serialService.getById(row.serial_id);
+      return serial ? { ...serial, portal_request_id: row.portal_request_id } : null;
+    })
+    .filter((s): s is PortalFailsafeTarget => s !== null);
+}
+
 export async function runCandidateFailsafeCancelNow(): Promise<{ processed: number; success: number; failed: number; results: CancelResult[] }> {
   const candidates = getCandidateFailsafeTargets();
+  const portalTargets = getPortalFailsafeTargets();
   const results: CancelResult[] = [];
 
+  // ── 인바운드 메일 발 failsafe ─────────────────────────────────────────────
   for (const serial of candidates) {
     if (inProgressSerialIds.has(serial.id)) {
       logger.warn(`[Failsafe] skip duplicate in-progress cancel: ${serial.serial_number}`);
@@ -115,7 +152,6 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
           triggerId, 'warn',
         );
       } else if (result.success && !result.verified) {
-        // 사이트 작업은 끝났으나 검증 실패 → DB 변경 없이 수동 확인 대상으로 기록
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
           `Failsafe cancellation UNVERIFIED (manual check required): ${serial.serial_number} (status=${result.verified_status || 'unknown'})`,
@@ -135,10 +171,66 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
     }
   }
 
+  // ── 포털 발 failsafe — 관리자 미처리 갱신 중단 신청 ─────────────────────────
+  for (const serial of portalTargets) {
+    if (inProgressSerialIds.has(serial.id)) {
+      logger.warn(`[Failsafe/Portal] skip duplicate in-progress cancel: ${serial.serial_number}`);
+      continue;
+    }
+    inProgressSerialIds.add(serial.id);
+    try {
+      const triggerId = `failsafe:portal-req:${serial.portal_request_id}:${serial.serial_number}`;
+      const details =
+        `Failsafe auto-confirmed unprocessed portal renewal-stop request at D-1/D0 ` +
+        `(expiry=${serial.expiry_date}, portal_request_id=${serial.portal_request_id})`;
+
+      logger.warn(
+        `[Failsafe/Portal] auto-confirming portal stop-request: ${serial.serial_number} ` +
+        `(expiry ${serial.expiry_date}, portal_request_id=${serial.portal_request_id})`,
+      );
+      serialService.setStopRequested(serial.id, true, triggerId, 'auto', details);
+
+      getDb()
+        .prepare(
+          "UPDATE portal_requests SET status = 'auto_done', processed_at = datetime('now','localtime') WHERE id = ?",
+        )
+        .run(serial.portal_request_id);
+
+      const result = await cancelService.cancelSubscription(serial.serial_number, true);
+      results.push(result);
+
+      if (result.success && result.verified) {
+        const updated = serialService.cancelSubscription(serial.id);
+        if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
+        serialService.logActivity(
+          serial.id, 'system', 'auto', {},
+          `Failsafe/Portal cancellation succeeded: ${serial.serial_number} (expiry=${serial.expiry_date})`,
+          triggerId, 'warn',
+        );
+      } else if (result.success && !result.verified) {
+        serialService.logActivity(
+          serial.id, 'system', 'auto', {},
+          `Failsafe/Portal cancellation UNVERIFIED (manual check required): ${serial.serial_number} (status=${result.verified_status || 'unknown'})`,
+          triggerId, 'error',
+        );
+      } else {
+        serialService.logActivity(
+          serial.id, 'system', 'auto', {},
+          `Failsafe/Portal cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+          triggerId, 'error',
+        );
+      }
+
+      await sleep(2000);
+    } finally {
+      inProgressSerialIds.delete(serial.id);
+    }
+  }
+
   return {
-    processed: candidates.length,
-    success: results.filter(result => result.success).length,
-    failed: results.filter(result => !result.success).length,
+    processed: candidates.length + portalTargets.length,
+    success: results.filter(r => r.success).length,
+    failed: results.filter(r => !r.success).length,
     results,
   };
 }
