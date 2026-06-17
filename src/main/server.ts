@@ -146,7 +146,17 @@ app.use('/portal', portalRouter);
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
-// 포털 클라이언트 정적 파일 (인증 불필요 — 포털 API가 자체 인증 처리)
+// Serial Manager 관리 UI at /manage/ (BasicAuth)
+const managerDir = path.join(__dirname, '../../manager');
+if (fs.existsSync(managerDir)) {
+  app.use('/manage', authMiddleware);
+  app.use('/manage', express.static(managerDir));
+  app.get('/manage/*', (_req, res) => {
+    res.sendFile(path.join(managerDir, 'index.html'));
+  });
+}
+
+// 포털 클라이언트 정적 파일 at / (인증 불필요 — 포털 API가 자체 인증 처리)
 const portalClientDir = path.join(__dirname, '../../portal-client');
 if (fs.existsSync(portalClientDir)) {
   app.use(express.static(portalClientDir));
@@ -154,19 +164,9 @@ if (fs.existsSync(portalClientDir)) {
     res.sendFile(path.join(portalClientDir, 'index.html'));
   });
 } else {
-  // Electron 렌더러 (데스크톱 개발 모드 폴백, 관리자 인증 필요)
-  const rendererDir = path.join(__dirname, '../renderer');
-  app.use(authMiddleware);
-  if (fs.existsSync(rendererDir)) {
-    app.use(express.static(rendererDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(rendererDir, 'index.html'));
-    });
-  } else {
-    app.use((_req, res) => {
-      res.status(404).json({ error: 'Not found' });
-    });
-  }
+  app.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
 }
 
 // ── HTTPS 인증서 경로 (Let's Encrypt) ────────────────────────────────────────
