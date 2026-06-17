@@ -75,6 +75,7 @@ startPollingScheduler();
 
 // ── Express ──────────────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', 1); // Cloudflare Tunnel / reverse proxy X-Forwarded-For 신뢰
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -145,13 +146,19 @@ app.use('/portal', portalRouter);
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
-// React 빌드 정적 파일 서빙
+// React 빌드 정적 파일 서빙 (Electron 데스크톱용 — 서버 전용 배포 시 없을 수 있음)
 const staticDir = path.join(__dirname, '../renderer');
 app.use(authMiddleware);
-app.use(express.static(staticDir));
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(staticDir, 'index.html'));
-});
+if (fs.existsSync(staticDir)) {
+  app.use(express.static(staticDir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(staticDir, 'index.html'));
+  });
+} else {
+  app.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+}
 
 // ── HTTPS 인증서 경로 (Let's Encrypt) ────────────────────────────────────────
 const CERT_DOMAIN = process.env.CERT_DOMAIN || 'geomedi-exocad.duckdns.org';
