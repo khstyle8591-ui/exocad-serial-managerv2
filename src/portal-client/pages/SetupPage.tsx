@@ -35,9 +35,9 @@ export default function SetupPage() {
         { serial },
       );
       if (data.already_linked) {
-        setSuccess('이미 연결된 시리얼입니다.');
+        setSuccess(t(lang, 'already_linked_msg'));
       } else {
-        setSuccess(`연결 완료${data.main_product ? ` — ${data.main_product}` : ''}`);
+        setSuccess(`${t(lang, 'link_done')}${data.main_product ? ` — ${data.main_product}` : ''}`);
       }
       setSerial('');
       loadLinks();
@@ -51,7 +51,7 @@ export default function SetupPage() {
   return (
     <div className="portal-page">
       <h1 className="page-title">{t(lang, 'link_serial_title')}</h1>
-      <p className="page-subtitle">시리얼 번호를 입력하면 본인 계정에 연결됩니다.</p>
+      <p className="page-subtitle">{t(lang, 'setup_hint')}</p>
 
       <div className="portal-card">
         {error && <div className="alert alert-error">{error}</div>}
@@ -83,7 +83,7 @@ export default function SetupPage() {
                   {lk.verified_serial}
                 </div>
               </div>
-              <span className="badge badge-accent">연결됨</span>
+              <span className="badge badge-accent">{t(lang, 'linked_badge')}</span>
             </div>
           ))}
         </div>

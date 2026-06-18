@@ -30,6 +30,15 @@ router.get('/packages', (_req: Request, res: Response) => {
   res.json({ packages: getSettings().credit_packages });
 });
 
+// 공개 엔드포인트 — 포털 신청 화면 설정 (패키지 + 신청 설명문, 인증 불필요)
+router.get('/config', (_req: Request, res: Response) => {
+  const s = getSettings();
+  res.json({
+    packages: s.credit_packages,
+    descriptions: s.portal_request_descriptions,
+  });
+});
+
 router.use('/auth', authRouter);
 router.use('/setup', setupRouter);
 router.use('/profile', profileRouter);

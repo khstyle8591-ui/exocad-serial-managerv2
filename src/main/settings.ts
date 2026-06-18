@@ -97,6 +97,23 @@ const DEFAULT_SETTINGS: AppSettings = {
   credit_auto_alloc_enabled: false,
   credit_notification_email: '',
   credit_packages: [],
+  portal_request_descriptions: {
+    credit: {
+      ko: '크레딧 추가 구매를 신청합니다. 관리자 확인 후 처리됩니다.',
+      en: 'Request additional credit purchase. Processed after administrator review.',
+      ja: 'クレジットの追加購入を申請します。管理者の確認後に処理されます。',
+    },
+    renewal_stop: {
+      ko: '갱신을 중단할 시리얼 번호를 입력하세요. 만료 당일/익일인 경우 즉시 처리됩니다.',
+      en: 'Enter the serial number to stop renewal. Requests on or one day before the expiry date are applied immediately.',
+      ja: '更新を停止するシリアル番号を入力してください。有効期限当日・前日の場合は即時処理されます。',
+    },
+    renewal_resume: {
+      ko: '갱신 재개 또는 만료된 시리얼 재구독을 신청합니다.',
+      en: 'Request renewal resumption or re-subscription of an expired serial.',
+      ja: '更新の再開、または期限切れシリアルの再購読を申請します。',
+    },
+  },
 };
 
 let cachedSettings: AppSettings | null = null;
@@ -238,6 +255,13 @@ function coerceSettingValue<K extends keyof AppSettings>(key: K, rawValue: strin
       return defaultVal;
     }
   }
+  if (defaultVal !== null && typeof defaultVal === 'object') {
+    try {
+      return JSON.parse(rawValue) as AppSettings[K];
+    } catch {
+      return defaultVal;
+    }
+  }
   return rawValue as AppSettings[K];
 }
 
@@ -304,7 +328,7 @@ export function saveSettings(settings: Partial<AppSettings>): void {
         upsert.run(key, strValue, strValue);
         continue;
       }
-      const strValue = Array.isArray(value) ? JSON.stringify(value) : String(value);
+      const strValue = (value !== null && typeof value === 'object') ? JSON.stringify(value) : String(value);
       upsert.run(key, strValue, strValue);
     }
   });

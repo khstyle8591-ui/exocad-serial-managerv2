@@ -22,6 +22,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["dist/main/server.js"],
       "port": 80
+    },
+    {
+      "name": "Portal Dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:portal"],
+      "port": 5174
     }
   ]
 }

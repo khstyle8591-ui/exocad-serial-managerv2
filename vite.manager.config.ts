@@ -24,6 +24,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api/': 'http://localhost:3000',
+      '/portal': 'http://localhost:3000',
     },
   },
 });

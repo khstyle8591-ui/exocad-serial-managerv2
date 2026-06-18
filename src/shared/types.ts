@@ -496,6 +496,18 @@ export interface CreditPackage {
   price: number;
 }
 
+export interface LocalizedText {
+  ko: string;
+  en: string;
+  ja: string;
+}
+
+export interface PortalRequestDescriptions {
+  credit: LocalizedText;
+  renewal_stop: LocalizedText;
+  renewal_resume: LocalizedText;
+}
+
 export interface AppSettings {
   mail_protocol: 'pop3' | 'imap';
   pop3_host: string;
@@ -566,6 +578,7 @@ export interface AppSettings {
   credit_auto_alloc_enabled: boolean;
   credit_notification_email: string;
   credit_packages: CreditPackage[];
+  portal_request_descriptions: PortalRequestDescriptions;
 }
 
 // =========================================================

@@ -14,7 +14,7 @@ import {
 } from '../db';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
-import type { CreditPackage } from '../../../shared/types';
+import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
 
 const router = Router();
 
@@ -30,17 +30,31 @@ router.get('/settings', (_req: Request, res: Response) => {
     credit_auto_alloc_enabled: s.credit_auto_alloc_enabled,
     credit_notification_email: s.credit_notification_email,
     credit_packages: s.credit_packages,
+    portal_request_descriptions: s.portal_request_descriptions,
   });
 });
 
+function isLocalizedText(v: unknown): v is LocalizedText {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.ko === 'string' && typeof o.en === 'string' && typeof o.ja === 'string';
+}
+
+function isRequestDescriptions(v: unknown): v is PortalRequestDescriptions {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return isLocalizedText(o.credit) && isLocalizedText(o.renewal_stop) && isLocalizedText(o.renewal_resume);
+}
+
 // PATCH /portal/admin/settings
 router.patch('/settings', (req: Request, res: Response) => {
-  const { portal_enabled, credit_auto_alloc_enabled, credit_notification_email, credit_packages } =
+  const { portal_enabled, credit_auto_alloc_enabled, credit_notification_email, credit_packages, portal_request_descriptions } =
     req.body as {
       portal_enabled?: boolean;
       credit_auto_alloc_enabled?: boolean;
       credit_notification_email?: string;
       credit_packages?: CreditPackage[];
+      portal_request_descriptions?: PortalRequestDescriptions;
     };
 
   const patch: Partial<ReturnType<typeof getSettings>> = {};
@@ -53,6 +67,12 @@ router.patch('/settings', (req: Request, res: Response) => {
     );
     if (!valid) { res.status(400).json({ error: '패키지 형식이 올바르지 않습니다.' }); return; }
     patch.credit_packages = credit_packages;
+  }
+  if (portal_request_descriptions !== undefined) {
+    if (!isRequestDescriptions(portal_request_descriptions)) {
+      res.status(400).json({ error: '신청 설명 형식이 올바르지 않습니다.' }); return;
+    }
+    patch.portal_request_descriptions = portal_request_descriptions;
   }
 
   if (Object.keys(patch).length === 0) { res.status(400).json({ error: '변경할 항목이 없습니다.' }); return; }

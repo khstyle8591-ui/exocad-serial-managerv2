@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { t } from '../i18n';
+import { t, type Lang } from '../i18n';
 
 interface LinkedProduct {
   main_product: string;
@@ -16,11 +16,11 @@ interface ProfileData {
   linked_products: LinkedProduct[];
 }
 
-function statusBadge(p: LinkedProduct) {
-  if (p.renewal_stop_requested) return <span className="badge badge-yellow">중단 예정</span>;
-  if (p.status === 'active')    return <span className="badge badge-green">활성</span>;
-  if (p.status === 'cancelled') return <span className="badge badge-red">취소됨</span>;
-  if (p.status === 'expired')   return <span className="badge badge-gray">만료됨</span>;
+function statusBadge(p: LinkedProduct, lang: Lang) {
+  if (p.renewal_stop_requested) return <span className="badge badge-yellow">{t(lang, 'status_stop_requested')}</span>;
+  if (p.status === 'active')    return <span className="badge badge-green">{t(lang, 'status_active')}</span>;
+  if (p.status === 'cancelled') return <span className="badge badge-red">{t(lang, 'status_cancelled')}</span>;
+  if (p.status === 'expired')   return <span className="badge badge-gray">{t(lang, 'status_expired')}</span>;
   return <span className="badge badge-gray">{p.status}</span>;
 }
 
@@ -67,7 +67,7 @@ export default function DashboardPage() {
               <div className="product-card-name">{p.main_product}</div>
               <div className="product-card-serial">{p.masked_serial}</div>
             </div>
-            {statusBadge(p)}
+            {statusBadge(p, lang)}
           </div>
         ))}
 

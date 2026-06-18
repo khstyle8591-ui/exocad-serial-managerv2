@@ -20,6 +20,18 @@ const post = <T>(path: string, body?: unknown) => req<T>('POST', path, body);
 const put = <T>(path: string, body?: unknown) => req<T>('PUT', path, body);
 const del = <T>(path: string) => req<T>('DELETE', path);
 
+// 포털 admin API는 /portal/admin (BasicAuth는 매니저와 동일 자격증명) — /api 프리픽스 없음
+async function preq<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const res = await fetch(`/portal/admin${path}`, opts);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+}
+
 export const api = {
     // ── Serials ────────────────────────────────────────────────────────────────
     // @deprecated Compatibility API. New browser UI should use listSerials.
@@ -221,6 +233,25 @@ export const api = {
     stopWebhook: () => post<{ running: boolean; port: number }>('/webhook/stop'),
     startWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/start'),
     stopWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/stop'),
+
+    // ── Portal Admin (/portal/admin) ───────────────────────────────────────────
+    portal: {
+        getSettings: <T>() => preq<T>('GET', '/settings'),
+        saveSettings: (data: unknown) => preq('PATCH', '/settings', data),
+        listAccounts: <T>() => preq<T>('GET', '/accounts'),
+        getAccount: <T>(id: number) => preq<T>('GET', `/accounts/${id}`),
+        updateAccount: (id: number, data: unknown) => preq('PATCH', `/accounts/${id}`, data),
+        setAccountStatus: (id: number, status: string) => preq('PATCH', `/accounts/${id}/status`, { status }),
+        listRequests: <T>(q?: { type?: string; status?: string }) => {
+            const params = new URLSearchParams();
+            if (q?.type) params.set('type', q.type);
+            if (q?.status) params.set('status', q.status);
+            const qs = params.toString();
+            return preq<T>('GET', `/requests${qs ? `?${qs}` : ''}`);
+        },
+        decideRequest: (id: number, action: 'approve' | 'reject') =>
+            preq('PATCH', `/requests/${id}/decide`, { action }),
+    },
 };
 
 export type Api = typeof api;

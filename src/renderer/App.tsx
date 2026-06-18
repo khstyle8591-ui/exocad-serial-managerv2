@@ -6,6 +6,7 @@ import RequestedOrder from './pages/RequestedOrder';
 import MailSystem from './pages/MailSystem';
 import Notification from './pages/Notification';
 import Settings from './pages/Settings';
+import Portal from './pages/Portal';
 import Logs from './pages/Logs';
 import SystemLogs from './pages/SystemLogs';
 import Customers from './pages/Customers';
@@ -30,7 +31,7 @@ export const NavigationContext = createContext<{
 export const useLang = () => useContext(LanguageContext);
 export const useNav  = () => useContext(NavigationContext);
 
-type Page = 'dashboard' | 'serial-data' | 'orders' | 'requested-order' | 'mail-system' | 'notification' | 'settings' | 'logs' | 'system_logs' | 'customers' | 'products';
+type Page = 'dashboard' | 'serial-data' | 'orders' | 'requested-order' | 'mail-system' | 'notification' | 'settings' | 'logs' | 'system_logs' | 'customers' | 'products' | 'portal';
 
 // ── SVG icons ──────────────────────────────────────────────────────────────────
 const SvgIcon = ({ d, size = 14 }: { d: React.ReactNode; size?: number }) => (
@@ -51,6 +52,7 @@ const NavIcons: Record<string, React.ReactNode> = {
   notification:     <SvgIcon d={<><path d="M8 1a5 5 0 0 0-5 5v3l-1.5 2.5h13L13 9V6a5 5 0 0 0-5-5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M6 13.5a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></>} />,
   settings:         <SvgIcon d={<><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.93 2.93l1.41 1.41M11.66 11.66l1.41 1.41M2.93 13.07l1.41-1.41M11.66 4.34l1.41-1.41" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></>} />,
   key:              <SvgIcon d={<><circle cx="6" cy="7" r="3.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8.5 9.5L14 15M11 12.5l1.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></>} />,
+  portal:           <SvgIcon d={<><circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.4"/><path d="M1.5 8h13M8 1.5c1.8 1.7 2.8 4 2.8 6.5S9.8 12.8 8 14.5C6.2 12.8 5.2 10.5 5.2 8S6.2 3.2 8 1.5z" stroke="currentColor" strokeWidth="1.2"/></>} />,
 };
 
 const MAIN_NAV: { key: Page; labelKey: TranslationKey; icon: string }[] = [
@@ -60,6 +62,7 @@ const MAIN_NAV: { key: Page; labelKey: TranslationKey; icon: string }[] = [
   { key: 'customers',        labelKey: 'nav_customers',     icon: 'customers' },
   { key: 'products',         labelKey: 'nav_products',      icon: 'products' },
   { key: 'mail-system',      labelKey: 'nav_mail',          icon: 'mail-system' },
+  { key: 'portal',           labelKey: 'nav_portal',        icon: 'portal' },
   { key: 'notification',     labelKey: 'nav_notification',  icon: 'notification' },
   { key: 'logs',             labelKey: 'nav_logs',          icon: 'logs' },
   { key: 'system_logs',      labelKey: 'nav_system_logs',   icon: 'system_logs' },
@@ -101,6 +104,7 @@ export default function App() {
       case 'logs':             return <Logs />;
       case 'system_logs':      return <SystemLogs />;
       case 'settings':         return <Settings />;
+      case 'portal':           return <Portal />;
     }
   };
 
