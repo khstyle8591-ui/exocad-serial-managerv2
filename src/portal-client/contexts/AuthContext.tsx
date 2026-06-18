@@ -29,7 +29,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lang, setLangState] = useState<Lang>('ko');
+  const [lang, setLangState] = useState<Lang>('ja');
   // Holds a lang the user explicitly selected before logging in
   const pendingLang = useRef<Lang | null>(null);
 
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         api.patch('/profile/language', { language: pendingLang.current }).catch(() => {});
         pendingLang.current = null;
       } else {
-        setLangState(data.language || 'ko');
+        setLangState(data.language || 'ja');
       }
     } catch {
       clearCsrf();
