@@ -25,6 +25,11 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// 공개 엔드포인트 — 크레딧 패키지 목록 (인증 불필요)
+router.get('/packages', (_req: Request, res: Response) => {
+  res.json({ packages: getSettings().credit_packages });
+});
+
 router.use('/auth', authRouter);
 router.use('/setup', setupRouter);
 router.use('/profile', profileRouter);

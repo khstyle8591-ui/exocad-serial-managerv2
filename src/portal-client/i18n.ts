@@ -1,0 +1,102 @@
+export type Lang = 'ko' | 'en' | 'ja';
+
+const T = {
+  ko: {
+    // Nav
+    dashboard: '대시보드', requests: '신청', profile: '프로필', logout: '로그아웃',
+    // Auth
+    login: '로그인', signup: '회원가입', login_id: '로그인 ID', password: '비밀번호',
+    confirm_password: '비밀번호 확인', email: '이메일', name: '이름', phone: '연락처 (선택)',
+    address: '주소 (선택)', exocad_id: 'Exocad ID (선택)', language: '언어',
+    forgot_password: '비밀번호를 잊으셨나요?', no_account: '계정이 없으신가요?',
+    have_account: '이미 계정이 있으신가요?', back_to_login: '로그인으로 돌아가기',
+    send_reset_link: '재설정 링크 전송', reset_password: '비밀번호 재설정',
+    new_password: '새 비밀번호',
+    // Dashboard
+    my_products: '내 제품', no_products: '연결된 제품이 없습니다.',
+    link_serial_nav: '시리얼 연결하기',
+    status_active: '활성', status_cancelled: '취소됨', status_expired: '만료됨',
+    status_stop_requested: '중단 예정',
+    // Setup
+    link_serial_title: '시리얼 연결', serial_placeholder: '시리얼 번호 입력', link: '연결',
+    linked_serials: '연결된 시리얼', no_links: '연결된 시리얼이 없습니다.',
+    // Requests
+    request_history: '신청 이력', new_request: '새 신청',
+    credit_request: '크레딧 신청', renewal_stop: '갱신 중단', renewal_resume: '갱신 재개',
+    target_serial: '대상 시리얼', include_quote: '견적서 포함 요청',
+    submit: '신청하기', select_package: '패키지 선택',
+    req_status_pending: '대기 중', req_status_manager_review: '검토 중',
+    req_status_auto_done: '자동 처리됨', req_status_approved: '승인됨',
+    req_status_rejected: '거절됨', no_requests: '신청 이력이 없습니다.',
+    // Profile
+    my_profile: '내 프로필', change_password: '비밀번호 변경',
+    current_password: '현재 비밀번호', save: '저장',
+    password_hint: '8자 이상, 대소문자+숫자 포함',
+    // Misc
+    loading: '로딩 중...', cancel: '취소', optional: '선택',
+    exocad_id_label: 'Exocad ID',
+  },
+  en: {
+    dashboard: 'Dashboard', requests: 'Requests', profile: 'Profile', logout: 'Log out',
+    login: 'Log in', signup: 'Sign up', login_id: 'Login ID', password: 'Password',
+    confirm_password: 'Confirm password', email: 'Email', name: 'Name', phone: 'Phone (optional)',
+    address: 'Address (optional)', exocad_id: 'Exocad ID (optional)', language: 'Language',
+    forgot_password: 'Forgot password?', no_account: "Don't have an account?",
+    have_account: 'Already have an account?', back_to_login: 'Back to login',
+    send_reset_link: 'Send reset link', reset_password: 'Reset password',
+    new_password: 'New password',
+    my_products: 'My Products', no_products: 'No linked products.',
+    link_serial_nav: 'Link a serial',
+    status_active: 'Active', status_cancelled: 'Cancelled', status_expired: 'Expired',
+    status_stop_requested: 'Stop pending',
+    link_serial_title: 'Link Serial', serial_placeholder: 'Enter serial number', link: 'Link',
+    linked_serials: 'Linked Serials', no_links: 'No linked serials.',
+    request_history: 'Request History', new_request: 'New Request',
+    credit_request: 'Credit Request', renewal_stop: 'Stop Renewal', renewal_resume: 'Resume Renewal',
+    target_serial: 'Target Serial', include_quote: 'Include quote',
+    submit: 'Submit', select_package: 'Select package',
+    req_status_pending: 'Pending', req_status_manager_review: 'Under Review',
+    req_status_auto_done: 'Auto-processed', req_status_approved: 'Approved',
+    req_status_rejected: 'Rejected', no_requests: 'No requests yet.',
+    my_profile: 'My Profile', change_password: 'Change Password',
+    current_password: 'Current password', save: 'Save',
+    password_hint: 'Min 8 chars, uppercase + lowercase + number',
+    loading: 'Loading...', cancel: 'Cancel', optional: 'optional',
+    exocad_id_label: 'Exocad ID',
+  },
+  ja: {
+    dashboard: 'ダッシュボード', requests: '申請', profile: 'プロフィール', logout: 'ログアウト',
+    login: 'ログイン', signup: '新規登録', login_id: 'ログインID', password: 'パスワード',
+    confirm_password: 'パスワード確認', email: 'メールアドレス', name: '名前',
+    phone: '電話番号（任意）', address: '住所（任意）', exocad_id: 'Exocad ID（任意）',
+    language: '言語', forgot_password: 'パスワードをお忘れですか？',
+    no_account: 'アカウントをお持ちでないですか？', have_account: 'すでにアカウントをお持ちですか？',
+    back_to_login: 'ログインに戻る', send_reset_link: 'リセットリンクを送信',
+    reset_password: 'パスワードリセット', new_password: '新しいパスワード',
+    my_products: 'マイプロダクト', no_products: '連携製品がありません。',
+    link_serial_nav: 'シリアルを連携する',
+    status_active: 'アクティブ', status_cancelled: 'キャンセル済み', status_expired: '期限切れ',
+    status_stop_requested: '停止予定',
+    link_serial_title: 'シリアル連携', serial_placeholder: 'シリアル番号を入力', link: '連携',
+    linked_serials: '連携済みシリアル', no_links: '連携済みシリアルがありません。',
+    request_history: '申請履歴', new_request: '新規申請',
+    credit_request: 'クレジット申請', renewal_stop: '更新停止', renewal_resume: '更新再開',
+    target_serial: '対象シリアル', include_quote: '見積もり含む',
+    submit: '申請する', select_package: 'パッケージ選択',
+    req_status_pending: '保留中', req_status_manager_review: '審査中',
+    req_status_auto_done: '自動処理済み', req_status_approved: '承認済み',
+    req_status_rejected: '却下', no_requests: '申請履歴がありません。',
+    my_profile: 'マイプロフィール', change_password: 'パスワード変更',
+    current_password: '現在のパスワード', save: '保存',
+    password_hint: '8文字以上、大小文字+数字を含む',
+    loading: '読み込み中...', cancel: 'キャンセル', optional: '任意',
+    exocad_id_label: 'Exocad ID',
+  },
+} as const;
+
+export type TKey = keyof typeof T.ko;
+
+export function t(lang: Lang, key: TKey): string {
+  const table = T[lang] as Record<string, string>;
+  return table[key] ?? (T.ko as Record<string, string>)[key] ?? key;
+}
