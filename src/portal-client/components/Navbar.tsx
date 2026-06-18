@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { t, type Lang } from '../i18n';
+import geoMediLogo from '../assets/geomedi-logo.png';
 
 const LANGS: { value: Lang; label: string }[] = [
   { value: 'ko', label: '한국어' },
@@ -20,6 +21,11 @@ export default function Navbar() {
   return (
     <nav className="portal-nav">
       <div className="portal-nav-logo">
+        <img
+          src={geoMediLogo}
+          alt="GeoMedi"
+          style={{ height: 32, width: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+        />
         <span>Exocad Portal</span>
       </div>
 
