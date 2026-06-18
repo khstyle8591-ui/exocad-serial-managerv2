@@ -9,6 +9,8 @@ import {
   getPortalRequestsByAccount,
 } from '../db';
 import { serialService } from '../../../main/services/serial.service';
+import { cancelService } from '../../../main/services/cancel.service';
+import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-notice.service';
 import { sendTemplate } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
 
@@ -25,17 +27,14 @@ function resolveOwnedSerial(accountId: number, serialNumber: string) {
   return { serial };
 }
 
-// ── 만료 윈도우 판정 (오늘 / 내일) ─────────────────────────────────────────────
+// ── 만료 윈도우 판정 (오늘 / 내일, Asia/Tokyo 기준) ──────────────────────────
 
 function isInFailsafeWindow(expiryDate: string): boolean {
-  const expiry = new Date(expiryDate);
+  const toTokyo = (d: Date) => d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  return (
-    expiry.toDateString() === today.toDateString() ||
-    expiry.toDateString() === tomorrow.toDateString()
-  );
+  return expiryDate === toTokyo(today) || expiryDate === toTokyo(tomorrow);
 }
 
 // ── GET /portal/requests — 내 신청 이력 ──────────────────────────────────────
@@ -86,7 +85,7 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
       PACKAGE_LABEL: pkg.label,
       PACKAGE_QTY: String(pkg.quantity),
       PACKAGE_PRICE: String(pkg.price),
-    });
+    }).catch(() => {});
   }
 
   // 고객 신청 확인 메일
@@ -96,7 +95,7 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
       REQUEST_ID: String(requestId),
       EXOCAD_ID: exocad_id.trim(),
       PACKAGE_LABEL: pkg.label,
-    });
+    }).catch(() => {});
   }
 
   res.json({ ok: true, request_id: requestId });
@@ -141,16 +140,23 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     target_serial: serial.serial_number,
   });
 
-  // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 플래그 설정
+  // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 취소까지 수행
+  // 인바운드 메일 failsafe와 동일한 처리 흐름
   let autoApplied = false;
   if (serial.expiry_date && isInFailsafeWindow(serial.expiry_date)) {
+    const triggerId = `portal-req-${requestId}`;
     serialService.setStopRequested(
       serial.id,
       true,
-      `portal-req-${requestId}`,
+      triggerId,
       'system',
       `포털 갱신 중단 신청(#${requestId}) — 만료 윈도우 자동 적용`,
     );
+    const cancelResult = await cancelService.cancelSubscription(serial.serial_number, true);
+    if (cancelResult.success && cancelResult.verified) {
+      const updated = serialService.cancelSubscription(serial.id);
+      if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
+    }
     updatePortalRequestStatus(requestId, 'auto_done');
     autoApplied = true;
   }
@@ -162,7 +168,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),
       AUTO_APPLIED: autoApplied ? 'true' : 'false',
-    });
+    }).catch(() => {});
   }
 
   res.json({ ok: true, request_id: requestId, auto_applied: autoApplied });
@@ -201,7 +207,7 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),
       INCLUDE_QUOTE: include_quote === 'true' ? 'true' : 'false',
-    });
+    }).catch(() => {});
   }
 
   res.json({ ok: true, request_id: requestId });

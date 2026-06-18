@@ -16,3 +16,4 @@ electron-startup-*.txt
 src/renderer/**/*.js
 src/shared/*.js
 src/shared/*.d.ts
+scripts/session-expiry-shots/
