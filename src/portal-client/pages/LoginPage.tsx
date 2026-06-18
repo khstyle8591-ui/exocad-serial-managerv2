@@ -36,8 +36,10 @@ export default function LoginPage() {
     <div className="auth-wrapper">
       <div className="auth-card">
         <div className="auth-logo">
-          <img src={geoMediLogo} alt="GeoMedi" style={{ height: 83, width: 83, objectFit: 'contain', marginBottom: 8 }} />
-          <span>Exocad Portal</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <img src={geoMediLogo} alt="GeoMedi" style={{ height: 83, width: 83, objectFit: 'contain' }} />
+            <span>Exocad Portal</span>
+          </div>
           <p>Customer Portal</p>
         </div>
 
