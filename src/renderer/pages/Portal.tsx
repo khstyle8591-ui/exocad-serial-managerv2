@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
-import type { CreditPackage, PortalRequestDescriptions } from '../../shared/types';
+import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../shared/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface PortalSettings {
@@ -11,6 +11,9 @@ interface PortalSettings {
   credit_notification_email: string;
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
+  portal_mismatch_message: LocalizedText;
+  portal_resume_quote_prompt: LocalizedText;
+  portal_resume_quote_sent: LocalizedText;
 }
 
 interface PortalAccount {
@@ -297,10 +300,20 @@ function DescriptionsTab({ lang, settings, setSettings }: {
       portal_request_descriptions: { ...s.portal_request_descriptions, [type]: { ...s.portal_request_descriptions[type], [l]: value } },
     } : s));
 
+  // 단일 LocalizedText 설정 편집 (미매치 안내 / 견적 안내 문구)
+  type MsgKey = 'portal_mismatch_message' | 'portal_resume_quote_prompt' | 'portal_resume_quote_sent';
+  const setMsg = (key: MsgKey, l: LangKey, value: string) =>
+    setSettings(s => (s ? { ...s, [key]: { ...s[key], [l]: value } } : s));
+
   const blocks: { type: keyof PortalRequestDescriptions; title: TranslationKey }[] = [
     { type: 'credit', title: 'portal_desc_credit_title' },
     { type: 'renewal_stop', title: 'portal_desc_stop_title' },
     { type: 'renewal_resume', title: 'portal_desc_resume_title' },
+  ];
+  const msgBlocks: { key: MsgKey; title: TranslationKey }[] = [
+    { key: 'portal_mismatch_message', title: 'portal_msg_mismatch_title' },
+    { key: 'portal_resume_quote_prompt', title: 'portal_msg_resume_prompt_title' },
+    { key: 'portal_resume_quote_sent', title: 'portal_msg_resume_sent_title' },
   ];
   const langs: { key: LangKey; label: string }[] = [
     { key: 'ko', label: '🇰🇷 한국어' },
@@ -321,6 +334,23 @@ function DescriptionsTab({ lang, settings, setSettings }: {
               <textarea
                 value={d[b.type][l.key]}
                 onChange={e => setText(b.type, l.key, e.target.value)}
+                style={{ minHeight: 56, resize: 'vertical' }}
+              />
+            </div>
+          ))}
+        </div>
+      ))}
+      {msgBlocks.map(b => (
+        <div className="settings-section" key={b.key} style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {t(lang, b.title)}
+          </h3>
+          {langs.map(l => (
+            <div className="form-group" key={l.key} style={{ marginBottom: 10 }}>
+              <label>{l.label}</label>
+              <textarea
+                value={settings[b.key][l.key]}
+                onChange={e => setMsg(b.key, l.key, e.target.value)}
                 style={{ minHeight: 56, resize: 'vertical' }}
               />
             </div>

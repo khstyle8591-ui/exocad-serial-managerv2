@@ -31,6 +31,9 @@ router.get('/settings', (_req: Request, res: Response) => {
     credit_notification_email: s.credit_notification_email,
     credit_packages: s.credit_packages,
     portal_request_descriptions: s.portal_request_descriptions,
+    portal_mismatch_message: s.portal_mismatch_message,
+    portal_resume_quote_prompt: s.portal_resume_quote_prompt,
+    portal_resume_quote_sent: s.portal_resume_quote_sent,
   });
 });
 
@@ -48,14 +51,25 @@ function isRequestDescriptions(v: unknown): v is PortalRequestDescriptions {
 
 // PATCH /portal/admin/settings
 router.patch('/settings', (req: Request, res: Response) => {
-  const { portal_enabled, credit_auto_alloc_enabled, credit_notification_email, credit_packages, portal_request_descriptions } =
-    req.body as {
-      portal_enabled?: boolean;
-      credit_auto_alloc_enabled?: boolean;
-      credit_notification_email?: string;
-      credit_packages?: CreditPackage[];
-      portal_request_descriptions?: PortalRequestDescriptions;
-    };
+  const {
+    portal_enabled,
+    credit_auto_alloc_enabled,
+    credit_notification_email,
+    credit_packages,
+    portal_request_descriptions,
+    portal_mismatch_message,
+    portal_resume_quote_prompt,
+    portal_resume_quote_sent,
+  } = req.body as {
+    portal_enabled?: boolean;
+    credit_auto_alloc_enabled?: boolean;
+    credit_notification_email?: string;
+    credit_packages?: CreditPackage[];
+    portal_request_descriptions?: PortalRequestDescriptions;
+    portal_mismatch_message?: LocalizedText;
+    portal_resume_quote_prompt?: LocalizedText;
+    portal_resume_quote_sent?: LocalizedText;
+  };
 
   const patch: Partial<ReturnType<typeof getSettings>> = {};
   if (typeof portal_enabled === 'boolean') patch.portal_enabled = portal_enabled;
@@ -73,6 +87,16 @@ router.patch('/settings', (req: Request, res: Response) => {
       res.status(400).json({ error: '신청 설명 형식이 올바르지 않습니다.' }); return;
     }
     patch.portal_request_descriptions = portal_request_descriptions;
+  }
+  for (const [key, val] of [
+    ['portal_mismatch_message', portal_mismatch_message],
+    ['portal_resume_quote_prompt', portal_resume_quote_prompt],
+    ['portal_resume_quote_sent', portal_resume_quote_sent],
+  ] as const) {
+    if (val !== undefined) {
+      if (!isLocalizedText(val)) { res.status(400).json({ error: `${key} 형식이 올바르지 않습니다.` }); return; }
+      patch[key] = val;
+    }
   }
 
   if (Object.keys(patch).length === 0) { res.status(400).json({ error: '변경할 항목이 없습니다.' }); return; }

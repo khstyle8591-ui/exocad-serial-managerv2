@@ -17,6 +17,18 @@ interface RequestDescriptions {
   renewal_resume: LocalizedText;
 }
 
+interface OwnedSerial {
+  serial_number: string;
+  main_product: string;
+  status: string;
+}
+
+interface ExpandedLink {
+  customer_id: number;
+  verified_serial: string;
+  serials: OwnedSerial[];
+}
+
 interface PortalRequest {
   id: number;
   type: 'credit' | 'renewal_stop' | 'renewal_resume';
@@ -43,6 +55,18 @@ function statusBadge(status: string, lang: Lang) {
   return <span className={`badge ${entry.cls}`}>{t(lang, entry.key)}</span>;
 }
 
+function serialStatusBadge(status: string, lang: Lang) {
+  const map: Record<string, { cls: string; key: Parameters<typeof t>[1] }> = {
+    active:         { cls: 'badge-green',  key: 'status_active' },
+    cancelled:      { cls: 'badge-red',    key: 'status_cancelled' },
+    expired:        { cls: 'badge-gray',   key: 'status_expired' },
+    stop_requested: { cls: 'badge-yellow', key: 'status_stop_requested' },
+  };
+  const entry = map[status];
+  if (!entry) return <span className="badge badge-gray">{status}</span>;
+  return <span className={`badge ${entry.cls}`}>{t(lang, entry.key)}</span>;
+}
+
 function typeLabel(type: string, lang: Lang) {
   const map: Record<string, Parameters<typeof t>[1]> = {
     credit: 'credit_request',
@@ -58,6 +82,9 @@ export default function RequestsPage() {
   const [requests, setRequests] = useState<PortalRequest[]>([]);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [descriptions, setDescriptions] = useState<RequestDescriptions | null>(null);
+  const [quotePrompt, setQuotePrompt] = useState<LocalizedText | null>(null);
+  const [quoteSent, setQuoteSent] = useState<LocalizedText | null>(null);
+  const [ownedSerials, setOwnedSerials] = useState<OwnedSerial[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -68,19 +95,23 @@ export default function RequestsPage() {
   const [pkgCode, setPkgCode] = useState('');
   // renewal forms
   const [stopSerial, setStopSerial] = useState('');
-  const [resumeSerial, setResumeSerial] = useState('');
-  const [includeQuote, setIncludeQuote] = useState(false);
+  const [checkedSerials, setCheckedSerials] = useState<Record<string, boolean>>({});
+  const [showQuotePrompt, setShowQuotePrompt] = useState(false);
 
   useEffect(() => {
     setLoadingData(true);
     Promise.all([
       api.get<{ requests: PortalRequest[] }>('/requests'),
-      api.get<{ packages: CreditPackage[]; descriptions: RequestDescriptions }>('/config'),
+      api.get<{ packages: CreditPackage[]; descriptions: RequestDescriptions; resume_quote_prompt: LocalizedText; resume_quote_sent: LocalizedText }>('/config'),
+      api.get<{ links: ExpandedLink[] }>('/setup/links'),
     ])
-      .then(([r, c]) => {
+      .then(([r, c, l]) => {
         setRequests(r.requests);
         setPackages(c.packages);
         setDescriptions(c.descriptions);
+        setQuotePrompt(c.resume_quote_prompt);
+        setQuoteSent(c.resume_quote_sent);
+        setOwnedSerials(l.links.flatMap(lk => lk.serials));
         if (c.packages.length > 0) setPkgCode(c.packages[0].id);
       })
       .catch(() => { /* ignore */ })
@@ -143,24 +174,42 @@ export default function RequestsPage() {
     }
   }
 
-  async function submitRenewalResume(e: React.FormEvent) {
-    e.preventDefault();
+  const selectedSerials = ownedSerials.filter(s => checkedSerials[s.serial_number]);
+
+  // 체크된 시리얼 전부에 대해 갱신재개 신청 (시리얼당 1건). include_quote 여부 전달.
+  async function submitResume(includeQuote: boolean) {
+    if (selectedSerials.length === 0) return;
     setError(''); setSuccess(''); setSubmitting(true);
     try {
-      const res = await api.post<{ request_id: number }>(
-        '/requests/renewal-resume',
-        { target_serial: resumeSerial, include_quote: String(includeQuote) },
-      );
-      setSuccess(submittedMsg(res.request_id));
-      setResumeSerial('');
-      setIncludeQuote(false);
+      const ids: number[] = [];
+      for (const s of selectedSerials) {
+        const res = await api.post<{ request_id: number }>(
+          '/requests/renewal-resume',
+          { target_serial: s.serial_number, include_quote: String(includeQuote) },
+        );
+        ids.push(res.request_id);
+      }
+      if (includeQuote && quoteSent) {
+        setSuccess(quoteSent[lang]);
+      } else {
+        setSuccess(`${t(lang, 'request_submitted')} (${t(lang, 'request_no')}: #${ids.join(', #')})`);
+      }
+      setCheckedSerials({});
+      setShowQuotePrompt(false);
       setTab('history');
       reloadRequests();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // 신청 버튼 1차 클릭 → 견적서 안내 프롬프트 표시 / 2차 클릭 → 실제 신청
+  function handleResumeSubmitClick() {
+    if (selectedSerials.length === 0) return;
+    if (!showQuotePrompt) { setShowQuotePrompt(true); return; }
+    submitResume(false);
   }
 
   const TABS: { id: TabType; label: string }[] = [
@@ -181,7 +230,7 @@ export default function RequestsPage() {
           <button
             key={tb.id}
             className={`btn btn-sm ${tab === tb.id ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => { setTab(tb.id); setError(''); setSuccess(''); }}
+            onClick={() => { setTab(tb.id); setError(''); setSuccess(''); setShowQuotePrompt(false); }}
           >
             {tb.label}
           </button>
@@ -289,35 +338,67 @@ export default function RequestsPage() {
       {/* Renewal Resume */}
       {tab === 'renewal_resume' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 16 }}>
             {desc('renewal_resume')}
           </p>
-          <form onSubmit={submitRenewalResume}>
-            <div className="form-group">
-              <label>{t(lang, 'target_serial')}</label>
-              <input
-                type="text"
-                placeholder={t(lang, 'serial_placeholder')}
-                value={resumeSerial}
-                onChange={e => setResumeSerial(e.target.value)}
-                required
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: 20 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={includeQuote}
-                  onChange={e => setIncludeQuote(e.target.checked)}
-                  style={{ width: 'auto' }}
-                />
-                {t(lang, 'include_quote')}
-              </label>
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? <span className="spinner" style={{ width: 16, height: 16 }} /> : t(lang, 'submit')}
-            </button>
-          </form>
+
+          {ownedSerials.length === 0 ? (
+            <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'no_owned_serials')}</p>
+          ) : (
+            <>
+              <div className="form-group">
+                <label>{t(lang, 'resume_select_hint')}</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                  {ownedSerials.map(s => (
+                    <label key={s.serial_number} className="product-card" style={{ cursor: 'pointer', gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!checkedSerials[s.serial_number]}
+                        onChange={e => {
+                          setShowQuotePrompt(false);
+                          setCheckedSerials(c => ({ ...c, [s.serial_number]: e.target.checked }));
+                        }}
+                        style={{ width: 'auto', flexShrink: 0 }}
+                      />
+                      <div className="product-card-info">
+                        <div className="product-card-name">{s.main_product}</div>
+                        <div className="product-card-serial" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+                          {s.serial_number}
+                        </div>
+                      </div>
+                      {serialStatusBadge(s.status, lang)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2단계 견적서 안내 프롬프트 */}
+              {showQuotePrompt && quotePrompt && (
+                <div className="alert alert-info" style={{ marginBottom: 16 }}>
+                  {quotePrompt[lang]}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={submitting || selectedSerials.length === 0}
+                  onClick={handleResumeSubmitClick}
+                >
+                  {submitting && !showQuotePrompt ? <span className="spinner" style={{ width: 16, height: 16 }} /> : t(lang, 'submit')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={submitting || selectedSerials.length === 0}
+                  onClick={() => submitResume(true)}
+                >
+                  {t(lang, 'request_quote')}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -114,6 +114,21 @@ const DEFAULT_SETTINGS: AppSettings = {
       ja: '更新の再開、または期限切れシリアルの再購読を申請します。',
     },
   },
+  portal_mismatch_message: {
+    ko: '입력하신 정보와 일치하는 데이터를 찾을 수 없습니다. 문제 해결을 위해 PM@geomedi.co.jp 로 개별 연락 부탁드립니다.',
+    en: 'No matching data was found for the information you entered. Please contact PM@geomedi.co.jp individually for assistance.',
+    ja: 'ご入力いただいた情報と一致するデータが見つかりませんでした。問題解決のため PM@geomedi.co.jp まで個別にご連絡ください。',
+  },
+  portal_resume_quote_prompt: {
+    ko: '신청 접수 전 금액 확인이 필요하신 경우, 견적서 신청 버튼을 눌러주세요. 바로 신청하시려면 다시 신청 버튼을 눌러주세요.',
+    en: 'If you need to confirm the amount before submitting, please click the Request Quote button. To submit directly, click Submit again.',
+    ja: '申請前に金額の確認が必要な場合は、見積書申請ボタンを押してください。そのまま申請する場合は、もう一度申請ボタンを押してください。',
+  },
+  portal_resume_quote_sent: {
+    ko: '영업일 기준 3일 이내에 등록된 이메일로 견적서가 전달될 예정입니다. 확인 후 갱신 재개가 진행됩니다.',
+    en: 'A quote will be sent to your registered email within 3 business days. Renewal will resume after your confirmation.',
+    ja: '営業日3日以内に登録されたメールアドレスへ見積書をお送りします。ご確認後に更新再開を進めます。',
+  },
 };
 
 let cachedSettings: AppSettings | null = null;

@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t } from '../i18n';
+import SerialInput from '../components/SerialInput';
+import Modal from '../components/Modal';
+
+interface LocalizedText { ko: string; en: string; ja: string }
 
 interface SerialEntry {
   serial_number: string;
@@ -17,10 +21,10 @@ interface ExpandedLink {
 
 function statusBadge(status: string, lang: ReturnType<typeof useAuth>['lang']) {
   const map: Record<string, { key: Parameters<typeof t>[1]; cls: string }> = {
-    active:           { key: 'status_active',         cls: 'badge-success' },
-    cancelled:        { key: 'status_cancelled',       cls: 'badge-error' },
-    expired:          { key: 'status_expired',         cls: 'badge-warning' },
-    stop_requested:   { key: 'status_stop_requested',  cls: 'badge-warning' },
+    active:         { key: 'status_active',        cls: 'badge-success' },
+    cancelled:      { key: 'status_cancelled',      cls: 'badge-error' },
+    expired:        { key: 'status_expired',        cls: 'badge-warning' },
+    stop_requested: { key: 'status_stop_requested', cls: 'badge-warning' },
   };
   const entry = map[status];
   return entry
@@ -30,11 +34,15 @@ function statusBadge(status: string, lang: ReturnType<typeof useAuth>['lang']) {
 
 export default function SetupPage() {
   const { lang } = useAuth();
-  const [serial, setSerial] = useState('');
+  const [serial, setSerial] = useState('--');
   const [links, setLinks] = useState<ExpandedLink[]>([]);
+  const [matches, setMatches] = useState<string[]>([]);
+  const [hasMatch, setHasMatch] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [mismatchMsg, setMismatchMsg] = useState<LocalizedText | null>(null);
+  const [showMismatch, setShowMismatch] = useState(false);
 
   function loadLinks() {
     api.get<{ links: ExpandedLink[] }>('/setup/links')
@@ -42,10 +50,26 @@ export default function SetupPage() {
       .catch(() => {});
   }
 
-  useEffect(() => { loadLinks(); }, []);
+  function loadMatches() {
+    api.get<{ products: string[]; has_match: boolean }>('/setup/matches')
+      .then(d => { setMatches(d.products); setHasMatch(d.has_match); })
+      .catch(() => { setHasMatch(false); });
+  }
+
+  function loadMismatchMsg() {
+    api.get<{ mismatch_message: LocalizedText }>('/config')
+      .then(d => setMismatchMsg(d.mismatch_message))
+      .catch(() => {});
+  }
+
+  useEffect(() => { loadLinks(); loadMatches(); loadMismatchMsg(); }, []);
+
+  // 'XXXXXXXX-XXXX-XXXXXXXX' 형태가 모두 채워졌는지 (하이픈 제외 20자)
+  const serialComplete = serial.replace(/-/g, '').length === 20;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!serialComplete) return;
     setError('');
     setSuccess('');
     setLoading(true);
@@ -59,10 +83,15 @@ export default function SetupPage() {
       } else {
         setSuccess(`${t(lang, 'link_done')}${data.main_product ? ` — ${data.main_product}` : ''}`);
       }
-      setSerial('');
+      setSerial('--');
       loadLinks();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
+      // DB 미매치 → PM 연락 안내 팝업, 그 외 → 인라인 에러
+      if (err instanceof ApiError && err.code === 'identity_mismatch' && mismatchMsg) {
+        setShowMismatch(true);
+      } else {
+        setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
+      }
     } finally {
       setLoading(false);
     }
@@ -75,26 +104,49 @@ export default function SetupPage() {
       <h1 className="page-title">{t(lang, 'link_serial_title')}</h1>
       <p className="page-subtitle">{t(lang, 'setup_hint')}</p>
 
+      {/* 매치된 제품 선표시 */}
+      {hasMatch && matches.length > 0 && (
+        <div className="portal-card">
+          <div className="portal-card-title">{t(lang, 'setup_matched_title')}</div>
+          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 12 }}>
+            {t(lang, 'setup_matched_hint')}
+          </p>
+          {matches.map(name => (
+            <div key={name} className="product-card">
+              <div className="product-card-info">
+                <div className="product-card-name">{name}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {hasMatch === false && (
+        <div className="portal-card">
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            {t(lang, 'setup_no_match_hint')}
+          </p>
+        </div>
+      )}
+
+      {/* 시리얼 입력 (8-4-8) */}
       <div className="portal-card">
         {error   && <div className="alert alert-error">{error}</div>}
         {success && <div className="alert alert-success">{success}</div>}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            className="form-group"
-            placeholder={t(lang, 'serial_placeholder')}
-            value={serial}
-            onChange={e => setSerial(e.target.value)}
-            required
-            style={{ flex: 1, margin: 0 }}
-          />
-          <button type="submit" className="btn btn-primary" disabled={loading} style={{ flexShrink: 0 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <SerialInput value={serial} onChange={setSerial} disabled={loading} />
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={loading || !serialComplete}
+            style={{ alignSelf: 'flex-start' }}
+          >
             {loading ? <span className="spinner" style={{ width: 16, height: 16 }} /> : t(lang, 'link')}
           </button>
         </form>
       </div>
 
+      {/* 연결된 시리얼 */}
       {totalSerials > 0 && (
         <div className="portal-card">
           <div className="portal-card-title">{t(lang, 'linked_serials')}</div>
@@ -113,6 +165,15 @@ export default function SetupPage() {
           )}
         </div>
       )}
+
+      <Modal
+        open={showMismatch}
+        title={t(lang, 'mismatch_title')}
+        onClose={() => setShowMismatch(false)}
+        closeLabel={t(lang, 'confirm_ok')}
+      >
+        {mismatchMsg ? mismatchMsg[lang] : ''}
+      </Modal>
     </div>
   );
 }

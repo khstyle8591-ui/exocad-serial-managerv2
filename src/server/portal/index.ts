@@ -36,6 +36,9 @@ router.get('/config', (_req: Request, res: Response) => {
   res.json({
     packages: s.credit_packages,
     descriptions: s.portal_request_descriptions,
+    mismatch_message: s.portal_mismatch_message,
+    resume_quote_prompt: s.portal_resume_quote_prompt,
+    resume_quote_sent: s.portal_resume_quote_sent,
   });
 });
 

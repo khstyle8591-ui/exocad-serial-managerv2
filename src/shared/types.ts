@@ -579,6 +579,12 @@ export interface AppSettings {
   credit_notification_email: string;
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
+  // 데이터 미매치 시 안내 팝업 문구 (PM 연락 안내 포함)
+  portal_mismatch_message: LocalizedText;
+  // 갱신재개 신청 시 견적서 안내 2단계 팝업 문구
+  portal_resume_quote_prompt: LocalizedText;
+  // 견적서 신청 완료 안내 문구
+  portal_resume_quote_sent: LocalizedText;
 }
 
 // =========================================================
