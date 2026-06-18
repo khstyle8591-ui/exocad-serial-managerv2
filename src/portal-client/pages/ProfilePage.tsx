@@ -12,7 +12,7 @@ const LANGS: { value: Lang; label: string }[] = [
 export default function ProfilePage() {
   const { lang, account, setLang } = useAuth();
   const [pwForm, setPwForm] = useState({ current_password: '', password: '', confirm_password: '' });
-  const [pwError, setPwError] = useState('');
+  const [pwError, setPwError]     = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
 
@@ -27,10 +27,10 @@ export default function ProfilePage() {
     setPwLoading(true);
     try {
       await api.post('/profile/change-password', pwForm);
-      setPwSuccess('비밀번호가 변경되었습니다.');
+      setPwSuccess(t(lang, 'pw_changed'));
       setPwForm({ current_password: '', password: '', confirm_password: '' });
     } catch (err) {
-      setPwError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setPwError(err instanceof Error ? err.message : t(lang, 'error_generic'));
     } finally {
       setPwLoading(false);
     }
@@ -49,12 +49,12 @@ export default function ProfilePage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <tbody>
             {[
-              ['Login ID', account.login_id],
-              ['이름', account.name],
-              ['이메일', account.email],
-              ['연락처', account.phone || '—'],
-              ['주소', account.address || '—'],
-              ['Exocad ID', account.exocad_id || '—'],
+              [t(lang, 'login_id'),       account.login_id],
+              [t(lang, 'name'),           account.name],
+              [t(lang, 'email'),          account.email],
+              [t(lang, 'phone_label'),    account.phone || '—'],
+              [t(lang, 'address_label'),  account.address || '—'],
+              [t(lang, 'exocad_id_label'), account.exocad_id || '—'],
             ].map(([label, value]) => (
               <tr key={label} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '10px 0', color: 'var(--text3)', width: '35%' }}>{label}</td>
