@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { api, setCsrf, clearCsrf } from '../api';
 import type { Lang } from '../i18n';
 
@@ -30,13 +30,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [lang, setLangState] = useState<Lang>('ko');
+  // Holds a lang the user explicitly selected before logging in
+  const pendingLang = useRef<Lang | null>(null);
 
   async function refresh() {
     try {
       const data = await api.get<Account & { csrf_token: string }>('/auth/me');
       setCsrf(data.csrf_token);
       setAccount(data);
-      setLangState(data.language || 'ko');
+      if (pendingLang.current !== null) {
+        // User chose a language before login — apply it and sync to server
+        api.patch('/profile/language', { language: pendingLang.current }).catch(() => {});
+        pendingLang.current = null;
+      } else {
+        setLangState(data.language || 'ko');
+      }
     } catch {
       clearCsrf();
       setAccount(null);
@@ -51,12 +59,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
     clearCsrf();
     setAccount(null);
+    pendingLang.current = null;
   }
 
   function setLang(l: Lang) {
     setLangState(l);
     if (account) {
-      api.patch('/profile/language', { language: l }).catch(() => { /* ignore */ });
+      api.patch('/profile/language', { language: l }).catch(() => {});
+    } else {
+      pendingLang.current = l;
     }
   }
 
