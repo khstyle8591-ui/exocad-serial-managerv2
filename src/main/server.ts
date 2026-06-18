@@ -159,8 +159,19 @@ if (fs.existsSync(managerDir)) {
 // 포털 클라이언트 정적 파일 at / (인증 불필요 — 포털 API가 자체 인증 처리)
 const portalClientDir = path.join(__dirname, '../../portal-client');
 if (fs.existsSync(portalClientDir)) {
-  app.use(express.static(portalClientDir));
+  app.use(express.static(portalClientDir, {
+    setHeaders(res, filePath) {
+      // Vite fingerprints asset filenames — safe to cache long-term at edge/browser.
+      // HTML must revalidate so the app shell always reflects the latest deployment.
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }));
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(portalClientDir, 'index.html'));
   });
 } else {
