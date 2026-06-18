@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
 import express from 'express';
@@ -110,15 +111,27 @@ const strictApiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// bcrypt(cost 12) 비교는 e2-micro에서 매 요청 ~500ms가 걸린다. BasicAuth는 모든
+// 요청에 동일한 자격증명을 재전송하므로, 검증에 성공한 자격증명을 짧게 캐싱해
+// 재계산을 없앤다. 평문은 저장하지 않고 sha256 키만 보관하며, 실패는 캐싱하지
+// 않아 브루트포스 시도에는 매번 bcrypt 비용이 부과되도록 한다.
+const authCache = new Map<string, number>(); // sha256(user:pass) → 만료시각(ms)
+const AUTH_CACHE_TTL = 5 * 60 * 1000;
+
 const authMiddleware = authDisabled
   ? (_req: express.Request, _res: express.Response, next: express.NextFunction) => next()
   : basicAuth({
       challenge: true,
       authorizer(username: string, password: string) {
+        const key = crypto.createHash('sha256').update(`${username}:${password}`).digest('hex');
+        const exp = authCache.get(key);
+        if (exp && exp > Date.now()) return true; // 캐시 히트: bcrypt 건너뜀
         const expectedUser = process.env.API_USER || '';
         const expectedHash = process.env.API_PASSWORD_HASH || '';
-        return basicAuth.safeCompare(username, expectedUser) &&
+        const ok = basicAuth.safeCompare(username, expectedUser) &&
           bcrypt.compareSync(password, expectedHash);
+        if (ok) authCache.set(key, Date.now() + AUTH_CACHE_TTL); // 성공만 캐싱
+        return ok;
       },
       unauthorizedResponse: () => ({ error: 'Authentication required' }),
     });
