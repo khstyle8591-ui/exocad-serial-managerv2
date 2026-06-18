@@ -1,13 +1,44 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { requirePortalAuth, requireCsrf, type PortalRequest } from '../middleware';
-import { createAccountLink, getAccountLinks, isSerialLinked } from '../db';
+import { createAccountLink, getAccountLinks, isSerialLinked, findAccountById } from '../db';
 import { syncPortalAccountIfNeeded } from '../sync';
 import { serialService } from '../../../main/services/serial.service';
+import { getDb } from '../../../main/database';
+import type { Customer } from '../../../shared/types';
 
 const router = Router();
 
-// POST /portal/setup/link-serial — 시리얼 입력 → 본인확인 후 계정 연결
+interface SerialEntry {
+  serial_number: string;
+  main_product: string;
+  status: string;
+}
+
+interface ExpandedLink {
+  customer_id: number;
+  verified_serial: string;
+  serials: SerialEntry[];
+}
+
+// Returns true if at least one non-empty field matches (email OR phone OR name)
+function accountMatchesCustomer(
+  account: { email: string; phone: string; name: string },
+  customer: Pick<Customer, 'email' | 'phone' | 'name'>,
+): boolean {
+  const pairs: Array<[string | undefined, string | undefined]> = [
+    [account.email, customer.email],
+    [account.phone, customer.phone],
+    [account.name,  customer.name],
+  ];
+  return pairs.some(([a, c]) => {
+    const av = a?.trim().toLowerCase();
+    const cv = c?.trim().toLowerCase();
+    return av && cv && av === cv;
+  });
+}
+
+// POST /portal/setup/link-serial
 router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
   const accountId = pr.portalSession!.account_id;
@@ -24,9 +55,20 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
     return;
   }
 
+  // Idempotent — already linked to this customer
   if (isSerialLinked(accountId, serialRecord.customer_id)) {
-    // 멱등 — 이미 연결돼 있으면 성공으로 처리
     res.json({ ok: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product, already_linked: true });
+    return;
+  }
+
+  // Identity verification: serial's customer must match account (email / phone / name)
+  const account = findAccountById(accountId);
+  if (!account) { res.status(404).json({ error: 'Account not found' }); return; }
+
+  if (!accountMatchesCustomer(account, serialRecord.customer)) {
+    res.status(403).json({
+      error: '입력한 시리얼의 고객 정보와 계정 정보가 일치하지 않습니다. 이메일, 연락처, 이름을 확인해주세요.',
+    });
     return;
   }
 
@@ -36,10 +78,23 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
   res.json({ ok: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
 });
 
-// GET /portal/setup/links — 연결된 고객/시리얼 목록 조회
+// GET /portal/setup/links — 연결된 고객의 모든 시리얼 포함하여 반환
 router.get('/links', requirePortalAuth, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
-  const links = getAccountLinks(pr.portalSession!.account_id);
+  const accountId = pr.portalSession!.account_id;
+  const db = getDb();
+
+  const baseLinks = getAccountLinks(accountId);
+
+  const links: ExpandedLink[] = baseLinks.map(({ customer_id, verified_serial }) => {
+    const serials = db
+      .prepare<[number], SerialEntry>(
+        'SELECT serial_number, main_product, status FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+      )
+      .all(customer_id);
+    return { customer_id, verified_serial, serials };
+  });
+
   res.json({ links });
 });
 

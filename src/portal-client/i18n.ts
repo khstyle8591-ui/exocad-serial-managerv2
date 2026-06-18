@@ -40,7 +40,7 @@ const T = {
     exocad_id_label: 'My.exocad ID',
     // Requests (static)
     no_packages: '현재 구매 가능한 패키지가 없습니다.',
-    credit_unit: '개', currency_suffix: '원',
+    credit_unit: '個', currency_suffix: '円',
     request_submitted: '신청이 접수되었습니다.', request_no: '신청 번호',
     stop_applied_now: '갱신 중단이 즉시 적용되었습니다.',
     credit_exocad_placeholder: 'My.exocad 계정 ID',
@@ -80,7 +80,7 @@ const T = {
     error_generic: 'An error occurred.',
     exocad_id_label: 'My.exocad ID',
     no_packages: 'No packages available for purchase.',
-    credit_unit: '', currency_suffix: ' KRW',
+    credit_unit: '', currency_suffix: ' JPY',
     request_submitted: 'Your request has been received.', request_no: 'Request No.',
     stop_applied_now: 'Renewal stop has been applied immediately.',
     credit_exocad_placeholder: 'My.exocad account ID',

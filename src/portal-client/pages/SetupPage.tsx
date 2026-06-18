@@ -3,23 +3,43 @@ import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t } from '../i18n';
 
-interface AccountLink {
+interface SerialEntry {
+  serial_number: string;
+  main_product: string;
+  status: string;
+}
+
+interface ExpandedLink {
   customer_id: number;
   verified_serial: string;
+  serials: SerialEntry[];
+}
+
+function statusBadge(status: string, lang: ReturnType<typeof useAuth>['lang']) {
+  const map: Record<string, { key: Parameters<typeof t>[1]; cls: string }> = {
+    active:           { key: 'status_active',         cls: 'badge-success' },
+    cancelled:        { key: 'status_cancelled',       cls: 'badge-error' },
+    expired:          { key: 'status_expired',         cls: 'badge-warning' },
+    stop_requested:   { key: 'status_stop_requested',  cls: 'badge-warning' },
+  };
+  const entry = map[status];
+  return entry
+    ? <span className={`badge ${entry.cls}`}>{t(lang, entry.key)}</span>
+    : <span className="badge">{status}</span>;
 }
 
 export default function SetupPage() {
   const { lang } = useAuth();
   const [serial, setSerial] = useState('');
-  const [links, setLinks] = useState<AccountLink[]>([]);
+  const [links, setLinks] = useState<ExpandedLink[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
   function loadLinks() {
-    api.get<{ links: AccountLink[] }>('/setup/links')
+    api.get<{ links: ExpandedLink[] }>('/setup/links')
       .then(d => setLinks(d.links))
-      .catch(() => { /* ignore */ });
+      .catch(() => {});
   }
 
   useEffect(() => { loadLinks(); }, []);
@@ -42,11 +62,13 @@ export default function SetupPage() {
       setSerial('');
       loadLinks();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
     } finally {
       setLoading(false);
     }
   }
+
+  const totalSerials = links.reduce((n, lk) => n + lk.serials.length, 0);
 
   return (
     <div className="portal-page">
@@ -54,7 +76,7 @@ export default function SetupPage() {
       <p className="page-subtitle">{t(lang, 'setup_hint')}</p>
 
       <div className="portal-card">
-        {error && <div className="alert alert-error">{error}</div>}
+        {error   && <div className="alert alert-error">{error}</div>}
         {success && <div className="alert alert-success">{success}</div>}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8 }}>
@@ -73,19 +95,22 @@ export default function SetupPage() {
         </form>
       </div>
 
-      {links.length > 0 && (
+      {totalSerials > 0 && (
         <div className="portal-card">
           <div className="portal-card-title">{t(lang, 'linked_serials')}</div>
-          {links.map(lk => (
-            <div key={lk.customer_id} className="product-card">
-              <div className="product-card-info">
-                <div className="product-card-serial" style={{ fontSize: 13, color: 'var(--text2)' }}>
-                  {lk.verified_serial}
+          {links.flatMap(lk =>
+            lk.serials.map(s => (
+              <div key={s.serial_number} className="product-card">
+                <div className="product-card-info">
+                  <div className="product-card-name">{s.main_product}</div>
+                  <div className="product-card-serial" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+                    {s.serial_number}
+                  </div>
                 </div>
+                {statusBadge(s.status, lang)}
               </div>
-              <span className="badge badge-accent">{t(lang, 'linked_badge')}</span>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       )}
     </div>
