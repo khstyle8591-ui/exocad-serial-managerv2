@@ -24,7 +24,7 @@ export default function Navbar() {
         <img
           src={geoMediLogo}
           alt="GeoMedi"
-          style={{ height: 32, width: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+          style={{ height: 64, width: 64, borderRadius: 8, objectFit: 'contain', flexShrink: 0 }}
         />
         <span>Exocad Portal</span>
       </div>
