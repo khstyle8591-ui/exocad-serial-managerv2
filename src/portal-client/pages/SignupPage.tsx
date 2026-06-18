@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, setCsrf } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t, type Lang } from '../i18n';
+import geoMediLogo from '../assets/geomedi-logo.png';
 
 const LANGS: { value: Lang; label: string }[] = [
   { value: 'ko', label: '한국어' },
@@ -45,6 +46,7 @@ export default function SignupPage() {
     <div className="auth-wrapper">
       <div className="auth-card" style={{ maxWidth: 460 }}>
         <div className="auth-logo">
+          <img src={geoMediLogo} alt="GeoMedi" style={{ height: 83, width: 83, objectFit: 'contain', marginBottom: 8 }} />
           <span>Exocad Portal</span>
           <p>Customer Portal</p>
         </div>

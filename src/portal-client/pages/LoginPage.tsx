@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, setCsrf } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t } from '../i18n';
+import geoMediLogo from '../assets/geomedi-logo.png';
 
 export default function LoginPage() {
   const { lang, refresh } = useAuth();
@@ -35,6 +36,7 @@ export default function LoginPage() {
     <div className="auth-wrapper">
       <div className="auth-card">
         <div className="auth-logo">
+          <img src={geoMediLogo} alt="GeoMedi" style={{ height: 83, width: 83, objectFit: 'contain', marginBottom: 8 }} />
           <span>Exocad Portal</span>
           <p>Customer Portal</p>
         </div>
