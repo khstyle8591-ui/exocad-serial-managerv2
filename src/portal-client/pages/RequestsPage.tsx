@@ -290,7 +290,10 @@ export default function RequestsPage() {
                       {t(lang, 'cancel_request')}
                     </button>
                   )}
-                  {statusBadge(r.status, lang)}
+                  {r.note === 'playwright_failed'
+                    ? <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>
+                    : statusBadge(r.status, lang)
+                  }
                 </div>
               </div>
             ))

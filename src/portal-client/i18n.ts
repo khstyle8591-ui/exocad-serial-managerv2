@@ -66,6 +66,7 @@ const T = {
     cancel_request: '신청 취소',
     cancel_request_confirm: '이 신청을 취소하시겠습니까?',
     request_cancelled: '신청이 취소되었습니다.',
+    renewal_stop_failed: '갱신 중단 실패',
   },
   en: {
     dashboard: 'Dashboard', requests: 'Requests', profile: 'Profile', logout: 'Log out',
@@ -123,6 +124,7 @@ const T = {
     cancel_request: 'Cancel request',
     cancel_request_confirm: 'Cancel this request?',
     request_cancelled: 'Request has been cancelled.',
+    renewal_stop_failed: 'Stop renewal failed',
   },
   ja: {
     dashboard: 'ダッシュボード', requests: '申請', profile: 'プロフィール', logout: 'ログアウト',
@@ -180,6 +182,7 @@ const T = {
     cancel_request: '申請をキャンセル',
     cancel_request_confirm: 'この申請をキャンセルしますか？',
     request_cancelled: '申請がキャンセルされました。',
+    renewal_stop_failed: '更新停止に失敗しました',
   },
 } as const;
 

@@ -220,6 +220,7 @@ export default function Portal() {
           filter={reqFilter}
           onFilter={f => { setReqFilter(f); loadRequests(f); }}
           onDecide={decide}
+          creditPackages={settings.credit_packages ?? []}
         />
       )}
     </div>
@@ -451,12 +452,13 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
 }
 
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide }: {
+function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
   onFilter: (f: string) => void;
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
+  creditPackages: CreditPackage[];
 }) {
   const FILTERS: { id: string; key: TranslationKey }[] = [
     { id: '', key: 'portal_req_filter_all' },
@@ -505,7 +507,17 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide }: {
                   </td>
                   <td style={cell}>{TYPE_KEY[r.type] ? t(lang, TYPE_KEY[r.type]) : r.type}</td>
                   <td style={cell}>
-                    <div>{r.target_serial || r.package_code || r.exocad_id || '—'}</div>
+                    {r.type === 'credit' ? (() => {
+                      const pkg = r.package_code ? creditPackages.find(p => p.id === r.package_code) : null;
+                      return <>
+                        {pkg
+                          ? <div>{pkg.label} <span style={{ color: 'var(--accent)', fontWeight: 600 }}>×{pkg.quantity}</span></div>
+                          : r.package_code ? <div>{r.package_code}</div> : null}
+                        {r.exocad_id && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>ID: {r.exocad_id}</div>}
+                      </>;
+                    })() : (
+                      <div>{r.target_serial || r.exocad_id || '—'}</div>
+                    )}
                     {r.note === 'quote_requested' && (
                       <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>
                         {t(lang, 'portal_quote_requested')}

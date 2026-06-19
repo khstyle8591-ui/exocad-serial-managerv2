@@ -10,6 +10,7 @@ import {
   getAllPortalRequests,
   getPortalRequestById,
   updatePortalRequestStatus,
+  markPortalRequestPlaywrightFailed,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
@@ -228,7 +229,8 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   const request = getPortalRequestById(id);
   if (!request) { res.status(404).json({ error: 'Not found' }); return; }
-  if (request.status === 'auto_done' || request.status === 'approved' || request.status === 'rejected') {
+  const isPlaywrightFailed = request.status === 'rejected' && request.note === 'playwright_failed';
+  if (!isPlaywrightFailed && (request.status === 'auto_done' || request.status === 'approved' || request.status === 'rejected')) {
     res.status(409).json({ error: '이미 처리된 신청입니다.' });
     return;
   }
@@ -253,8 +255,19 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       'manual',
       `관리자 승인 — 포털 갱신 중단 신청 #${id}`,
     );
-    // Playwright로 Exocad 사이트에서 실제 구독 취소 실행 (non-blocking)
-    cancelService.cancelSubscription(serial.serial_number, true).catch(() => {});
+    // Playwright로 Exocad 사이트에서 실제 구독 취소 실행 (blocking — 결과 확인)
+    const cancelResult = await cancelService.cancelSubscription(serial.serial_number, true);
+    if (!cancelResult.success) {
+      markPortalRequestPlaywrightFailed(id);
+      logActivity({
+        action: 'system',
+        actor: 'manual',
+        severity: 'warn',
+        details: `portal 갱신중단 승인 — Playwright 시리얼 검색 실패: ${serial.serial_number}`,
+      });
+      res.json({ ok: true, status: 'playwright_failed' });
+      return;
+    }
   }
   // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 

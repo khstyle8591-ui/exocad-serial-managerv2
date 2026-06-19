@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { serialService } from './serial.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
+import { logActivity } from './activity-log.service';
+import { markPortalRequestPlaywrightFailed, findActiveRenewalStopRequest } from '../../server/portal/db';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
@@ -772,6 +774,20 @@ export class CancelService {
         if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
       } else if (result.success && !result.verified) {
         logger.warn(`[auto-cancel] completed but UNVERIFIED; DB not changed: ${serial.serial_number} (status: ${result.verified_status || 'unknown'})`);
+      } else if (!result.success) {
+        logger.warn(`[auto-cancel] FAILED: ${serial.serial_number} — ${result.error || 'unknown'}`);
+        logActivity({
+          action: 'system',
+          actor: 'auto',
+          severity: 'warn',
+          details: `portal 갱신중단 자동취소 시도 — 시리얼 검색 실패: ${serial.serial_number}`,
+        });
+        try {
+          const req = findActiveRenewalStopRequest(serial.serial_number);
+          if (req) markPortalRequestPlaywrightFailed(req.id);
+        } catch (dbErr) {
+          logger.warn(`[auto-cancel] portal request update failed: ${getErrorMessage(dbErr)}`);
+        }
       }
       results.push(result);
 

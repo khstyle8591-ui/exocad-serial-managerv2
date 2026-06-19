@@ -197,6 +197,27 @@ export function updatePortalRequestStatus(id: number, status: PortalRequestStatu
     .run(status, id);
 }
 
+export function markPortalRequestPlaywrightFailed(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = datetime('now','localtime') WHERE id = ?",
+    )
+    .run(id);
+}
+
+export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
+  return (
+    getDb()
+      .prepare<[string], PortalRequestRow>(
+        `SELECT * FROM portal_requests
+         WHERE target_serial = ? AND type = 'renewal_stop'
+         AND status NOT IN ('user_cancelled', 'rejected')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(serialNumber) ?? null
+  );
+}
+
 export function getPortalRequestsByAccount(accountId: number): PortalRequestRow[] {
   return getDb()
     .prepare<[number], PortalRequestRow>(
