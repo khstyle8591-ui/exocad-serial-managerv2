@@ -4,6 +4,13 @@ import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t } from '../i18n';
 
+function mapError(msg: string, lang: ReturnType<typeof useAuth>['lang']): string {
+  if (msg === 'missing_fields')    return t(lang, 'error_required');
+  if (msg === 'pw_mismatch')       return t(lang, 'error_pw_mismatch');
+  if (msg === 'invalid_reset_link') return t(lang, 'invalid_reset_link');
+  return t(lang, 'error_generic');
+}
+
 export default function ResetConfirmPage() {
   const { lang } = useAuth();
   const [searchParams] = useSearchParams();
@@ -24,7 +31,7 @@ export default function ResetConfirmPage() {
       setDone(true);
       setTimeout(() => navigate('/login'), 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(mapError(err instanceof Error ? err.message : '', lang));
     } finally {
       setLoading(false);
     }
@@ -34,7 +41,7 @@ export default function ResetConfirmPage() {
     return (
       <div className="auth-wrapper">
         <div className="auth-card text-center">
-          <p className="text-muted">유효하지 않은 링크입니다.</p>
+          <p className="text-muted">{t(lang, 'invalid_reset_link')}</p>
           <Link to="/login" className="btn btn-ghost btn-sm mt-16">{t(lang, 'back_to_login')}</Link>
         </div>
       </div>
@@ -49,7 +56,7 @@ export default function ResetConfirmPage() {
 
         {done ? (
           <div className="alert alert-success">
-            비밀번호가 변경되었습니다. 잠시 후 로그인 페이지로 이동합니다.
+            {t(lang, 'pw_reset_done')}
           </div>
         ) : (
           <>

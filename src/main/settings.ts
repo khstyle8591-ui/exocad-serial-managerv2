@@ -129,6 +129,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     en: 'A quote will be sent to your registered email within 3 business days. Renewal will resume after your confirmation.',
     ja: '営業日3日以内に登録されたメールアドレスへ見積書をお送りします。ご確認後に更新再開を進めます。',
   },
+  product_list: [],
 };
 
 let cachedSettings: AppSettings | null = null;

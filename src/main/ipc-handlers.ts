@@ -97,6 +97,7 @@ const SETTINGS_ALLOWED_KEYS = new Set<keyof AppSettings>([
   'stop_request_notice_template',
   'cancel_complete_notice_enabled',
   'cancel_complete_notice_template',
+  'product_list',
 ]);
 
 function sanitizeSettingsImport(raw: unknown): Partial<AppSettings> {

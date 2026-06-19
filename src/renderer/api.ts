@@ -242,6 +242,7 @@ export const api = {
         getAccount: <T>(id: number) => preq<T>('GET', `/accounts/${id}`),
         updateAccount: (id: number, data: unknown) => preq('PATCH', `/accounts/${id}`, data),
         setAccountStatus: (id: number, status: string) => preq('PATCH', `/accounts/${id}/status`, { status }),
+        syncAccountToCustomer: (id: number) => preq('POST', `/accounts/${id}/sync-to-customer`, {}),
         listRequests: <T>(q?: { type?: string; status?: string }) => {
             const params = new URLSearchParams();
             if (q?.type) params.set('type', q.type);

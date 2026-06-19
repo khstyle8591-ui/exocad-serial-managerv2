@@ -15,6 +15,7 @@ export interface PortalAccount {
   created_at: string;
   updated_at: string;
   last_synced_at: string | null;
+  customer_mismatch: string | null;
 }
 
 export function findAccountByLoginId(loginId: string): PortalAccount | null {
@@ -148,7 +149,7 @@ export function isLinkedCustomer(accountId: number, customerId: number): boolean
 // ── Portal requests ───────────────────────────────────────────────────────────
 
 export type PortalRequestType = 'credit' | 'renewal_stop' | 'renewal_resume';
-export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected';
+export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled';
 
 export interface PortalRequestRow {
   id: number;
@@ -211,9 +212,15 @@ export interface PortalAccountSafe extends Omit<PortalAccount, 'password_hash'> 
 export function getAllPortalAccounts(): PortalAccountSafe[] {
   return getDb()
     .prepare<[], PortalAccountSafe>(
-      'SELECT id,login_id,email,phone,address,name,exocad_id,language,status,created_at,updated_at,last_synced_at FROM portal_accounts ORDER BY created_at DESC',
+      'SELECT id,login_id,email,phone,address,name,exocad_id,language,status,created_at,updated_at,last_synced_at,customer_mismatch FROM portal_accounts ORDER BY created_at DESC',
     )
     .all();
+}
+
+export function setCustomerMismatch(id: number, data: Record<string, [string, string]> | null): void {
+  getDb()
+    .prepare('UPDATE portal_accounts SET customer_mismatch = ? WHERE id = ?')
+    .run(data ? JSON.stringify(data) : null, id);
 }
 
 export function updatePortalAccountFields(

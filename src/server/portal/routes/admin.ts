@@ -6,14 +6,19 @@ import {
   getAllPortalAccounts,
   updatePortalAccountFields,
   setPortalAccountStatus,
+  setCustomerMismatch,
   getAllPortalRequests,
   getPortalRequestById,
   updatePortalRequestStatus,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
+import { updateCustomer } from '../../../main/services/customer.service';
+import { getDb } from '../../../main/database';
+import { logActivity } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
+import { cancelService } from '../../../main/services/cancel.service';
 import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
 
 const router = Router();
@@ -159,13 +164,42 @@ router.patch('/accounts/:id/status', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /portal/admin/accounts/:id/sync-to-customer — portal data → customer DB
+router.post('/accounts/:id/sync-to-customer', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+  const account = findAccountById(id);
+  if (!account) { res.status(404).json({ error: 'Not found' }); return; }
+
+  // Find customer linked to this portal account
+  const link = getDb()
+    .prepare<[number], { customer_id: number }>('SELECT customer_id FROM portal_account_links WHERE account_id = ? LIMIT 1')
+    .get(id);
+  if (!link) { res.status(400).json({ error: '연결된 고객이 없습니다.' }); return; }
+
+  updateCustomer(link.customer_id, {
+    ...(account.name  && { name:  account.name }),
+    ...(account.email && { email: account.email }),
+    ...(account.phone && { phone: account.phone }),
+  });
+  setCustomerMismatch(id, null);
+  logActivity({
+    action: 'system',
+    actor: 'manual',
+    severity: 'info',
+    details: `Manager synced portal account #${id} data → customer #${link.customer_id}`,
+  });
+
+  res.json({ ok: true });
+});
+
 // ── 신청 관리 ─────────────────────────────────────────────────────────────────
 
 // GET /portal/admin/requests?type=&status=
 router.get('/requests', (req: Request, res: Response) => {
   const { type, status } = req.query as Record<string, string>;
   const validTypes: PortalRequestType[] = ['credit', 'renewal_stop', 'renewal_resume'];
-  const validStatuses: PortalRequestStatus[] = ['pending', 'manager_review', 'auto_done', 'approved', 'rejected'];
+  const validStatuses: PortalRequestStatus[] = ['pending', 'manager_review', 'auto_done', 'approved', 'rejected', 'user_cancelled'];
   const filter: { type?: PortalRequestType; status?: PortalRequestStatus } = {};
   if (type && validTypes.includes(type as PortalRequestType)) filter.type = type as PortalRequestType;
   if (status && validStatuses.includes(status as PortalRequestStatus)) filter.status = status as PortalRequestStatus;
@@ -182,7 +216,7 @@ router.get('/requests/:id', (req: Request, res: Response) => {
 });
 
 // PATCH /portal/admin/requests/:id/decide — 승인 / 거절
-router.patch('/requests/:id/decide', (req: Request, res: Response) => {
+router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
 
@@ -219,6 +253,8 @@ router.patch('/requests/:id/decide', (req: Request, res: Response) => {
       'manual',
       `관리자 승인 — 포털 갱신 중단 신청 #${id}`,
     );
+    // Playwright로 Exocad 사이트에서 실제 구독 취소 실행 (non-blocking)
+    cancelService.cancelSubscription(serial.serial_number, true).catch(() => {});
   }
   // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 

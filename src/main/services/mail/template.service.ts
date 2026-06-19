@@ -140,6 +140,60 @@ const BUILTIN_TEMPLATES: Array<{ code: string; name: string; subject: string; bo
     enabled: true,
   },
   {
+    code: 'portal_reset_password',
+    name: 'パスワードリセット',
+    subject: '【パスワードリセット】Exocad Portal',
+    body: `{{NAME}} 様
+
+パスワードリセットのご要望を受け付けました。
+以下のリンクからパスワードの再設定をお願いいたします。
+
+{{RESET_URL}}
+
+このリンクは24時間有効です。
+ご自身でリクエストされていない場合は、このメールを無視してください。
+
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
+    code: 'portal_renewal_stop_confirm',
+    name: 'ポータル更新停止受付確認',
+    subject: '【受付完了】更新停止のお申し込みを受け付けました',
+    body: `{{NAME}} 様
+
+Exocad Portalより更新停止のお申し込みを受け付けました。
+
+■ 対象シリアル：{{SERIAL}}
+■ 申請番号：#{{REQUEST_ID}}
+■ 受付日：{{TODAY}}
+
+担当者よりご連絡いたします。
+ご不明な点がございましたらPMまでお問い合わせください。
+
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
+    code: 'portal_renewal_resume_confirm',
+    name: 'ポータル更新再開受付確認',
+    subject: '【受付完了】更新再開のお申し込みを受け付けました',
+    body: `{{NAME}} 様
+
+Exocad Portalより更新再開のお申し込みを受け付けました。
+
+■ 対象シリアル：{{SERIAL}}
+■ 申請番号：#{{REQUEST_ID}}
+■ 見積書希望：{{INCLUDE_QUOTE}}
+■ 受付日：{{TODAY}}
+
+担当者よりご連絡いたします。
+ご不明な点がございましたらPMまでお問い合わせください。
+
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'cancel_confirmation',
     name: 'キャンセル確認',
     subject: '【確認】{{SERIAL_NUMBER}} のサブスクリプションキャンセルについて',

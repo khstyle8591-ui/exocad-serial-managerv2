@@ -141,6 +141,7 @@ export default function Settings() {
   const [keywordInputs, setKeywordInputs] = useState<Record<string, string>>({});
   const [missingInfoAutoReply, setMissingInfoAutoReply] = useState(false);
   const [invalidResponseAutoReply, setInvalidResponseAutoReply] = useState(false);
+  const [productListText, setProductListText] = useState('');
 
   // SMTP Connection Test state
   const [smtpTesting, setSmtpTesting] = useState(false);
@@ -190,6 +191,7 @@ export default function Settings() {
       setKeywordInputs({});
       setMissingInfoAutoReply(data.missing_info_auto_reply_enabled ?? false);
       setInvalidResponseAutoReply(data.invalid_response_auto_reply_enabled ?? false);
+      setProductListText(Array.isArray(data.product_list) ? data.product_list.join('\n') : '');
       // Increment key to reset all defaultValue inputs with new data
       setLoadKey(k => k + 1);
     } catch (err) {
@@ -237,6 +239,7 @@ export default function Settings() {
         renewal_exclude_keywords: excludeKeywords,
         missing_info_auto_reply_enabled: missingInfoAutoReply,
         invalid_response_auto_reply_enabled: invalidResponseAutoReply,
+        product_list: productListText.split('\n').map(s => s.trim()).filter(Boolean),
         expiry_notice_rules: cleanedExpiryRules,
         expiry_notice_days: cleanedExpiryRules.map(rule => rule.days_before),
         expiry_notice_renewal_template: cleanedExpiryRules[0]?.renewal_template || 'renewal_reminder',
@@ -534,6 +537,22 @@ export default function Settings() {
         onRulesChange={(rules: ProductCodeRule[]) => setVal('custom_product_code_rules', rules)}
         lang={lang}
       />
+
+      {/* ─── Main Product List ───────────────────────────────────────────── */}
+      <section className="settings-section">
+        <h3 className="settings-section-title">{t(lang, 'label_product_list')}</h3>
+        <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>{t(lang, 'label_product_list_hint')}</p>
+        <textarea
+          value={productListText}
+          onChange={e => setProductListText(e.target.value)}
+          rows={6}
+          style={{
+            width: '100%', boxSizing: 'border-box', resize: 'vertical',
+            background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 6,
+            color: 'var(--text)', fontSize: 12.5, padding: '8px 10px', fontFamily: "'JetBrains Mono', monospace",
+          }}
+        />
+      </section>
 
       <SchedulingSection
         lang={lang}

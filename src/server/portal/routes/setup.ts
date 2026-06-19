@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { requirePortalAuth, requireCsrf, type PortalRequest } from '../middleware';
-import { createAccountLink, getAccountLinks, isSerialLinked, findAccountById } from '../db';
+import { createAccountLink, getAccountLinks, isSerialLinked, findAccountById, setCustomerMismatch } from '../db';
 import { syncPortalAccountIfNeeded } from '../sync';
+import { logActivity } from '../../../main/services/activity-log.service';
 import { serialService } from '../../../main/services/serial.service';
 import { getDb } from '../../../main/database';
 import type { Customer } from '../../../shared/types';
@@ -13,6 +14,7 @@ interface SerialEntry {
   serial_number: string;
   main_product: string;
   status: string;
+  renewal_stop_requested: number;
 }
 
 interface ExpandedLink {
@@ -76,6 +78,29 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
   createAccountLink(accountId, serialRecord.customer_id, serialRecord.serial_number.toUpperCase());
   syncPortalAccountIfNeeded(accountId);
 
+  // Detect data mismatch between portal account and customer DB
+  const mismatch: Record<string, [string, string]> = {};
+  const cust = serialRecord.customer;
+  const pairs: Array<[string, string, string]> = [
+    ['name',  account.name?.trim()  ?? '', cust.name?.trim()  ?? ''],
+    ['email', account.email?.trim() ?? '', cust.email?.trim() ?? ''],
+    ['phone', account.phone?.trim() ?? '', cust.phone?.trim() ?? ''],
+  ];
+  for (const [field, av, cv] of pairs) {
+    if (av && cv && av.toLowerCase() !== cv.toLowerCase()) {
+      mismatch[field] = [cv, av]; // [customer_db_value, portal_value]
+    }
+  }
+  if (Object.keys(mismatch).length > 0) {
+    setCustomerMismatch(accountId, mismatch);
+    logActivity({
+      action: 'system',
+      actor: 'system',
+      severity: 'warn',
+      details: `Portal account #${accountId} linked serial ${serialRecord.serial_number} — customer data mismatch: ${JSON.stringify(mismatch)}`,
+    });
+  }
+
   res.json({ ok: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
 });
 
@@ -120,11 +145,15 @@ router.get('/links', requirePortalAuth, (req: Request, res: Response) => {
   const baseLinks = getAccountLinks(accountId);
 
   const links: ExpandedLink[] = baseLinks.map(({ customer_id, verified_serial }) => {
-    const serials = db
+    const rows = db
       .prepare<[number], SerialEntry>(
-        'SELECT serial_number, main_product, status FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+        'SELECT serial_number, main_product, status, renewal_stop_requested FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
       )
       .all(customer_id);
+    const serials = rows.map(s => ({
+      ...s,
+      status: s.renewal_stop_requested === 1 ? 'stop_requested' : s.status,
+    }));
     return { customer_id, verified_serial, serials };
   });
 

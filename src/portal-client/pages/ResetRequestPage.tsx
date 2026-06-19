@@ -15,10 +15,10 @@ export default function ResetRequestPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const data = await api.post<{ message: string }>('/auth/reset-request', { login_id: loginId, email });
-      setMsg(data.message || '');
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      const data = await api.post<{ ok: boolean; code?: string }>('/auth/reset-request', { login_id: loginId, email });
+      setMsg(data.code === 'reset_link_sent' ? t(lang, 'reset_link_sent') : t(lang, 'error_generic'));
+    } catch {
+      setMsg(t(lang, 'reset_link_sent')); // 계정 열거 방지 — 에러도 동일 메시지
     } finally {
       setLoading(false);
     }
@@ -32,6 +32,9 @@ export default function ResetRequestPage() {
         </div>
 
         <h2 className="auth-title">{t(lang, 'forgot_password')}</h2>
+        <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20, lineHeight: 1.5 }}>
+          {t(lang, 'reset_hint')}
+        </p>
 
         {msg ? (
           <div className="alert alert-info" style={{ marginBottom: 0 }}>{msg}</div>

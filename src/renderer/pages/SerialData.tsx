@@ -38,6 +38,16 @@ export default function SerialData() {
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
   const [detailId, setDetailId] = useState<number | null>(null);
+
+  // pushState when detail opens so browser back closes it
+  useEffect(() => {
+    if (detailId !== null) {
+      window.history.pushState({ serialDetail: detailId }, '');
+      const onPop = () => setDetailId(null);
+      window.addEventListener('popstate', onPop);
+      return () => window.removeEventListener('popstate', onPop);
+    }
+  }, [detailId]);
   const [showForm, setShowForm] = useState<'create' | 'edit' | null>(null);
   const [editTarget, setEditTarget] = useState<SerialWithCustomer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SerialWithCustomer | null>(null);
@@ -218,7 +228,7 @@ export default function SerialData() {
     return (
       <SerialDetail
         serialId={detailId}
-        onBack={() => setDetailId(null)}
+        onBack={() => window.history.back()}
         onUpdated={serial => setSerials(prev => prev.map(s => s.id === serial.id ? serial : s))}
         onDeleted={id => { setSerials(prev => prev.filter(s => s.id !== id)); setDetailId(null); }}
       />

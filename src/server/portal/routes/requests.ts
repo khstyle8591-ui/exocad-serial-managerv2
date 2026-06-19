@@ -174,6 +174,24 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   res.json({ ok: true, request_id: requestId, auto_applied: autoApplied });
 });
 
+// ── POST /portal/requests/:id/cancel — 대기 중 신청 취소 ────────────────────
+router.post('/:id/cancel', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
+  const pr = req as PortalRequest;
+  const accountId = pr.portalSession!.account_id;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+  const mine = getPortalRequestsByAccount(accountId).find(r => r.id === id);
+  if (!mine) { res.status(404).json({ error: 'Not found' }); return; }
+  if (mine.status !== 'pending') {
+    res.status(400).json({ error: 'only_pending_cancellable' });
+    return;
+  }
+
+  updatePortalRequestStatus(id, 'user_cancelled');
+  res.json({ ok: true });
+});
+
 // ── POST /portal/requests/renewal-resume — 갱신 재개 요청 (접수만) ───────────
 
 router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Request, res: Response) => {

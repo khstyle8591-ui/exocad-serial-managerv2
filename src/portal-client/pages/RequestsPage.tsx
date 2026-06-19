@@ -49,6 +49,7 @@ function statusBadge(status: string, lang: Lang) {
     auto_done:      { cls: 'badge-accent', key: 'req_status_auto_done' },
     approved:       { cls: 'badge-green',  key: 'req_status_approved' },
     rejected:       { cls: 'badge-red',    key: 'req_status_rejected' },
+    user_cancelled: { cls: 'badge-gray',   key: 'req_status_user_cancelled' },
   };
   const entry = map[status];
   if (!entry) return <span className="badge badge-gray">{status}</span>;
@@ -126,6 +127,22 @@ export default function RequestsPage() {
 
   function submittedMsg(id: number) {
     return `${t(lang, 'request_submitted')} (${t(lang, 'request_no')}: #${id})`;
+  }
+
+  async function cancelRequest(id: number) {
+    if (!window.confirm(t(lang, 'cancel_request_confirm'))) return;
+    try {
+      await api.post(`/requests/${id}/cancel`, {});
+      setSuccess(t(lang, 'request_cancelled'));
+      reloadRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
+    }
+  }
+
+  function pkgLabel(code: string) {
+    const pkg = packages.find(p => p.id === code);
+    return pkg ? `${pkg.label} (${pkg.quantity}${t(lang, 'credit_unit')})` : code;
   }
 
   function desc(type: keyof RequestDescriptions) {
@@ -258,11 +275,23 @@ export default function RequestsPage() {
                   <div className="request-type">
                     #{r.id} · {typeLabel(r.type, lang)}
                     {r.target_serial && <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>{r.target_serial}</span>}
-                    {r.exocad_id   && <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>{r.exocad_id}</span>}
+                    {r.exocad_id    && <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>{r.exocad_id}</span>}
+                    {r.package_code && <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>{pkgLabel(r.package_code)}</span>}
                   </div>
                   <div className="request-meta">{r.created_at.slice(0, 16).replace('T', ' ')}</div>
                 </div>
-                {statusBadge(r.status, lang)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {r.status === 'pending' && (
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      style={{ fontSize: 12, color: 'var(--red)' }}
+                      onClick={() => cancelRequest(r.id)}
+                    >
+                      {t(lang, 'cancel_request')}
+                    </button>
+                  )}
+                  {statusBadge(r.status, lang)}
+                </div>
               </div>
             ))
           )}

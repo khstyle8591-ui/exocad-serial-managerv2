@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { CustomerInput, Serial, SerialInput, SerialWithCustomer } from '../../shared/types';
+import type { AppSettings, CustomerInput, Serial, SerialInput, SerialWithCustomer } from '../../shared/types';
 import CustomerAutocomplete, { type CustomerChoice } from './CustomerAutocomplete';
 import ModuleListEditor from './ModuleListEditor';
 import { useLang } from '../App';
@@ -102,6 +102,16 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState<CustomerConflict | null>(null);
+  const [productList, setProductList] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.getSettings().then(raw => {
+      const s = raw as AppSettings;
+      if (Array.isArray(s.product_list) && s.product_list.length > 0) {
+        setProductList(s.product_list as string[]);
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (customer?.kind === 'existing') {
@@ -358,7 +368,17 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
             </div>
             <div>
               <label style={labelStyle}>{t(lang, 'label_main_product')}</label>
-              <input value={form.main_product} onChange={e => setF('main_product', e.target.value)} style={inputStyle} />
+              <input
+                value={form.main_product}
+                onChange={e => setF('main_product', e.target.value)}
+                style={inputStyle}
+                list={productList.length > 0 ? 'product-list-options' : undefined}
+              />
+              {productList.length > 0 && (
+                <datalist id="product-list-options">
+                  {productList.map(p => <option key={p} value={p} />)}
+                </datalist>
+              )}
             </div>
           </div>
 

@@ -134,8 +134,8 @@ router.post('/logout', requirePortalAuth, requireCsrf, (req: Request, res: Respo
 
 // POST /portal/auth/reset-request — 등록 이메일로 일회용 재설정 링크 발송
 router.post('/reset-request', authLimiter, async (req: Request, res: Response) => {
-  // 계정 열거 방지 — 항상 동일 메시지 반환
-  const OK = { ok: true, message: '해당 정보로 등록된 이메일에 링크를 발송했습니다. 없을 경우 PM에 문의해주세요.' };
+  // 계정 열거 방지 — 항상 동일 코드 반환
+  const OK = { ok: true, code: 'reset_link_sent' };
 
   const { login_id, email } = req.body as Record<string, string>;
   if (!login_id || !email) { res.json(OK); return; }
@@ -169,11 +169,11 @@ router.post('/reset-confirm', authLimiter, async (req: Request, res: Response) =
   const { token, password, confirm_password } = req.body as Record<string, string>;
 
   if (!token || !password) {
-    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    res.status(400).json({ error: 'missing_fields' });
     return;
   }
   if (password !== confirm_password) {
-    res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
+    res.status(400).json({ error: 'pw_mismatch' });
     return;
   }
   const pwError = validatePassword(password);
@@ -181,7 +181,7 @@ router.post('/reset-confirm', authLimiter, async (req: Request, res: Response) =
 
   const resetToken = consumeResetToken(token);
   if (!resetToken) {
-    res.status(400).json({ error: '유효하지 않거나 만료된 링크입니다.' });
+    res.status(400).json({ error: 'invalid_reset_link' });
     return;
   }
 

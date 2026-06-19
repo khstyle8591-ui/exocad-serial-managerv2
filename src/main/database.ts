@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 
 type Migration = {
   version: number;
@@ -409,6 +409,15 @@ function setUserVersion(version: number): void {
   db.pragma(`user_version = ${version}`);
 }
 
+function migratePortalAccountMismatch(): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE name='portal_accounts' AND type='table'")
+    .get() as { sql: string } | undefined;
+  if (!row) return;
+  if (row.sql.includes('customer_mismatch')) return;
+  db.exec('ALTER TABLE portal_accounts ADD COLUMN customer_mismatch TEXT');
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -444,6 +453,11 @@ const migrations: Migration[] = [
     version: 7,
     name: 'portal tables',
     run: createPortalTables,
+  },
+  {
+    version: 8,
+    name: 'portal_accounts customer_mismatch column',
+    run: migratePortalAccountMismatch,
   },
 ];
 

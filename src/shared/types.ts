@@ -585,6 +585,8 @@ export interface AppSettings {
   portal_resume_quote_prompt: LocalizedText;
   // 견적서 신청 완료 안내 문구
   portal_resume_quote_sent: LocalizedText;
+  // 제품명 드롭다운 목록 (빈 배열이면 자유 입력)
+  product_list: string[];
 }
 
 // =========================================================

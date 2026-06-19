@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
@@ -26,6 +26,7 @@ interface PortalAccount {
   language: string;
   status: 'active' | 'disabled';
   created_at: string;
+  customer_mismatch?: string | null;
 }
 
 interface AdminRequest {
@@ -62,6 +63,7 @@ const STATUS_KEY: Record<string, TranslationKey> = {
   auto_done: 'portal_st_auto_done',
   approved: 'portal_st_approved',
   rejected: 'portal_st_rejected',
+  user_cancelled: 'portal_st_user_cancelled',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -70,6 +72,7 @@ const STATUS_COLOR: Record<string, string> = {
   auto_done: 'var(--accent)',
   approved: 'var(--green)',
   rejected: 'var(--red)',
+  user_cancelled: 'var(--text3)',
 };
 
 export default function Portal() {
@@ -82,6 +85,7 @@ export default function Portal() {
   const [accounts, setAccounts] = useState<PortalAccount[]>([]);
   const [requests, setRequests] = useState<AdminRequest[]>([]);
   const [reqFilter, setReqFilter] = useState<string>('');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     api.portal.getSettings<PortalSettings>()
@@ -105,8 +109,16 @@ export default function Portal() {
   function goTab(next: Tab) {
     setTab(next);
     if (next === 'accounts') loadAccounts();
-    if (next === 'requests') loadRequests();
+    if (next === 'requests') {
+      loadRequests();
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(() => loadRequests(), 30_000);
+    } else {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    }
   }
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   async function save() {
     if (!settings) return;
@@ -131,8 +143,19 @@ export default function Portal() {
     }
   }
 
+  async function syncAccountToCustomer(acc: PortalAccount) {
+    if (!window.confirm(t(lang, 'portal_acc_sync') + '?')) return;
+    try {
+      await api.portal.syncAccountToCustomer(acc.id);
+      loadAccounts();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    }
+  }
+
   async function decide(req: AdminRequest, action: 'approve' | 'reject') {
-    if (!window.confirm(t(lang, 'portal_confirm_decide'))) return;
+    const confirmKey = action === 'approve' ? 'portal_confirm_approve' : 'portal_confirm_reject';
+    if (!window.confirm(t(lang, confirmKey))) return;
     try {
       await api.portal.decideRequest(req.id, action);
       loadRequests();
@@ -189,7 +212,7 @@ export default function Portal() {
       {tab === 'settings'     && <SettingsTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'packages'     && <PackagesTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'descriptions' && <DescriptionsTab lang={lang} settings={settings} setSettings={setSettings} />}
-      {tab === 'accounts'     && <AccountsTab lang={lang} accounts={accounts} onToggle={toggleAccount} />}
+      {tab === 'accounts'     && <AccountsTab lang={lang} accounts={accounts} onToggle={toggleAccount} onSync={syncAccountToCustomer} />}
       {tab === 'requests'     && (
         <RequestsTab
           lang={lang}
@@ -362,10 +385,11 @@ function DescriptionsTab({ lang, settings, setSettings }: {
 }
 
 // ── Accounts tab ───────────────────────────────────────────────────────────────
-function AccountsTab({ lang, accounts, onToggle }: {
+function AccountsTab({ lang, accounts, onToggle, onSync }: {
   lang: Language;
   accounts: PortalAccount[];
   onToggle: (a: PortalAccount) => void;
+  onSync: (a: PortalAccount) => void;
 }) {
   if (accounts.length === 0) {
     return <div className="settings-section"><p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_empty')}</p></div>;
@@ -385,25 +409,41 @@ function AccountsTab({ lang, accounts, onToggle }: {
           </tr>
         </thead>
         <tbody>
-          {accounts.map(a => (
-            <tr key={a.id} style={{ borderTop: '1px solid var(--border)' }}>
-              <td style={cell}>{a.login_id}</td>
-              <td style={cell}>{a.name}</td>
-              <td style={cell}>{a.email}</td>
-              <td style={cell}>{a.exocad_id || '—'}</td>
-              <td style={cell}>{a.created_at?.slice(0, 10)}</td>
-              <td style={cell}>
-                <span style={{ color: a.status === 'active' ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                  {a.status === 'active' ? t(lang, 'portal_acc_active') : t(lang, 'portal_acc_disabled')}
-                </span>
-              </td>
-              <td style={cell}>
-                <button className="btn btn-secondary btn-sm" onClick={() => onToggle(a)}>
-                  {a.status === 'active' ? t(lang, 'portal_acc_disable') : t(lang, 'portal_acc_enable')}
-                </button>
-              </td>
-            </tr>
-          ))}
+          {accounts.map(a => {
+            const mismatch = a.customer_mismatch ? JSON.parse(a.customer_mismatch) as Record<string, [string, string]> : null;
+            return (
+              <tr key={a.id} style={{ borderTop: '1px solid var(--border)' }}>
+                <td style={cell}>{a.login_id}</td>
+                <td style={cell}>
+                  <div>{a.name}</div>
+                  {mismatch && (
+                    <div style={{ color: 'var(--orange)', fontSize: 11, marginTop: 2 }}>
+                      ⚠ {t(lang, 'portal_acc_mismatch')}:{' '}
+                      {Object.entries(mismatch).map(([f, [old, nw]]) => `${f}: "${old}"→"${nw}"`).join(', ')}
+                    </div>
+                  )}
+                </td>
+                <td style={cell}>{a.email}</td>
+                <td style={cell}>{a.exocad_id || '—'}</td>
+                <td style={cell}>{a.created_at?.slice(0, 10)}</td>
+                <td style={cell}>
+                  <span style={{ color: a.status === 'active' ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                    {a.status === 'active' ? t(lang, 'portal_acc_active') : t(lang, 'portal_acc_disabled')}
+                  </span>
+                </td>
+                <td style={{ ...cell, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {mismatch && (
+                    <button className="btn btn-danger btn-sm" onClick={() => onSync(a)}>
+                      {t(lang, 'portal_acc_sync')}
+                    </button>
+                  )}
+                  <button className="btn btn-secondary btn-sm" onClick={() => onToggle(a)}>
+                    {a.status === 'active' ? t(lang, 'portal_acc_disable') : t(lang, 'portal_acc_enable')}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -450,6 +490,7 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide }: {
                 <th style={cell}>{t(lang, 'portal_tab_settings')}</th>
                 <th style={cell}>{t(lang, 'portal_req_detail')}</th>
                 <th style={cell}>{t(lang, 'col_status')}</th>
+                <th style={cell}>{t(lang, 'col_date')}</th>
                 <th style={cell}></th>
               </tr>
             </thead>
@@ -460,15 +501,24 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide }: {
                   <td style={cell}>
                     {r.account_name}
                     <div style={{ color: 'var(--text3)', fontSize: 11 }}>{r.account_login_id}</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 11 }}>{r.account_email}</div>
                   </td>
                   <td style={cell}>{TYPE_KEY[r.type] ? t(lang, TYPE_KEY[r.type]) : r.type}</td>
                   <td style={cell}>
-                    {r.target_serial || r.package_code || r.exocad_id || '—'}
+                    <div>{r.target_serial || r.package_code || r.exocad_id || '—'}</div>
+                    {r.note === 'quote_requested' && (
+                      <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>
+                        {t(lang, 'portal_quote_requested')}
+                      </div>
+                    )}
                   </td>
                   <td style={cell}>
                     <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
                       {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
                     </span>
+                  </td>
+                  <td style={{ ...cell, fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                    {r.created_at.slice(0, 16).replace('T', ' ')}
                   </td>
                   <td style={cell}>
                     {isPending(r.status) && (

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import type { Customer, CustomerInput, CustomerSerialSummary } from '../../shared/types';
+import type { Customer, CustomerInput, CustomerSerialSummary, SerialWithCustomer } from '../../shared/types';
 import { api } from '../client';
 
 const EMPTY_CUSTOMER: CustomerInput = {
@@ -26,6 +26,8 @@ export default function Customers() {
   const [search, setSearch]   = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [serialPopupCustomer, setSerialPopupCustomer] = useState<Customer | null>(null);
+  const [serialPopupList, setSerialPopupList] = useState<SerialWithCustomer[]>([]);
   const [form, setForm] = useState<CustomerInput>(EMPTY_CUSTOMER);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -86,6 +88,17 @@ export default function Customers() {
     setFormError('');
     setShowCreate(false);
     setEditingCustomer(customer);
+  };
+
+  const openSerialPopup = async (customer: Customer) => {
+    setSerialPopupCustomer(customer);
+    const all = await api.getSerials() as SerialWithCustomer[];
+    setSerialPopupList(all.filter(s => s.customer_id === customer.id));
+  };
+
+  const closeSerialPopup = () => {
+    setSerialPopupCustomer(null);
+    setSerialPopupList([]);
   };
 
   const closeForm = () => {
@@ -213,6 +226,8 @@ export default function Customers() {
 
           return (
             <div key={customer.id} className="card">
+              {/* Clickable info area */}
+              <div onClick={() => openSerialPopup(customer)} style={{ cursor: 'pointer' }}>
               {/* Avatar + name */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <div style={{
@@ -283,6 +298,7 @@ export default function Customers() {
                   </span>
                 )}
               </div>
+              </div>{/* end clickable area */}
 
               <div style={{ display: 'flex', gap: 6, marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                 <button onClick={() => openEdit(customer)} style={smallActionBtn}>{t(lang, 'edit')}</button>
@@ -359,6 +375,46 @@ export default function Customers() {
               <button onClick={handleSave} disabled={saving} style={primaryBtn}>
                 {saving ? t(lang, 'saving') : t(lang, 'save')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {serialPopupCustomer && (
+        <div style={overlay}>
+          <div style={{ ...modal, maxWidth: 640 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+                {serialPopupCustomer.name} — {t(lang, 'customer_serials_title')}
+              </h2>
+              <button onClick={closeSerialPopup} style={closeBtn}>✕</button>
+            </div>
+            {serialPopupList.length === 0 ? (
+              <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'customer_no_serials')}</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg3)', textAlign: 'left' }}>
+                    <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t(lang, 'label_serial_number')}</th>
+                    <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t(lang, 'label_main_product')}</th>
+                    <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t(lang, 'col_status')}</th>
+                    <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t(lang, 'col_expiry_date')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {serialPopupList.map(s => (
+                    <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 10px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{s.serial_number}</td>
+                      <td style={{ padding: '8px 10px' }}>{s.main_product || '—'}</td>
+                      <td style={{ padding: '8px 10px' }}>{s.status}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text2)' }}>{s.expiry_date?.slice(0, 10) ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <button onClick={closeSerialPopup} style={secondaryBtn}>{t(lang, 'close')}</button>
             </div>
           </div>
         </div>
