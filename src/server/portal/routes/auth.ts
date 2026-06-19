@@ -134,22 +134,23 @@ router.post('/logout', requirePortalAuth, requireCsrf, (req: Request, res: Respo
 
 // POST /portal/auth/reset-request — 등록 이메일로 일회용 재설정 링크 발송
 router.post('/reset-request', authLimiter, async (req: Request, res: Response) => {
-  // 계정 열거 방지 — 항상 동일 코드 반환
-  const OK = { ok: true, code: 'reset_link_sent' };
-
   const { login_id, email } = req.body as Record<string, string>;
-  if (!login_id || !email) { res.json(OK); return; }
+  if (!login_id?.trim() || !email?.trim()) {
+    res.status(400).json({ error: 'missing_fields' });
+    return;
+  }
 
   const account = findAccountByLoginId(login_id.trim());
   if (!account || account.email.toLowerCase() !== email.trim().toLowerCase()) {
-    res.json(OK);
+    res.status(400).json({ error: 'email_not_matched' });
     return;
   }
 
   const resetToken = generateToken(32);
   createResetToken(account.id, resetToken);
 
-  const baseUrl = process.env.PORTAL_BASE_URL || '';
+  const baseUrl = process.env.PORTAL_BASE_URL ||
+    `${req.protocol}://${req.get('host')}`;
   const resetUrl = `${baseUrl}/portal/reset?token=${resetToken}`;
 
   try {
@@ -157,11 +158,13 @@ router.post('/reset-request', authLimiter, async (req: Request, res: Response) =
       NAME: account.name,
       RESET_URL: resetUrl,
     });
-  } catch {
-    // 메일 발송 실패도 동일 응답 (정보 노출 방지)
+  } catch (err) {
+    console.error('[portal] reset-request: SMTP 발송 실패', err);
+    res.status(500).json({ error: 'mail_send_failed' });
+    return;
   }
 
-  res.json(OK);
+  res.json({ ok: true, code: 'reset_link_sent' });
 });
 
 // POST /portal/auth/reset-confirm — 토큰 + 새 비밀번호로 재설정

@@ -21,7 +21,7 @@ export interface PortalAccount {
 export function findAccountByLoginId(loginId: string): PortalAccount | null {
   return (
     getDb()
-      .prepare<[string], PortalAccount>('SELECT * FROM portal_accounts WHERE login_id = ?')
+      .prepare<[string], PortalAccount>('SELECT * FROM portal_accounts WHERE LOWER(login_id) = LOWER(?)')
       .get(loginId) ?? null
   );
 }

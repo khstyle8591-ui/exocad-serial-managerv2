@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t } from '../i18n';
 
@@ -8,17 +8,23 @@ export default function ResetRequestPage() {
   const { lang } = useAuth();
   const [loginId, setLoginId] = useState('');
   const [email, setEmail] = useState('');
-  const [msg, setMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setErrorMsg('');
     try {
-      const data = await api.post<{ ok: boolean; code?: string }>('/auth/reset-request', { login_id: loginId, email });
-      setMsg(data.code === 'reset_link_sent' ? t(lang, 'reset_link_sent') : t(lang, 'error_generic'));
-    } catch {
-      setMsg(t(lang, 'reset_link_sent')); // 계정 열거 방지 — 에러도 동일 메시지
+      await api.post<{ ok: boolean; code?: string }>('/auth/reset-request', { login_id: loginId, email });
+      setSuccessMsg(t(lang, 'reset_link_sent'));
+    } catch (err: unknown) {
+      const code = err instanceof ApiError ? err.code : undefined;
+      if (code === 'email_not_matched') setErrorMsg(t(lang, 'email_not_matched'));
+      else if (code === 'mail_send_failed') setErrorMsg(t(lang, 'mail_send_failed'));
+      else if (code === 'missing_fields') setErrorMsg(t(lang, 'error_required'));
+      else setErrorMsg(t(lang, 'error_generic'));
     } finally {
       setLoading(false);
     }
@@ -36,10 +42,11 @@ export default function ResetRequestPage() {
           {t(lang, 'reset_hint')}
         </p>
 
-        {msg ? (
-          <div className="alert alert-info" style={{ marginBottom: 0 }}>{msg}</div>
+        {successMsg ? (
+          <div className="alert alert-info" style={{ marginBottom: 0 }}>{successMsg}</div>
         ) : (
           <form onSubmit={handleSubmit}>
+            {errorMsg && <div className="alert alert-error" style={{ marginBottom: 12 }}>{errorMsg}</div>}
             <div className="form-group">
               <label>{t(lang, 'login_id')}</label>
               <input type="text" value={loginId} onChange={e => setLoginId(e.target.value)} required />
