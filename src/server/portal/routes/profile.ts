@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { requirePortalAuth, requireCsrf, type PortalRequest } from '../middleware';
-import { findAccountById, updateAccountPassword } from '../db';
+import { findAccountById, updateAccountPassword, updatePortalAccountFields } from '../db';
 import { syncPortalAccountIfNeeded } from '../sync';
 import { getDb } from '../../../main/database';
 
@@ -64,6 +64,29 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
 
   const { password_hash: _, ...safe } = account;
   res.json({ ...safe, csrf_token: pr.portalSession!.csrf_token, linked_products: linkedProducts });
+});
+
+// PATCH /portal/profile — 이메일/연락처/주소/exocad_id 수정 (이름·로그인ID는 변경 불가)
+router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
+  const pr = req as PortalRequest;
+  const { email, phone, address, exocad_id } = req.body as Record<string, string>;
+
+  if (email !== undefined) {
+    const trimmed = email.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      res.status(400).json({ error: '올바른 이메일 형식을 입력해주세요.' });
+      return;
+    }
+  }
+
+  updatePortalAccountFields(pr.portalSession!.account_id, {
+    ...(email !== undefined && { email: email.trim() }),
+    ...(phone !== undefined && { phone: phone.trim() }),
+    ...(address !== undefined && { address: address.trim() }),
+    ...(exocad_id !== undefined && { exocad_id: exocad_id.trim() }),
+  });
+
+  res.json({ ok: true });
 });
 
 // PATCH /portal/profile/language — 언어 영속 변경

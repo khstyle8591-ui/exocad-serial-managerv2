@@ -20,6 +20,8 @@ import { logActivity } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
+import { logSystem } from '../../../main/services/system-log.service';
+import { notificationService } from '../../../main/services/notification.service';
 import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
 
 const router = Router();
@@ -237,6 +239,11 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   if (action === 'reject') {
     updatePortalRequestStatus(id, 'rejected');
+    logSystem({
+      ko: `포털 신청(#${id}) 관리자 거절 — 유형: ${request.type}`,
+      en: `Portal request (#${id}) rejected by manager — type: ${request.type}`,
+      ja: `ポータル申請(#${id})管理者により却下 — 種類: ${request.type}`,
+    });
     res.json({ ok: true, status: 'rejected' });
     return;
   }
@@ -265,9 +272,34 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
         severity: 'warn',
         details: `portal 갱신중단 승인 — Playwright 시리얼 검색 실패: ${serial.serial_number}`,
       });
+      const reason = cancelResult.error || '알 수 없는 오류';
+      logSystem({
+        ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reason}`,
+        en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reason}`,
+        ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reason}`,
+      }, 'error');
+      await notificationService.sendCriticalAutomationAlert({
+        serial_number: serial.serial_number,
+        customer_name: serial.customer?.name,
+        action: '포털 갱신중단 관리자 승인 취소',
+        error: reason,
+        details: `관리자가 승인한 포털 신청(#${id})의 Playwright 취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+        trigger_id: `portal-req-${id}`,
+      });
       res.json({ ok: true, status: 'playwright_failed' });
       return;
     }
+    logSystem({
+      ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 성공: ${serial.serial_number}`,
+      en: `Portal renewal-stop approval (#${id}) — Playwright cancel succeeded: ${serial.serial_number}`,
+      ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
+    });
+  } else {
+    logSystem({
+      ko: `포털 신청(#${id}) 관리자 승인 — 유형: ${request.type}`,
+      en: `Portal request (#${id}) approved by manager — type: ${request.type}`,
+      ja: `ポータル申請(#${id})管理者により承認 — 種類: ${request.type}`,
+    });
   }
   // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 

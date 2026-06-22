@@ -20,7 +20,7 @@ function statusBadge(p: LinkedProduct, lang: Lang) {
   if (p.renewal_stop_requested) return <span className="badge badge-yellow">{t(lang, 'status_stop_requested')}</span>;
   if (p.status === 'active')    return <span className="badge badge-green">{t(lang, 'status_active')}</span>;
   if (p.status === 'cancelled') return <span className="badge badge-red">{t(lang, 'status_cancelled')}</span>;
-  if (p.status === 'expired')   return <span className="badge badge-gray">{t(lang, 'status_expired')}</span>;
+  if (p.status === 'expired')   return <span className="badge badge-red">{t(lang, 'status_expired')}</span>;
   return <span className="badge badge-gray">{p.status}</span>;
 }
 

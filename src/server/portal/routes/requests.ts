@@ -6,6 +6,7 @@ import {
   isSerialLinked,
   createPortalRequest,
   updatePortalRequestStatus,
+  markPortalRequestPlaywrightFailed,
   getPortalRequestsByAccount,
 } from '../db';
 import { serialService } from '../../../main/services/serial.service';
@@ -13,6 +14,8 @@ import { cancelService } from '../../../main/services/cancel.service';
 import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-notice.service';
 import { sendTemplate } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
+import { logSystem } from '../../../main/services/system-log.service';
+import { notificationService } from '../../../main/services/notification.service';
 
 const router = Router();
 
@@ -72,6 +75,12 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
     type: 'credit',
     exocad_id: exocad_id.trim(),
     package_code: package_code.trim(),
+  });
+
+  logSystem({
+    ko: `포털 크레딧 신청(#${requestId}) 접수 — 계정: ${account.login_id}, 패키지: ${pkg.label}`,
+    en: `Portal credit request received (#${requestId}) — account: ${account.login_id}, package: ${pkg.label}`,
+    ja: `ポータルクレジット申請(#${requestId})受付 — アカウント: ${account.login_id}, パッケージ: ${pkg.label}`,
   });
 
   // 자동 배분 OFF(기본) → 관리자 메일로 발송
@@ -140,6 +149,12 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     target_serial: serial.serial_number,
   });
 
+  logSystem({
+    ko: `포털 갱신 중단 신청(#${requestId}) 접수 — 시리얼: ${serial.serial_number}, 고객: ${serial.customer?.name || ''}`,
+    en: `Portal renewal-stop request received (#${requestId}) — serial: ${serial.serial_number}, customer: ${serial.customer?.name || ''}`,
+    ja: `ポータル更新停止申請(#${requestId})受付 — シリアル: ${serial.serial_number}, 顧客: ${serial.customer?.name || ''}`,
+  });
+
   // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 취소까지 수행
   // 인바운드 메일 failsafe와 동일한 처리 흐름
   let autoApplied = false;
@@ -156,9 +171,30 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     if (cancelResult.success && cancelResult.verified) {
       const updated = serialService.cancelSubscription(serial.id);
       if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
+      updatePortalRequestStatus(requestId, 'auto_done');
+      autoApplied = true;
+      logSystem({
+        ko: `포털 만료 윈도우 자동취소 성공 — 시리얼: ${serial.serial_number} (#${requestId})`,
+        en: `Portal expiry-window auto-cancel succeeded — serial: ${serial.serial_number} (#${requestId})`,
+        ja: `ポータル失効ウィンドウ自動キャンセル成功 — シリアル: ${serial.serial_number} (#${requestId})`,
+      });
+    } else {
+      markPortalRequestPlaywrightFailed(requestId);
+      const reason = cancelResult.error || (cancelResult.success ? '취소 결과 미검증' : '알 수 없는 오류');
+      logSystem({
+        ko: `포털 만료 윈도우 자동취소 실패 — 시리얼: ${serial.serial_number} (#${requestId}), 사유: ${reason}`,
+        en: `Portal expiry-window auto-cancel FAILED — serial: ${serial.serial_number} (#${requestId}), reason: ${reason}`,
+        ja: `ポータル失効ウィンドウ自動キャンセル失敗 — シリアル: ${serial.serial_number} (#${requestId}), 理由: ${reason}`,
+      }, 'error');
+      await notificationService.sendCriticalAutomationAlert({
+        serial_number: serial.serial_number,
+        customer_name: serial.customer?.name,
+        action: '포털 갱신중단 자동취소',
+        error: reason,
+        details: `포털 신청(#${requestId})의 만료 윈도우 자동취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+        trigger_id: triggerId,
+      });
     }
-    updatePortalRequestStatus(requestId, 'auto_done');
-    autoApplied = true;
   }
 
   const account = findAccountById(accountId);
@@ -189,6 +225,11 @@ router.post('/:id/cancel', requirePortalAuth, requireCsrf, (req: Request, res: R
   }
 
   updatePortalRequestStatus(id, 'user_cancelled');
+  logSystem({
+    ko: `포털 신청(#${id}) 고객 취소 — 유형: ${mine.type}`,
+    en: `Portal request (#${id}) cancelled by customer — type: ${mine.type}`,
+    ja: `ポータル申請(#${id})顧客によるキャンセル — 種類: ${mine.type}`,
+  });
   res.json({ ok: true });
 });
 
@@ -216,6 +257,12 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
     type: 'renewal_resume',
     target_serial: serial.serial_number,
     note: include_quote === 'true' ? 'quote_requested' : '',
+  });
+
+  logSystem({
+    ko: `포털 갱신 재개 신청(#${requestId}) 접수 — 시리얼: ${serial.serial_number}`,
+    en: `Portal renewal-resume request received (#${requestId}) — serial: ${serial.serial_number}`,
+    ja: `ポータル更新再開申請(#${requestId})受付 — シリアル: ${serial.serial_number}`,
   });
 
   const account = findAccountById(accountId);

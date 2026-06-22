@@ -56,11 +56,26 @@ function statusBadge(status: string, lang: Lang) {
   return <span className={`badge ${entry.cls}`}>{t(lang, entry.key)}</span>;
 }
 
+// renewal_stop은 자동/수동 처리 구분 없이 고객에게는 승인/실패/대기 3가지로만 표시
+function renewalStopStatusBadge(status: string, lang: Lang) {
+  if (status === 'auto_done' || status === 'approved') {
+    return <span className="badge badge-green">{t(lang, 'req_status_approved')}</span>;
+  }
+  if (status === 'rejected') {
+    return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
+  }
+  if (status === 'user_cancelled') {
+    return <span className="badge badge-gray">{t(lang, 'req_status_user_cancelled')}</span>;
+  }
+  // pending / manager_review
+  return <span className="badge badge-yellow">{t(lang, 'req_status_pending')}</span>;
+}
+
 function serialStatusBadge(status: string, lang: Lang) {
   const map: Record<string, { cls: string; key: Parameters<typeof t>[1] }> = {
     active:         { cls: 'badge-green',  key: 'status_active' },
     cancelled:      { cls: 'badge-red',    key: 'status_cancelled' },
-    expired:        { cls: 'badge-gray',   key: 'status_expired' },
+    expired:        { cls: 'badge-red',    key: 'status_expired' },
     stop_requested: { cls: 'badge-yellow', key: 'status_stop_requested' },
   };
   const entry = map[status];
@@ -256,6 +271,9 @@ export default function RequestsPage() {
 
       {error   && <div className="alert alert-error">{error}</div>}
       {success && <div className="alert alert-success">{success}</div>}
+      {requests.some(r => r.type === 'renewal_stop' && r.status === 'rejected') && (
+        <div className="alert alert-error">{t(lang, 'renewal_stop_failed_banner')}</div>
+      )}
 
       {/* History */}
       {tab === 'history' && (
@@ -290,8 +308,8 @@ export default function RequestsPage() {
                       {t(lang, 'cancel_request')}
                     </button>
                   )}
-                  {r.note === 'playwright_failed'
-                    ? <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>
+                  {r.type === 'renewal_stop'
+                    ? renewalStopStatusBadge(r.status, lang)
                     : statusBadge(r.status, lang)
                   }
                 </div>

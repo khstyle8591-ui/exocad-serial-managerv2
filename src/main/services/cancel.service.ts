@@ -4,6 +4,7 @@ import fs from 'fs';
 import { serialService } from './serial.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
 import { logActivity } from './activity-log.service';
+import { notificationService } from './notification.service';
 import { markPortalRequestPlaywrightFailed, findActiveRenewalStopRequest } from '../../server/portal/db';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
@@ -788,6 +789,14 @@ export class CancelService {
         } catch (dbErr) {
           logger.warn(`[auto-cancel] portal request update failed: ${getErrorMessage(dbErr)}`);
         }
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: '만료일 전 자동취소 (스케줄러)',
+          error: result.error,
+          details: `만료 D-${daysBefore}일 자동취소 스케줄러가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+          trigger_id: `auto-cancel-${serial.serial_number}`,
+        });
       }
       results.push(result);
 

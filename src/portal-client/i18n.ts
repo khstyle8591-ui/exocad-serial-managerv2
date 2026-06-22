@@ -38,7 +38,7 @@ const T = {
     phone_label: '연락처', address_label: '주소',
     pw_changed: '비밀번호가 변경되었습니다.',
     // Misc
-    loading: '로딩 중...', cancel: '취소', optional: '선택',
+    loading: '로딩 중...', cancel: '취소', optional: '선택', edit: '수정', profile_updated: '프로필이 수정되었습니다.',
     error_generic: '오류가 발생했습니다.',
     confirm_ok: '확인', mismatch_title: '데이터를 찾을 수 없습니다',
     exocad_id_label: 'My.exocad ID',
@@ -67,6 +67,7 @@ const T = {
     cancel_request_confirm: '이 신청을 취소하시겠습니까?',
     request_cancelled: '신청이 취소되었습니다.',
     renewal_stop_failed: '갱신 중단 실패',
+    renewal_stop_failed_banner: '갱신 중단 처리에 실패했습니다. 정확한 시리얼 번호를 확인하신 후 다시 신청해주세요. 문제가 계속되면 관리자에게 문의해주세요.',
   },
   en: {
     dashboard: 'Dashboard', requests: 'Requests', profile: 'Profile', logout: 'Log out',
@@ -98,7 +99,7 @@ const T = {
     password_hint: 'Min 8 chars, uppercase + lowercase + number',
     phone_label: 'Phone', address_label: 'Address',
     pw_changed: 'Password changed successfully.',
-    loading: 'Loading...', cancel: 'Cancel', optional: 'optional',
+    loading: 'Loading...', cancel: 'Cancel', optional: 'optional', edit: 'Edit', profile_updated: 'Profile updated.',
     error_generic: 'An error occurred.',
     confirm_ok: 'OK', mismatch_title: 'No matching data found',
     exocad_id_label: 'My.exocad ID',
@@ -125,6 +126,7 @@ const T = {
     cancel_request_confirm: 'Cancel this request?',
     request_cancelled: 'Request has been cancelled.',
     renewal_stop_failed: 'Stop renewal failed',
+    renewal_stop_failed_banner: 'We were unable to process your renewal stop request. Please verify the serial number and submit a new request. Contact your administrator if the problem continues.',
   },
   ja: {
     dashboard: 'ダッシュボード', requests: '申請', profile: 'プロフィール', logout: 'ログアウト',
@@ -156,7 +158,7 @@ const T = {
     password_hint: '8文字以上、大小文字+数字を含む',
     phone_label: '電話番号', address_label: '住所',
     pw_changed: 'パスワードが変更されました。',
-    loading: '読み込み中...', cancel: 'キャンセル', optional: '任意',
+    loading: '読み込み中...', cancel: 'キャンセル', optional: '任意', edit: '編集', profile_updated: 'プロフィールが更新されました。',
     error_generic: 'エラーが発生しました。',
     confirm_ok: '確認', mismatch_title: 'データが見つかりません',
     exocad_id_label: 'My.exocad ID',
@@ -183,6 +185,7 @@ const T = {
     cancel_request_confirm: 'この申請をキャンセルしますか？',
     request_cancelled: '申請がキャンセルされました。',
     renewal_stop_failed: '更新停止に失敗しました',
+    renewal_stop_failed_banner: '更新停止の処理に失敗しました。正しいシリアル番号をご確認の上、再度申請してください。問題が続く場合は管理者にお問い合わせください。',
   },
 } as const;
 

@@ -466,7 +466,9 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
     { id: 'renewal_stop', key: 'portal_type_renewal_stop' },
     { id: 'renewal_resume', key: 'portal_type_renewal_resume' },
   ];
-  const isPending = (s: string) => s === 'pending' || s === 'manager_review';
+  const isActionable = (r: AdminRequest) =>
+    r.status === 'pending' || r.status === 'manager_review' ||
+    (r.status === 'rejected' && r.note === 'playwright_failed');
 
   return (
     <div>
@@ -525,15 +527,21 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
                     )}
                   </td>
                   <td style={cell}>
-                    <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
-                      {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
-                    </span>
+                    {r.status === 'rejected' && r.note === 'playwright_failed' ? (
+                      <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                        {t(lang, 'portal_st_cancel_failed')}
+                      </span>
+                    ) : (
+                      <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
+                        {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
+                      </span>
+                    )}
                   </td>
                   <td style={{ ...cell, fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
                     {r.created_at.slice(0, 16).replace('T', ' ')}
                   </td>
                   <td style={cell}>
-                    {isPending(r.status) && (
+                    {isActionable(r) && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
                           onClick={() => onDecide(r, 'approve')}>
