@@ -2,9 +2,11 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { requirePortalAuth, requireCsrf, type PortalRequest } from '../middleware';
-import { findAccountById, updateAccountPassword, updatePortalAccountFields } from '../db';
+import { findAccountById, updateAccountPassword, updatePortalAccountFields, setCustomerMismatch } from '../db';
 import { syncPortalAccountIfNeeded } from '../sync';
 import { getDb } from '../../../main/database';
+import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
+import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 
 const router = Router();
 
@@ -79,12 +81,54 @@ router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) 
     }
   }
 
-  updatePortalAccountFields(pr.portalSession!.account_id, {
+  const accountId = pr.portalSession!.account_id;
+  updatePortalAccountFields(accountId, {
     ...(email !== undefined && { email: email.trim() }),
     ...(phone !== undefined && { phone: phone.trim() }),
     ...(address !== undefined && { address: address.trim() }),
     ...(exocad_id !== undefined && { exocad_id: exocad_id.trim() }),
   });
+
+  // 매니저 DB(customers) 즉시 반영 — 연결된 고객 레코드에 email/phone/address 전파.
+  // (exocad_id는 customers 테이블에 컬럼이 없어 portal_accounts에만 보관 → 매니저 Accounts 탭에서 확인)
+  const account = findAccountById(accountId);
+  const link = getDb()
+    .prepare<[number], { customer_id: number }>(
+      'SELECT customer_id FROM portal_account_links WHERE account_id = ? ORDER BY id ASC LIMIT 1',
+    )
+    .get(accountId);
+
+  if (account && link) {
+    updateCustomer(link.customer_id, {
+      ...(email   !== undefined && { email:   account.email }),
+      ...(phone   !== undefined && { phone:   account.phone }),
+      ...(address !== undefined && { address: account.address }),
+    });
+
+    // 전파 후 불일치 재검출 (name/email/phone). 이름은 포털에서 수정 불가하므로 차이가 남을 수 있음.
+    const customer = getCustomerById(link.customer_id);
+    if (customer) {
+      const mismatch: Record<string, [string, string]> = {};
+      const pairs: Array<[string, string, string]> = [
+        ['name',  account.name?.trim()  ?? '', customer.name?.trim()  ?? ''],
+        ['email', account.email?.trim() ?? '', customer.email?.trim() ?? ''],
+        ['phone', account.phone?.trim() ?? '', customer.phone?.trim() ?? ''],
+      ];
+      for (const [field, av, cv] of pairs) {
+        if (av && cv && av.toLowerCase() !== cv.toLowerCase()) mismatch[field] = [cv, av];
+      }
+      setCustomerMismatch(accountId, Object.keys(mismatch).length > 0 ? mismatch : null);
+    }
+
+    logActivity({
+      action: 'system', actor: 'system', severity: 'info',
+      details: pickLang({
+        ko: `포털 프로필 수정 → 고객 #${link.customer_id} DB 반영 (계정 #${accountId})`,
+        en: `Portal profile updated → applied to customer #${link.customer_id} DB (account #${accountId})`,
+        ja: `ポータルプロフィール更新 → 顧客 #${link.customer_id} DBへ反映 (アカウント #${accountId})`,
+      }),
+    });
+  }
 
   res.json({ ok: true });
 });
