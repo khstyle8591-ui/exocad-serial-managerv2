@@ -201,7 +201,7 @@ router.post('/accounts/:id/sync-to-customer', (req: Request, res: Response) => {
 router.get('/requests', (req: Request, res: Response) => {
   const { type, status } = req.query as Record<string, string>;
   const validTypes: PortalRequestType[] = ['credit', 'renewal_stop', 'renewal_resume'];
-  const validStatuses: PortalRequestStatus[] = ['pending', 'manager_review', 'auto_done', 'approved', 'rejected', 'user_cancelled'];
+  const validStatuses: PortalRequestStatus[] = ['pending', 'manager_review', 'auto_done', 'approved', 'rejected', 'user_cancelled', 'cancel_requested'];
   const filter: { type?: PortalRequestType; status?: PortalRequestStatus } = {};
   if (type && validTypes.includes(type as PortalRequestType)) filter.type = type as PortalRequestType;
   if (status && validStatuses.includes(status as PortalRequestStatus)) filter.status = status as PortalRequestStatus;
@@ -321,6 +321,57 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   updatePortalRequestStatus(id, 'approved');
   res.json({ ok: true, status: 'approved' });
+});
+
+// PATCH /portal/admin/requests/:id/decide-cancel — 고객의 취소 요청(cancel_requested)을 승인/거절
+router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+    const { action } = req.body as { action?: string };
+    if (action !== 'approve' && action !== 'reject') {
+      res.status(400).json({ error: "action은 'approve' 또는 'reject'여야 합니다." });
+      return;
+    }
+
+    const request = getPortalRequestById(id);
+    if (!request) { res.status(404).json({ error: 'Not found' }); return; }
+    if (request.status !== 'cancel_requested') {
+      res.status(409).json({ error: '취소 요청 상태가 아닙니다.' });
+      return;
+    }
+
+    if (action === 'approve') {
+      // 취소 확정 — 원래 신청은 최종적으로 취소됨
+      updatePortalRequestStatus(id, 'user_cancelled');
+      logActivity({
+        action: 'system', actor: 'manual', severity: 'info',
+        details: pickLang({
+          ko: `포털 신청(#${id}) 취소 요청 승인 — 유형: ${request.type}`,
+          en: `Portal request (#${id}) cancellation approved by manager — type: ${request.type}`,
+          ja: `ポータル申請(#${id})キャンセル要請を承認 — 種類: ${request.type}`,
+        }),
+      });
+      res.json({ ok: true, status: 'user_cancelled' });
+      return;
+    }
+
+    // 거절 — 원래 신청을 pending으로 되돌려 정상 처리를 재개
+    updatePortalRequestStatus(id, 'pending');
+    logActivity({
+      action: 'system', actor: 'manual', severity: 'info',
+      details: pickLang({
+        ko: `포털 신청(#${id}) 취소 요청 거절 — 유형: ${request.type} (대기 상태로 복귀)`,
+        en: `Portal request (#${id}) cancellation rejected by manager — type: ${request.type} (reverted to pending)`,
+        ja: `ポータル申請(#${id})キャンセル要請を却下 — 種類: ${request.type}（保留中に戻す）`,
+      }),
+    });
+    res.json({ ok: true, status: 'pending' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
 });
 
 export default router;

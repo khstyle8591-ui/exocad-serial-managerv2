@@ -169,7 +169,7 @@ export function listCustomerPortalInfo(): CustomerPortalInfo[] {
 // ── Portal requests ───────────────────────────────────────────────────────────
 
 export type PortalRequestType = 'credit' | 'renewal_stop' | 'renewal_resume';
-export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled';
+export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled' | 'cancel_requested';
 
 export interface PortalRequestRow {
   id: number;

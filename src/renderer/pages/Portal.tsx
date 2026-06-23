@@ -64,6 +64,7 @@ const STATUS_KEY: Record<string, TranslationKey> = {
   approved: 'portal_st_approved',
   rejected: 'portal_st_rejected',
   user_cancelled: 'portal_st_user_cancelled',
+  cancel_requested: 'portal_st_cancel_requested',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -72,7 +73,8 @@ const STATUS_COLOR: Record<string, string> = {
   auto_done: 'var(--accent)',
   approved: 'var(--green)',
   rejected: 'var(--red)',
-  user_cancelled: 'var(--red)',
+  user_cancelled: 'var(--text3)',
+  cancel_requested: 'var(--red)',
 };
 
 export default function Portal() {
@@ -164,6 +166,17 @@ export default function Portal() {
     }
   }
 
+  async function decideCancel(req: AdminRequest, action: 'approve' | 'reject') {
+    const confirmKey = action === 'approve' ? 'portal_confirm_cancel_approve' : 'portal_confirm_cancel_reject';
+    if (!window.confirm(t(lang, confirmKey))) return;
+    try {
+      await api.portal.decideCancelRequest(req.id, action);
+      loadRequests();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    }
+  }
+
   if (loading || !settings) return <div className="page-wrapper">{t(lang, 'loading')}</div>;
 
   const showSaveBtn = tab === 'settings' || tab === 'packages' || tab === 'descriptions';
@@ -220,6 +233,7 @@ export default function Portal() {
           filter={reqFilter}
           onFilter={f => { setReqFilter(f); loadRequests(f); }}
           onDecide={decide}
+          onDecideCancel={decideCancel}
           creditPackages={settings.credit_packages ?? []}
         />
       )}
@@ -452,12 +466,13 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
 }
 
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackages }: {
+function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
   onFilter: (f: string) => void;
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
+  onDecideCancel: (r: AdminRequest, action: 'approve' | 'reject') => void;
   creditPackages: CreditPackage[];
 }) {
   const FILTERS: { id: string; key: TranslationKey }[] = [
@@ -501,7 +516,7 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
             </thead>
             <tbody>
               {requests.map(r => (
-                <tr key={r.id} style={r.status === 'user_cancelled'
+                <tr key={r.id} style={r.status === 'cancel_requested'
                   ? { borderTop: '1px solid var(--border)', outline: '2px solid var(--red)', outlineOffset: '-1px', background: 'rgba(229, 62, 62, 0.08)' }
                   : { borderTop: '1px solid var(--border)' }}>
                   <td style={cell}>{r.id}</td>
@@ -540,9 +555,9 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
                         {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
                       </span>
                     )}
-                    {r.status === 'user_cancelled' && (
+                    {r.status === 'cancel_requested' && (
                       <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
-                        {t(lang, 'portal_st_user_cancelled_note')}
+                        {t(lang, 'portal_st_cancel_requested_note')}
                       </div>
                     )}
                   </td>
@@ -550,7 +565,18 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
                     {r.created_at.slice(0, 16).replace('T', ' ')}
                   </td>
                   <td style={cell}>
-                    {isActionable(r) && (
+                    {r.status === 'cancel_requested' ? (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-sm" style={{ background: 'var(--red)', color: '#fff' }}
+                          onClick={() => onDecideCancel(r, 'approve')}>
+                          {t(lang, 'portal_req_cancel_approve')}
+                        </button>
+                        <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
+                          onClick={() => onDecideCancel(r, 'reject')}>
+                          {t(lang, 'portal_req_cancel_reject')}
+                        </button>
+                      </div>
+                    ) : isActionable(r) && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
                           onClick={() => onDecide(r, 'approve')}>

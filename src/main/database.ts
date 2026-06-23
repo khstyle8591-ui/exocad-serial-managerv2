@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
 
 type Migration = {
   version: number;
@@ -364,7 +364,7 @@ function createPortalTables(): void {
       exocad_id     TEXT    NOT NULL DEFAULT '',
       package_code  TEXT    NOT NULL DEFAULT '',
       status        TEXT    NOT NULL DEFAULT 'pending'
-                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled')),
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled','cancel_requested')),
       note          TEXT    NOT NULL DEFAULT '',
       created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
       processed_at  TEXT,
@@ -443,7 +443,7 @@ function migratePortalRequestsUserCancelled(): void {
       exocad_id     TEXT    NOT NULL DEFAULT '',
       package_code  TEXT    NOT NULL DEFAULT '',
       status        TEXT    NOT NULL DEFAULT 'pending'
-                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled')),
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled','cancel_requested')),
       note          TEXT    NOT NULL DEFAULT '',
       created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
       processed_at  TEXT,
@@ -462,6 +462,51 @@ function migratePortalRequestsUserCancelled(): void {
   `);
 
   console.log('[DB] Migration complete: portal_requests.status now includes user_cancelled');
+}
+
+/**
+ * portal_requests.status CHECK 제약에 'cancel_requested'가 빠진 구 스키마를 마이그레이션.
+ * 고객의 취소 신청은 이제 즉시 'user_cancelled'로 확정되지 않고 'cancel_requested'(매니저 승인 대기)
+ * 상태를 거치므로 이 값이 제약에 없으면 동일하게 CHECK constraint 위반(500)이 발생한다.
+ */
+function migratePortalRequestsCancelRequested(): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE name='portal_requests' AND type='table'")
+    .get() as { sql: string } | undefined;
+
+  if (!row) return;                                  // 테이블 자체가 없으면 createPortalTables()가 처리
+  if (row.sql.includes("'cancel_requested'")) return; // 이미 올바른 제약 보유
+
+  console.log('[DB] Migrating portal_requests: adding cancel_requested status...');
+
+  db.exec(`
+    CREATE TABLE portal_requests_new (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id    INTEGER NOT NULL,
+      type          TEXT    NOT NULL CHECK(type IN ('credit','renewal_stop','renewal_resume')),
+      target_serial TEXT    NOT NULL DEFAULT '',
+      exocad_id     TEXT    NOT NULL DEFAULT '',
+      package_code  TEXT    NOT NULL DEFAULT '',
+      status        TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled','cancel_requested')),
+      note          TEXT    NOT NULL DEFAULT '',
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      processed_at  TEXT,
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
+
+    INSERT INTO portal_requests_new SELECT * FROM portal_requests;
+
+    DROP TABLE portal_requests;
+
+    ALTER TABLE portal_requests_new RENAME TO portal_requests;
+
+    CREATE INDEX IF NOT EXISTS idx_pr_account ON portal_requests(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pr_type    ON portal_requests(type, status);
+    CREATE INDEX IF NOT EXISTS idx_pr_serial  ON portal_requests(target_serial) WHERE target_serial != '';
+  `);
+
+  console.log('[DB] Migration complete: portal_requests.status now includes cancel_requested');
 }
 
 const migrations: Migration[] = [
@@ -509,6 +554,11 @@ const migrations: Migration[] = [
     version: 9,
     name: 'portal_requests user_cancelled status',
     run: migratePortalRequestsUserCancelled,
+  },
+  {
+    version: 10,
+    name: 'portal_requests cancel_requested status',
+    run: migratePortalRequestsCancelRequested,
   },
 ];
 

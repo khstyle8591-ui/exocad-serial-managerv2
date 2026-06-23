@@ -231,7 +231,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   res.json({ ok: true, request_id: requestId, auto_applied: autoApplied, processing_failed: processingFailed });
 });
 
-// ── POST /portal/requests/:id/cancel — 대기 중 신청 취소 ────────────────────
+// ── POST /portal/requests/:id/cancel — 대기 중 신청 취소 요청 (매니저 승인 필요) ──
 router.post('/:id/cancel', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
   try {
     const pr = req as PortalRequest;
@@ -246,13 +246,14 @@ router.post('/:id/cancel', requirePortalAuth, requireCsrf, (req: Request, res: R
       return;
     }
 
-    updatePortalRequestStatus(id, 'user_cancelled');
+    // 즉시 확정하지 않고 매니저 승인/거절 대기 상태로 전환
+    updatePortalRequestStatus(id, 'cancel_requested');
     logActivity({
       action: 'system', actor: 'system', severity: 'info',
       details: pickLang({
-        ko: `포털 신청(#${id}) 고객 취소 — 유형: ${mine.type}`,
-        en: `Portal request (#${id}) cancelled by customer — type: ${mine.type}`,
-        ja: `ポータル申請(#${id})顧客によるキャンセル — 種類: ${mine.type}`,
+        ko: `포털 신청(#${id}) 고객 취소 요청 — 유형: ${mine.type} (매니저 승인 대기)`,
+        en: `Portal request (#${id}) cancellation requested by customer — type: ${mine.type} (awaiting manager decision)`,
+        ja: `ポータル申請(#${id})顧客によるキャンセル要請 — 種類: ${mine.type}（管理者承認待ち）`,
       }),
     });
     res.json({ ok: true });

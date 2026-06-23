@@ -49,8 +49,9 @@ function statusBadge(status: string, lang: Lang) {
     manager_review: { cls: 'badge-blue',   key: 'req_status_manager_review' },
     auto_done:      { cls: 'badge-accent', key: 'req_status_auto_done' },
     approved:       { cls: 'badge-green',  key: 'req_status_approved' },
-    rejected:       { cls: 'badge-red',    key: 'req_status_rejected' },
-    user_cancelled: { cls: 'badge-gray',   key: 'req_status_user_cancelled' },
+    rejected:         { cls: 'badge-red',    key: 'req_status_rejected' },
+    user_cancelled:   { cls: 'badge-gray',   key: 'req_status_user_cancelled' },
+    cancel_requested: { cls: 'badge-yellow', key: 'req_status_cancel_requested' },
   };
   const entry = map[status];
   if (!entry) return <span className="badge badge-gray">{status}</span>;
@@ -74,6 +75,9 @@ function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
   }
   if (status === 'user_cancelled') {
     return <span className="badge badge-gray">{t(lang, 'req_status_user_cancelled')}</span>;
+  }
+  if (status === 'cancel_requested') {
+    return <span className="badge badge-yellow">{t(lang, 'req_status_cancel_requested')}</span>;
   }
   // pending / manager_review
   return <span className="badge badge-yellow">{t(lang, 'req_status_pending')}</span>;
@@ -158,7 +162,7 @@ export default function RequestsPage() {
     if (!window.confirm(t(lang, 'cancel_request_confirm'))) return;
     try {
       await api.post(`/requests/${id}/cancel`, {});
-      setSuccess(t(lang, 'request_cancelled'));
+      setSuccess(t(lang, 'cancel_request_submitted'));
       reloadRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : t(lang, 'error_generic'));
