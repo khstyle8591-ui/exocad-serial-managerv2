@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 
 type Migration = {
   version: number;
@@ -364,7 +364,7 @@ function createPortalTables(): void {
       exocad_id     TEXT    NOT NULL DEFAULT '',
       package_code  TEXT    NOT NULL DEFAULT '',
       status        TEXT    NOT NULL DEFAULT 'pending'
-                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected')),
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled')),
       note          TEXT    NOT NULL DEFAULT '',
       created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
       processed_at  TEXT,
@@ -418,6 +418,52 @@ function migratePortalAccountMismatch(): void {
   db.exec('ALTER TABLE portal_accounts ADD COLUMN customer_mismatch TEXT');
 }
 
+/**
+ * portal_requests.status CHECK 제약에 'user_cancelled'가 빠진 구 스키마를 마이그레이션.
+ * 고객이 pending 신청을 취소하면 UPDATE ... SET status='user_cancelled'가 실행되는데,
+ * 구 제약에는 이 값이 없어 SQLite CHECK constraint 위반으로 500 에러가 발생했음.
+ * SQLite는 CHECK 제약을 ALTER로 변경할 수 없어 테이블 재생성이 필요.
+ */
+function migratePortalRequestsUserCancelled(): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE name='portal_requests' AND type='table'")
+    .get() as { sql: string } | undefined;
+
+  if (!row) return;                              // 테이블 자체가 없으면 createPortalTables()가 처리
+  if (row.sql.includes("'user_cancelled'")) return; // 이미 올바른 제약 보유
+
+  console.log('[DB] Migrating portal_requests: adding user_cancelled status...');
+
+  db.exec(`
+    CREATE TABLE portal_requests_new (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id    INTEGER NOT NULL,
+      type          TEXT    NOT NULL CHECK(type IN ('credit','renewal_stop','renewal_resume')),
+      target_serial TEXT    NOT NULL DEFAULT '',
+      exocad_id     TEXT    NOT NULL DEFAULT '',
+      package_code  TEXT    NOT NULL DEFAULT '',
+      status        TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','manager_review','auto_done','approved','rejected','user_cancelled')),
+      note          TEXT    NOT NULL DEFAULT '',
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      processed_at  TEXT,
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
+
+    INSERT INTO portal_requests_new SELECT * FROM portal_requests;
+
+    DROP TABLE portal_requests;
+
+    ALTER TABLE portal_requests_new RENAME TO portal_requests;
+
+    CREATE INDEX IF NOT EXISTS idx_pr_account ON portal_requests(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pr_type    ON portal_requests(type, status);
+    CREATE INDEX IF NOT EXISTS idx_pr_serial  ON portal_requests(target_serial) WHERE target_serial != '';
+  `);
+
+  console.log('[DB] Migration complete: portal_requests.status now includes user_cancelled');
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -458,6 +504,11 @@ const migrations: Migration[] = [
     version: 8,
     name: 'portal_accounts customer_mismatch column',
     run: migratePortalAccountMismatch,
+  },
+  {
+    version: 9,
+    name: 'portal_requests user_cancelled status',
+    run: migratePortalRequestsUserCancelled,
   },
 ];
 

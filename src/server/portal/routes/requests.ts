@@ -16,8 +16,11 @@ import { sendTemplate } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { notificationService } from '../../../main/services/notification.service';
+import { logger } from '../../../main/utils/logger';
 
 const router = Router();
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 // ── 소유권 검증 헬퍼 ──────────────────────────────────────────────────────────
 
@@ -230,28 +233,33 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
 
 // ── POST /portal/requests/:id/cancel — 대기 중 신청 취소 ────────────────────
 router.post('/:id/cancel', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
-  const pr = req as PortalRequest;
-  const accountId = pr.portalSession!.account_id;
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+  try {
+    const pr = req as PortalRequest;
+    const accountId = pr.portalSession!.account_id;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
 
-  const mine = getPortalRequestsByAccount(accountId).find(r => r.id === id);
-  if (!mine) { res.status(404).json({ error: 'Not found' }); return; }
-  if (mine.status !== 'pending') {
-    res.status(400).json({ error: 'only_pending_cancellable' });
-    return;
+    const mine = getPortalRequestsByAccount(accountId).find(r => r.id === id);
+    if (!mine) { res.status(404).json({ error: 'Not found' }); return; }
+    if (mine.status !== 'pending') {
+      res.status(400).json({ error: 'only_pending_cancellable' });
+      return;
+    }
+
+    updatePortalRequestStatus(id, 'user_cancelled');
+    logActivity({
+      action: 'system', actor: 'system', severity: 'info',
+      details: pickLang({
+        ko: `포털 신청(#${id}) 고객 취소 — 유형: ${mine.type}`,
+        en: `Portal request (#${id}) cancelled by customer — type: ${mine.type}`,
+        ja: `ポータル申請(#${id})顧客によるキャンセル — 種類: ${mine.type}`,
+      }),
+    });
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    logger.error(`[portal] request cancel failed: ${getErrorMessage(err)}`);
+    res.status(500).json({ error: getErrorMessage(err) });
   }
-
-  updatePortalRequestStatus(id, 'user_cancelled');
-  logActivity({
-    action: 'system', actor: 'system', severity: 'info',
-    details: pickLang({
-      ko: `포털 신청(#${id}) 고객 취소 — 유형: ${mine.type}`,
-      en: `Portal request (#${id}) cancelled by customer — type: ${mine.type}`,
-      ja: `ポータル申請(#${id})顧客によるキャンセル — 種類: ${mine.type}`,
-    }),
-  });
-  res.json({ ok: true });
 });
 
 // ── POST /portal/requests/renewal-resume — 갱신 재개 요청 (접수만) ───────────
