@@ -164,6 +164,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 취소까지 수행
   // 인바운드 메일 failsafe와 동일한 처리 흐름
   let autoApplied = false;
+  let processingFailed = false;
   if (serial.expiry_date && isInFailsafeWindow(serial.expiry_date)) {
     const triggerId = `portal-req-${requestId}`;
     serialService.setStopRequested(
@@ -188,6 +189,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
         }),
       });
     } else {
+      processingFailed = true;
       markPortalRequestPlaywrightFailed(requestId);
       const reason = cancelResult.error || (cancelResult.success ? '취소 결과 미검증' : '알 수 없는 오류');
       logActivity({
@@ -223,7 +225,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     }).catch(() => {});
   }
 
-  res.json({ ok: true, request_id: requestId, auto_applied: autoApplied });
+  res.json({ ok: true, request_id: requestId, auto_applied: autoApplied, processing_failed: processingFailed });
 });
 
 // ── POST /portal/requests/:id/cancel — 대기 중 신청 취소 ────────────────────

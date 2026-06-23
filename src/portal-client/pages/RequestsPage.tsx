@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { t, type Lang } from '../i18n';
+import Modal from '../components/Modal';
 
 interface CreditPackage {
   id: string;
@@ -105,6 +106,8 @@ export default function RequestsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [warning, setWarning] = useState('');
+  const [showFailurePopup, setShowFailurePopup] = useState(false);
 
   // credit form
   const [exocadId, setExocadId] = useState('');
@@ -129,6 +132,9 @@ export default function RequestsPage() {
         setQuoteSent(c.resume_quote_sent);
         setOwnedSerials(l.links.flatMap(lk => lk.serials));
         if (c.packages.length > 0) setPkgCode(c.packages[0].id);
+        if (r.requests.some(req => req.type === 'renewal_stop' && req.status === 'rejected')) {
+          setShowFailurePopup(true);
+        }
       })
       .catch(() => { /* ignore */ })
       .finally(() => setLoadingData(false));
@@ -185,17 +191,19 @@ export default function RequestsPage() {
 
   async function submitRenewalStop(e: React.FormEvent) {
     e.preventDefault();
-    setError(''); setSuccess(''); setSubmitting(true);
+    setError(''); setSuccess(''); setWarning(''); setSubmitting(true);
     try {
-      const res = await api.post<{ request_id: number; auto_applied?: boolean }>(
+      const res = await api.post<{ request_id: number; auto_applied?: boolean; processing_failed?: boolean }>(
         '/requests/renewal-stop',
         { target_serial: stopSerial },
       );
-      setSuccess(
-        res.auto_applied
-          ? `${t(lang, 'stop_applied_now')} (${t(lang, 'request_no')}: #${res.request_id})`
-          : submittedMsg(res.request_id),
-      );
+      if (res.auto_applied) {
+        setSuccess(`${t(lang, 'stop_applied_now')} (${t(lang, 'request_no')}: #${res.request_id})`);
+      } else if (res.processing_failed) {
+        setWarning(`${t(lang, 'stop_request_processing_failed')} (${t(lang, 'request_no')}: #${res.request_id})`);
+      } else {
+        setSuccess(submittedMsg(res.request_id));
+      }
       setStopSerial('');
       setTab('history');
       reloadRequests();
@@ -262,7 +270,7 @@ export default function RequestsPage() {
           <button
             key={tb.id}
             className={`btn btn-sm ${tab === tb.id ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => { setTab(tb.id); setError(''); setSuccess(''); setShowQuotePrompt(false); }}
+            onClick={() => { setTab(tb.id); setError(''); setSuccess(''); setWarning(''); setShowQuotePrompt(false); }}
           >
             {tb.label}
           </button>
@@ -271,9 +279,16 @@ export default function RequestsPage() {
 
       {error   && <div className="alert alert-error">{error}</div>}
       {success && <div className="alert alert-success">{success}</div>}
-      {requests.some(r => r.type === 'renewal_stop' && r.status === 'rejected') && (
-        <div className="alert alert-error">{t(lang, 'renewal_stop_failed_banner')}</div>
-      )}
+      {warning && <div className="alert alert-warn">{warning}</div>}
+
+      <Modal
+        open={showFailurePopup}
+        title={t(lang, 'renewal_stop_failed_title')}
+        onClose={() => setShowFailurePopup(false)}
+        closeLabel={t(lang, 'confirm_ok')}
+      >
+        {t(lang, 'renewal_stop_failed_banner')}
+      </Modal>
 
       {/* History */}
       {tab === 'history' && (
