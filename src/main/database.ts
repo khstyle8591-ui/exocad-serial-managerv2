@@ -469,6 +469,12 @@ function runMigrations(): void {
     );
   }
 
+  // 자가 치유: user_version이 이미 2 이상으로 기록된 DB라도(예: 레거시 DB를 리네임해
+  // 가져온 경우) inbound_mails 테이블이 실제로는 구버전 컬럼 구성일 수 있다.
+  // 이 함수는 자체적으로 idempotent(이미 정상이면 즉시 return)하므로 버전 게이팅과
+  // 무관하게 매 부팅 시 호출해 실제 스키마를 검증/복구한다.
+  migrateInboundClassificationConstraint();
+
   for (const migration of migrations) {
     if (migration.version <= currentVersion) continue;
     logger.info(`[DB] Running migration ${migration.version}: ${migration.name}`);
