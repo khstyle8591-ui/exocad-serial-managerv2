@@ -11,6 +11,7 @@ import {
   getPortalRequestById,
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailedByManager,
+  markPortalRequestCancelRejected,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
@@ -357,17 +358,18 @@ router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
       return;
     }
 
-    // 거절 — 원래 신청을 pending으로 되돌려 정상 처리를 재개
-    updatePortalRequestStatus(id, 'pending');
+    // 거절 — 취소 요청을 거절하고 원래 신청은 승인 확정(approved)으로 처리.
+    // note='cancel_rejected'로 구분해 포털/매니저 화면에 별도 표시하고 재취소 신청을 막는다.
+    markPortalRequestCancelRejected(id);
     logActivity({
       action: 'system', actor: 'manual', severity: 'info',
       details: pickLang({
-        ko: `포털 신청(#${id}) 취소 요청 거절 — 유형: ${request.type} (대기 상태로 복귀)`,
-        en: `Portal request (#${id}) cancellation rejected by manager — type: ${request.type} (reverted to pending)`,
-        ja: `ポータル申請(#${id})キャンセル要請を却下 — 種類: ${request.type}（保留中に戻す）`,
+        ko: `포털 신청(#${id}) 취소 요청 거절 — 유형: ${request.type} (승인 상태로 확정)`,
+        en: `Portal request (#${id}) cancellation rejected by manager — type: ${request.type} (finalized as approved)`,
+        ja: `ポータル申請(#${id})キャンセル要請を却下 — 種類: ${request.type}（承認確定）`,
       }),
     });
-    res.json({ ok: true, status: 'pending' });
+    res.json({ ok: true, status: 'approved' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });

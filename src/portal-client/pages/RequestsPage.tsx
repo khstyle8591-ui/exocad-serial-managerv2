@@ -43,7 +43,10 @@ interface PortalRequest {
 
 type TabType = 'history' | 'credit' | 'renewal_stop' | 'renewal_resume';
 
-function statusBadge(status: string, lang: Lang) {
+function statusBadge(status: string, note: string, lang: Lang) {
+  if (status === 'approved' && note === 'cancel_rejected') {
+    return <span className="badge badge-red">{t(lang, 'req_status_cancel_rejected')}</span>;
+  }
   const map: Record<string, { cls: string; key: Parameters<typeof t>[1] }> = {
     pending:        { cls: 'badge-yellow', key: 'req_status_pending' },
     manager_review: { cls: 'badge-blue',   key: 'req_status_manager_review' },
@@ -64,6 +67,9 @@ function statusBadge(status: string, lang: Lang) {
 // status='rejected'는 (1) 시스템/고객 자동처리 실패(note=playwright_failed) 또는 (2) 매니저의 실제 거절,
 // 두 경우만 존재 — 전자만 "처리 실패"로, 후자는 "거절됨"으로 구분 표시.
 function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
+  if (status === 'approved' && note === 'cancel_rejected') {
+    return <span className="badge badge-red">{t(lang, 'req_status_cancel_rejected')}</span>;
+  }
   if (status === 'auto_done' || status === 'approved') {
     return <span className="badge badge-green">{t(lang, 'req_status_approved')}</span>;
   }
@@ -334,7 +340,7 @@ export default function RequestsPage() {
                   )}
                   {r.type === 'renewal_stop'
                     ? renewalStopStatusBadge(r.status, r.note, lang)
-                    : statusBadge(r.status, lang)
+                    : statusBadge(r.status, r.note, lang)
                   }
                 </div>
               </div>

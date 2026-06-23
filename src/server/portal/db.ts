@@ -237,6 +237,17 @@ export function markPortalRequestPlaywrightFailedByManager(id: number): void {
     .run(id);
 }
 
+// 매니저가 고객의 취소 요청(cancel_requested)을 거절한 경우 — 원래 신청은 그대로 승인된 것으로
+// 확정하고(status='approved'), note로만 "취소 거절"을 구분해 포털/매니저 화면에서 별도 표시하고
+// 고객이 다시 취소를 신청하지 못하게 한다.
+export function markPortalRequestCancelRejected(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = datetime('now','localtime') WHERE id = ?",
+    )
+    .run(id);
+}
+
 export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
   return (
     getDb()

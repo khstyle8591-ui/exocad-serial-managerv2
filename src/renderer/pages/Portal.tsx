@@ -550,6 +550,10 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                       <span style={{ color: 'var(--red)', fontWeight: 600 }}>
                         {t(lang, 'portal_st_cancel_failed')}
                       </span>
+                    ) : r.status === 'approved' && r.note === 'cancel_rejected' ? (
+                      <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                        {t(lang, 'portal_st_cancel_rejected')}
+                      </span>
                     ) : (
                       <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
                         {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
