@@ -1,5 +1,5 @@
 import { getDb } from '../../main/database';
-import type { AppSettings } from '../../shared/types';
+import type { AppSettings, CustomerPortalInfo } from '../../shared/types';
 
 export interface PortalAccount {
   id: number;
@@ -144,6 +144,26 @@ export function getAccountLinks(accountId: number): AccountLink[] {
 
 export function isLinkedCustomer(accountId: number, customerId: number): boolean {
   return isSerialLinked(accountId, customerId);
+}
+
+/**
+ * 고객별 연결된 포털 계정 정보(login_id, exocad_id) 일괄 조회 (읽기 전용 표시용).
+ * 고객 한 명에 여러 포털 계정이 연결된 경우 가장 먼저 연결된 계정을 기준으로 표시한다
+ * (sync.ts의 "기준 고객" 선정 방식과 동일).
+ */
+export function listCustomerPortalInfo(): CustomerPortalInfo[] {
+  return getDb()
+    .prepare<[], CustomerPortalInfo>(
+      `SELECT g.customer_id AS customer_id, pa.login_id AS login_id, pa.exocad_id AS exocad_id
+       FROM (
+         SELECT customer_id, MIN(id) AS link_id
+         FROM portal_account_links
+         GROUP BY customer_id
+       ) g
+       JOIN portal_account_links l ON l.id = g.link_id
+       JOIN portal_accounts pa ON pa.id = l.account_id`,
+    )
+    .all();
 }
 
 // ── Portal requests ───────────────────────────────────────────────────────────

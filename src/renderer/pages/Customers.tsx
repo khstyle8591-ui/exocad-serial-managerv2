@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import type { Customer, CustomerInput, CustomerSerialSummary, SerialWithCustomer } from '../../shared/types';
+import type { Customer, CustomerInput, CustomerPortalInfo, CustomerSerialSummary, SerialWithCustomer } from '../../shared/types';
 import { api } from '../client';
 
 const EMPTY_CUSTOMER: CustomerInput = {
@@ -21,6 +21,7 @@ export default function Customers() {
   const { lang } = useLang();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [serialSummaries, setSerialSummaries] = useState<CustomerSerialSummary[]>([]);
+  const [portalInfos, setPortalInfos] = useState<CustomerPortalInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch]   = useState('');
@@ -36,10 +37,12 @@ export default function Customers() {
     Promise.all([
       api.listCustomers(),
       api.listCustomerSerialSummaries(),
+      api.listCustomerPortalInfo(),
     ])
-      .then(([customerData, summaryData]) => {
+      .then(([customerData, summaryData, portalInfoData]) => {
         setCustomers(customerData);
         setSerialSummaries(summaryData);
+        setPortalInfos(portalInfoData);
       })
       .catch(err => {
         console.error(err);
@@ -49,6 +52,7 @@ export default function Customers() {
   }, []);
 
   const summariesByCustomer = new Map(serialSummaries.map(summary => [summary.customer_id, summary]));
+  const portalInfoByCustomer = new Map(portalInfos.map(info => [info.customer_id, info]));
 
   const query = normalizeCustomerText(search);
   const filteredCustomers = customers
@@ -223,6 +227,8 @@ export default function Customers() {
           const manager   = customer.sales_manager || '';
           const email     = customer.email || '';
           const phone     = customer.phone || '';
+          const address   = customer.address || '';
+          const portalLoginId = portalInfoByCustomer.get(customer.id)?.login_id || '';
 
           return (
             <div key={customer.id} className="card">
@@ -247,11 +253,17 @@ export default function Customers() {
               </div>
 
               {/* Contact info */}
-              {(manager || phone) && (
+              {(manager || phone || address || portalLoginId) && (
                 <div style={{ marginBottom: 10, fontSize: 11.5, color: 'var(--text2)' }}>
                   {manager && <div>{manager}</div>}
                   {phone   && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text3)' }}>{phone}</div>}
                   {email   && <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>}
+                  {address && <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</div>}
+                  {portalLoginId && (
+                    <div style={{ fontSize: 11, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t(lang, 'label_portal_login_id')}: {portalLoginId}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -364,6 +376,21 @@ export default function Customers() {
                 <label style={labelStyle}>{t(lang, 'label_address')}</label>
                 <input value={form.address ?? ''} onChange={e => setField('address', e.target.value)} style={inputStyle} />
               </div>
+              {editingCustomer && (() => {
+                const portalInfo = portalInfoByCustomer.get(editingCustomer.id);
+                return (
+                  <>
+                    <div>
+                      <label style={labelStyle}>{t(lang, 'label_portal_login_id')}</label>
+                      <input value={portalInfo?.login_id || t(lang, 'label_portal_not_linked')} disabled style={{ ...inputStyle, color: 'var(--text3)' }} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>{t(lang, 'label_portal_exocad_id')}</label>
+                      <input value={portalInfo?.exocad_id || t(lang, 'label_portal_not_linked')} disabled style={{ ...inputStyle, color: 'var(--text3)' }} />
+                    </div>
+                  </>
+                );
+              })()}
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={labelStyle}>{t(lang, 'label_notes')}</label>
                 <textarea value={form.notes ?? ''} onChange={e => setField('notes', e.target.value)} style={{ ...inputStyle, height: 72, resize: 'vertical' }} />

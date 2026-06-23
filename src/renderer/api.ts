@@ -115,6 +115,7 @@ export const api = {
     // ── Customers ─────────────────────────────────────────────────────────────
     listCustomers: () => get('/customers'),
     listCustomerSerialSummaries: () => get('/customers/serial-summaries'),
+    listCustomerPortalInfo: () => get('/customers/portal-info'),
     getCustomerById: (id: number) => get(`/customers/${id}`),
     createCustomer: (data: unknown) => post('/customers', data),
     updateCustomer: (id: number, data: unknown) => put(`/customers/${id}`, data),

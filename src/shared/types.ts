@@ -26,6 +26,13 @@ export interface CustomerInput {
   notes?: string;
 }
 
+/** 고객에 연결된 포털 계정 정보 (portal_account_links → portal_accounts JOIN 결과, 읽기 전용). */
+export interface CustomerPortalInfo {
+  customer_id: number;
+  login_id: string;
+  exocad_id: string;
+}
+
 export interface MergeCandidate {
   customer: Customer;
   score: number;

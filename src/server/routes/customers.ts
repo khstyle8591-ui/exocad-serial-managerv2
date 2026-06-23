@@ -9,6 +9,7 @@ import {
   listCustomerSerialSummaries,
   findMergeCandidates,
 } from '../../main/services/customer.service';
+import { listCustomerPortalInfo } from '../portal/db';
 import {
   parseCustomerInput,
   parseCustomerMergeQuery,
@@ -28,6 +29,11 @@ router.get('/', (_req: Request, res: Response) => {
 
 router.get('/serial-summaries', (_req: Request, res: Response) => {
   res.json(listCustomerSerialSummaries());
+});
+
+// 고객별 연결된 포털 계정 정보(로그인ID/exocad ID) — 읽기 전용 표시용
+router.get('/portal-info', (_req: Request, res: Response) => {
+  res.json(listCustomerPortalInfo());
 });
 
 router.get('/search', (req: Request, res: Response) => {
