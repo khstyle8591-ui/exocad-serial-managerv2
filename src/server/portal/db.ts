@@ -227,11 +227,12 @@ export function markPortalRequestPlaywrightFailed(id: number): void {
 }
 
 // 매니저가 승인한 후 Playwright 실행이 실패한 경우 — 매니저는 이미 신청을 검토/승인했으므로
-// 포털 고객에게는 "처리 실패"를 노출하지 않고 단순 거절됨으로만 보이게 한다(note로 구분).
+// status는 'approved'로 유지해 포털 고객에게는 그냥 "승인됨"으로 보이게 하고,
+// note로만 Playwright 실패를 구분해 매니저가 재시도할 수 있도록 한다.
 export function markPortalRequestPlaywrightFailedByManager(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed_manual', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = datetime('now','localtime') WHERE id = ?",
     )
     .run(id);
 }
