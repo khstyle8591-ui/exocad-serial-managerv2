@@ -468,7 +468,8 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
   ];
   const isActionable = (r: AdminRequest) =>
     r.status === 'pending' || r.status === 'manager_review' ||
-    (r.status === 'rejected' && r.note === 'playwright_failed');
+    (r.status === 'rejected' && r.note === 'playwright_failed') ||
+    (r.status === 'approved' && r.note === 'playwright_failed_manual');
 
   return (
     <div>
@@ -527,7 +528,8 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
                     )}
                   </td>
                   <td style={cell}>
-                    {r.status === 'rejected' && r.note === 'playwright_failed' ? (
+                    {(r.status === 'rejected' && r.note === 'playwright_failed') ||
+                     (r.status === 'approved' && r.note === 'playwright_failed_manual') ? (
                       <span style={{ color: 'var(--red)', fontWeight: 600 }}>
                         {t(lang, 'portal_st_cancel_failed')}
                       </span>

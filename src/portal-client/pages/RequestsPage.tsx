@@ -57,13 +57,20 @@ function statusBadge(status: string, lang: Lang) {
   return <span className={`badge ${entry.cls}`}>{t(lang, entry.key)}</span>;
 }
 
-// renewal_stop은 자동/수동 처리 구분 없이 고객에게는 승인/실패/대기 3가지로만 표시
-function renewalStopStatusBadge(status: string, lang: Lang) {
+// renewal_stop은 자동/수동 처리 구분 없이 고객에게는 승인/실패/대기/거절 4가지로만 표시.
+// 매니저 승인 후 Playwright 실행만 실패한 경우(note=playwright_failed_manual)는 status가 'approved'로
+// 유지되어 그냥 승인됨으로 보임 — 매니저가 이미 승인했으므로 고객에게 처리 실패를 노출하지 않음.
+// status='rejected'는 (1) 시스템/고객 자동처리 실패(note=playwright_failed) 또는 (2) 매니저의 실제 거절,
+// 두 경우만 존재 — 전자만 "처리 실패"로, 후자는 "거절됨"으로 구분 표시.
+function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
   if (status === 'auto_done' || status === 'approved') {
     return <span className="badge badge-green">{t(lang, 'req_status_approved')}</span>;
   }
   if (status === 'rejected') {
-    return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
+    if (note === 'playwright_failed') {
+      return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
+    }
+    return <span className="badge badge-red">{t(lang, 'req_status_rejected')}</span>;
   }
   if (status === 'user_cancelled') {
     return <span className="badge badge-gray">{t(lang, 'req_status_user_cancelled')}</span>;
@@ -132,9 +139,6 @@ export default function RequestsPage() {
         setQuoteSent(c.resume_quote_sent);
         setOwnedSerials(l.links.flatMap(lk => lk.serials));
         if (c.packages.length > 0) setPkgCode(c.packages[0].id);
-        if (r.requests.some(req => req.type === 'renewal_stop' && req.status === 'rejected')) {
-          setShowFailurePopup(true);
-        }
       })
       .catch(() => { /* ignore */ })
       .finally(() => setLoadingData(false));
@@ -201,6 +205,7 @@ export default function RequestsPage() {
         setSuccess(`${t(lang, 'stop_applied_now')} (${t(lang, 'request_no')}: #${res.request_id})`);
       } else if (res.processing_failed) {
         setWarning(`${t(lang, 'stop_request_processing_failed')} (${t(lang, 'request_no')}: #${res.request_id})`);
+        setShowFailurePopup(true);
       } else {
         setSuccess(submittedMsg(res.request_id));
       }
@@ -324,7 +329,7 @@ export default function RequestsPage() {
                     </button>
                   )}
                   {r.type === 'renewal_stop'
-                    ? renewalStopStatusBadge(r.status, lang)
+                    ? renewalStopStatusBadge(r.status, r.note, lang)
                     : statusBadge(r.status, lang)
                   }
                 </div>

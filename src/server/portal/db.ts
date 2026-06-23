@@ -217,10 +217,21 @@ export function updatePortalRequestStatus(id: number, status: PortalRequestStatu
     .run(status, id);
 }
 
+// 시스템/고객 신청에서 발생한 Playwright 실패 — 포털에 "처리 실패"로 노출됨(고객이 시리얼 확인 후 재신청 유도).
 export function markPortalRequestPlaywrightFailed(id: number): void {
   getDb()
     .prepare(
       "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = datetime('now','localtime') WHERE id = ?",
+    )
+    .run(id);
+}
+
+// 매니저가 승인한 후 Playwright 실행이 실패한 경우 — 매니저는 이미 신청을 검토/승인했으므로
+// 포털 고객에게는 "처리 실패"를 노출하지 않고 단순 거절됨으로만 보이게 한다(note로 구분).
+export function markPortalRequestPlaywrightFailedByManager(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed_manual', processed_at = datetime('now','localtime') WHERE id = ?",
     )
     .run(id);
 }
