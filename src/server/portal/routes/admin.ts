@@ -16,11 +16,10 @@ import {
 } from '../db';
 import { updateCustomer } from '../../../main/services/customer.service';
 import { getDb } from '../../../main/database';
-import { logActivity } from '../../../main/services/activity-log.service';
+import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
-import { logSystem } from '../../../main/services/system-log.service';
 import { notificationService } from '../../../main/services/notification.service';
 import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
 
@@ -239,10 +238,13 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   if (action === 'reject') {
     updatePortalRequestStatus(id, 'rejected');
-    logSystem({
-      ko: `포털 신청(#${id}) 관리자 거절 — 유형: ${request.type}`,
-      en: `Portal request (#${id}) rejected by manager — type: ${request.type}`,
-      ja: `ポータル申請(#${id})管理者により却下 — 種類: ${request.type}`,
+    logActivity({
+      action: 'system', actor: 'manual', severity: 'info',
+      details: pickLang({
+        ko: `포털 신청(#${id}) 관리자 거절 — 유형: ${request.type}`,
+        en: `Portal request (#${id}) rejected by manager — type: ${request.type}`,
+        ja: `ポータル申請(#${id})管理者により却下 — 種類: ${request.type}`,
+      }),
     });
     res.json({ ok: true, status: 'rejected' });
     return;
@@ -260,45 +262,56 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       true,
       `portal-req-${id}`,
       'manual',
-      `관리자 승인 — 포털 갱신 중단 신청 #${id}`,
+      pickLang({
+        ko: `관리자 승인 — 포털 갱신 중단 신청 #${id}`,
+        en: `Manager approved — portal renewal-stop request #${id}`,
+        ja: `管理者承認 — ポータル更新停止申請 #${id}`,
+      }),
     );
     // Playwright로 Exocad 사이트에서 실제 구독 취소 실행 (blocking — 결과 확인)
     const cancelResult = await cancelService.cancelSubscription(serial.serial_number, true);
     if (!cancelResult.success) {
       markPortalRequestPlaywrightFailed(id);
-      logActivity({
-        action: 'system',
-        actor: 'manual',
-        severity: 'warn',
-        details: `portal 갱신중단 승인 — Playwright 시리얼 검색 실패: ${serial.serial_number}`,
-      });
       const reason = cancelResult.error || '알 수 없는 오류';
-      logSystem({
-        ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reason}`,
-        en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reason}`,
-        ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reason}`,
-      }, 'error');
+      logActivity({
+        serial_id: serial.id, action: 'system', actor: 'manual', severity: 'error', trigger_id: `portal-req-${id}`,
+        details: pickLang({
+          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reason}`,
+          en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reason}`,
+          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reason}`,
+        }),
+      });
       await notificationService.sendCriticalAutomationAlert({
         serial_number: serial.serial_number,
         customer_name: serial.customer?.name,
-        action: '포털 갱신중단 관리자 승인 취소',
-        error: reason,
-        details: `관리자가 승인한 포털 신청(#${id})의 Playwright 취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+        action: { ko: '포털 갱신중단 관리자 승인 취소', en: 'Portal renewal-stop manager-approved cancel', ja: 'ポータル更新停止 管理者承認キャンセル' },
+        error: cancelResult.error,
+        details: {
+          ko: `관리자가 승인한 포털 신청(#${id})의 Playwright 취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+          en: `Manager-approved portal request (#${id}) Playwright cancel failed. Verify the serial number and reprocess manually if needed.`,
+          ja: `管理者が承認したポータル申請(#${id})のPlaywrightキャンセルが失敗しました。シリアル番号を確認し、必要に応じて手動で再処理してください。`,
+        },
         trigger_id: `portal-req-${id}`,
       });
       res.json({ ok: true, status: 'playwright_failed' });
       return;
     }
-    logSystem({
-      ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 성공: ${serial.serial_number}`,
-      en: `Portal renewal-stop approval (#${id}) — Playwright cancel succeeded: ${serial.serial_number}`,
-      ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
+    logActivity({
+      serial_id: serial.id, action: 'cancelled', actor: 'manual', severity: 'info', trigger_id: `portal-req-${id}`,
+      details: pickLang({
+        ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 성공: ${serial.serial_number}`,
+        en: `Portal renewal-stop approval (#${id}) — Playwright cancel succeeded: ${serial.serial_number}`,
+        ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
+      }),
     });
   } else {
-    logSystem({
-      ko: `포털 신청(#${id}) 관리자 승인 — 유형: ${request.type}`,
-      en: `Portal request (#${id}) approved by manager — type: ${request.type}`,
-      ja: `ポータル申請(#${id})管理者により承認 — 種類: ${request.type}`,
+    logActivity({
+      action: 'system', actor: 'manual', severity: 'info',
+      details: pickLang({
+        ko: `포털 신청(#${id}) 관리자 승인 — 유형: ${request.type}`,
+        en: `Portal request (#${id}) approved by manager — type: ${request.type}`,
+        ja: `ポータル申請(#${id})管理者により承認 — 種類: ${request.type}`,
+      }),
     });
   }
   // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)

@@ -3,6 +3,8 @@ import { serialService } from './serial.service';
 import { notificationService } from './notification.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
 import { logAutoRenewalOrderNotice } from './auto-renewal-order-notice-log.service';
+import { pickLang } from './activity-log.service';
+import { markPortalRequestPlaywrightFailed } from '../../server/portal/db';
 import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
 import { getSettings } from '../settings';
@@ -126,9 +128,11 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
     inProgressSerialIds.add(serial.id);
     try {
       const triggerId = `failsafe:inbound-mail:${serial.inbound_mail_id}:${serial.serial_number}`;
-      const details =
-        `Failsafe auto-confirmed unprocessed stop-request candidate at D-1/D0 ` +
-        `(expiry=${serial.expiry_date}, inbound_mail_id=${serial.inbound_mail_id})`;
+      const details = pickLang({
+        ko: `Failsafe — 미처리 중단요청 후보 자동확정(D-1/D0): 만료=${serial.expiry_date}, 인바운드메일ID=${serial.inbound_mail_id}`,
+        en: `Failsafe auto-confirmed unprocessed stop-request candidate at D-1/D0 (expiry=${serial.expiry_date}, inbound_mail_id=${serial.inbound_mail_id})`,
+        ja: `Failsafe — 未処理の停止依頼候補を自動確定(D-1/D0): 失効=${serial.expiry_date}, インバウンドメールID=${serial.inbound_mail_id}`,
+      });
 
       logger.warn(`[Failsafe] auto-confirming and cancelling candidate: ${serial.serial_number} (expiry ${serial.expiry_date})`);
       serialService.setStopRequested(serial.id, true, triggerId, 'auto', details);
@@ -147,20 +151,32 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
         const updated = serialService.cancelSubscription(serial.id);
         if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
         serialService.logActivity(
-          serial.id, 'system', 'auto', {},
-          `Failsafe cancellation succeeded: ${serial.serial_number} (expiry=${serial.expiry_date})`,
+          serial.id, 'cancelled', 'auto', {},
+          pickLang({
+            ko: `Failsafe 취소 성공: ${serial.serial_number} (만료=${serial.expiry_date})`,
+            en: `Failsafe cancellation succeeded: ${serial.serial_number} (expiry=${serial.expiry_date})`,
+            ja: `Failsafeキャンセル成功: ${serial.serial_number} (失効=${serial.expiry_date})`,
+          }),
           triggerId, 'warn',
         );
       } else if (result.success && !result.verified) {
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
-          `Failsafe cancellation UNVERIFIED (manual check required): ${serial.serial_number} (status=${result.verified_status || 'unknown'})`,
+          pickLang({
+            ko: `Failsafe 취소 미검증(수동 확인 필요): ${serial.serial_number} (상태=${result.verified_status || 'unknown'})`,
+            en: `Failsafe cancellation UNVERIFIED (manual check required): ${serial.serial_number} (status=${result.verified_status || 'unknown'})`,
+            ja: `Failsafeキャンセル未確認(手動確認が必要): ${serial.serial_number} (状態=${result.verified_status || 'unknown'})`,
+          }),
           triggerId, 'error',
         );
       } else {
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
-          `Failsafe cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+          pickLang({
+            ko: `Failsafe 취소 실패: ${serial.serial_number} - ${result.error || '알 수 없는 오류'}`,
+            en: `Failsafe cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+            ja: `Failsafeキャンセル失敗: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+          }),
           triggerId, 'error',
         );
       }
@@ -180,21 +196,19 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
     inProgressSerialIds.add(serial.id);
     try {
       const triggerId = `failsafe:portal-req:${serial.portal_request_id}:${serial.serial_number}`;
-      const details =
-        `Failsafe auto-confirmed unprocessed portal renewal-stop request at D-1/D0 ` +
-        `(expiry=${serial.expiry_date}, portal_request_id=${serial.portal_request_id})`;
+      const reqId = serial.portal_request_id;
+      const details = pickLang({
+        ko: `포털 갱신중단 신청(#${reqId}) 만료근접 자동처리 시작(D-1/D0) — 시리얼: ${serial.serial_number}, 만료=${serial.expiry_date}`,
+        en: `Portal renewal-stop request (#${reqId}) auto-processing started near expiry (D-1/D0) — serial: ${serial.serial_number}, expiry=${serial.expiry_date}`,
+        ja: `ポータル更新停止申請(#${reqId})の失効間際自動処理開始(D-1/D0) — シリアル: ${serial.serial_number}, 失効=${serial.expiry_date}`,
+      });
 
       logger.warn(
         `[Failsafe/Portal] auto-confirming portal stop-request: ${serial.serial_number} ` +
-        `(expiry ${serial.expiry_date}, portal_request_id=${serial.portal_request_id})`,
+        `(expiry ${serial.expiry_date}, portal_request_id=${reqId})`,
       );
+      // 신청 접수 + 처리 시작을 활동 로그에 기록 (limbo와 동일하게 디테일 표시)
       serialService.setStopRequested(serial.id, true, triggerId, 'auto', details);
-
-      getDb()
-        .prepare(
-          "UPDATE portal_requests SET status = 'auto_done', processed_at = datetime('now','localtime') WHERE id = ?",
-        )
-        .run(serial.portal_request_id);
 
       const result = await cancelService.cancelSubscription(serial.serial_number, true);
       results.push(result);
@@ -202,23 +216,45 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
       if (result.success && result.verified) {
         const updated = serialService.cancelSubscription(serial.id);
         if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
+        getDb()
+          .prepare("UPDATE portal_requests SET status = 'auto_done', processed_at = datetime('now','localtime') WHERE id = ?")
+          .run(reqId);
         serialService.logActivity(
-          serial.id, 'system', 'auto', {},
-          `Failsafe/Portal cancellation succeeded: ${serial.serial_number} (expiry=${serial.expiry_date})`,
+          serial.id, 'cancelled', 'auto', {},
+          pickLang({
+            ko: `포털 갱신중단 자동취소 성공 — 시리얼: ${serial.serial_number} (신청 #${reqId})`,
+            en: `Portal renewal-stop auto-cancel succeeded — serial: ${serial.serial_number} (request #${reqId})`,
+            ja: `ポータル更新停止自動キャンセル成功 — シリアル: ${serial.serial_number} (申請 #${reqId})`,
+          }),
           triggerId, 'warn',
         );
-      } else if (result.success && !result.verified) {
-        serialService.logActivity(
-          serial.id, 'system', 'auto', {},
-          `Failsafe/Portal cancellation UNVERIFIED (manual check required): ${serial.serial_number} (status=${result.verified_status || 'unknown'})`,
-          triggerId, 'error',
-        );
       } else {
+        // 실패 또는 미검증 → 신청을 실패로 표시(매니저 '취소 실패' + 재승인 가능) + Slack 알림
+        markPortalRequestPlaywrightFailed(reqId);
+        const reason = result.success
+          ? pickLang({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })
+          : (result.error || pickLang({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' }));
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
-          `Failsafe/Portal cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+          pickLang({
+            ko: `포털 갱신중단 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${reqId}), 사유: ${reason}`,
+            en: `Portal renewal-stop auto-cancel FAILED — serial: ${serial.serial_number} (request #${reqId}), reason: ${reason}`,
+            ja: `ポータル更新停止自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${reqId}), 理由: ${reason}`,
+          }),
           triggerId, 'error',
         );
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: { ko: '포털 갱신중단 만료근접 자동취소', en: 'Portal renewal-stop near-expiry auto-cancel', ja: 'ポータル更新停止 失効間際自動キャンセル' },
+          error: result.error,
+          details: {
+            ko: `포털 신청(#${reqId})의 만료근접 자동취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+            en: `Portal request (#${reqId}) near-expiry auto-cancel failed. Verify the serial number and reprocess manually if needed.`,
+            ja: `ポータル申請(#${reqId})の失効間際自動キャンセルが失敗しました。シリアル番号を確認し、必要に応じて手動で再処理してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch(() => {});
       }
 
       await sleep(2000);
@@ -351,14 +387,22 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
       // 실패했거나(success=false), 완료됐지만 검증되지 않은(success && !verified) 경우 모두
       // 아래 fallback(로컬 강제 만료 + critical 알림)으로 처리하여 사람이 확인하도록 한다.
       const limboReason = result.success
-        ? `cancel UNVERIFIED (status=${result.verified_status || 'unknown'})`
-        : `cancel failed: ${result.error || 'unknown error'}`;
+        ? pickLang({
+            ko: `취소 미검증 (상태=${result.verified_status || 'unknown'})`,
+            en: `cancel UNVERIFIED (status=${result.verified_status || 'unknown'})`,
+            ja: `キャンセル未確認 (状態=${result.verified_status || 'unknown'})`,
+          })
+        : pickLang({
+            ko: `취소 실패: ${result.error || '알 수 없는 오류'}`,
+            en: `cancel failed: ${result.error || 'unknown error'}`,
+            ja: `キャンセル失敗: ${result.error || 'unknown error'}`,
+          });
       serialService.logActivity(
         serial.id,
         'system',
         'auto',
         {},
-        `Limbo ${limboReason}`,
+        pickLang({ ko: `Limbo 보정 — ${limboReason}`, en: `Limbo ${limboReason}`, ja: `Limbo補正 — ${limboReason}` }),
         triggerId,
         'warn'
       );
@@ -366,7 +410,11 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
 
       serialService.forceExpired(
         serial.id,
-        `Limbo fallback forced expired after Playwright cancel failure: ${result.error || 'unknown error'}`,
+        pickLang({
+          ko: `Limbo 보정 — Playwright 취소 실패 후 로컬 DB에서 강제 만료 처리: ${result.error || '알 수 없는 오류'}`,
+          en: `Limbo fallback forced expired after Playwright cancel failure: ${result.error || 'unknown error'}`,
+          ja: `Limbo補正 — Playwrightキャンセル失敗後にローカルDBで強制失効処理: ${result.error || 'unknown error'}`,
+        }),
         triggerId
       );
 
@@ -381,7 +429,11 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
           customer_name: serial.customer?.name,
           action: 'status_forced_expired',
           error: result.error,
-          details: 'Stop-requested serial could not be cancelled through Playwright and was forced to expired in the local DB.',
+          details: {
+            ko: '중단요청된 시리얼을 Playwright로 취소하지 못해 로컬 DB에서 강제 만료 처리했습니다.',
+            en: 'Stop-requested serial could not be cancelled through Playwright and was forced to expired in the local DB.',
+            ja: '停止依頼されたシリアルをPlaywrightでキャンセルできず、ローカルDBで強制失効処理しました。',
+          },
           trigger_id: triggerId,
         }).catch((err: unknown) => logger.error(`[Limbo] critical alert failed: ${getErrorMessage(err)}`));
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(suppressKey, String(nowMs));

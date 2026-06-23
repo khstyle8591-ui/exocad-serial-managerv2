@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { serialService } from './serial.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
-import { logActivity } from './activity-log.service';
+import { logActivity, pickLang } from './activity-log.service';
 import { notificationService } from './notification.service';
 import { markPortalRequestPlaywrightFailed, findActiveRenewalStopRequest } from '../../server/portal/db';
 import { getSettings } from '../settings';
@@ -775,13 +775,24 @@ export class CancelService {
         if (updated) await sendCancelCompleteNotice(updated).catch(() => {});
       } else if (result.success && !result.verified) {
         logger.warn(`[auto-cancel] completed but UNVERIFIED; DB not changed: ${serial.serial_number} (status: ${result.verified_status || 'unknown'})`);
+        logActivity({
+          serial_id: serial.id, action: 'system', actor: 'auto', severity: 'warn', trigger_id: `auto-cancel-${serial.serial_number}`,
+          details: pickLang({
+            ko: `만료 D-${daysBefore}일 자동취소 — 사이트 작업 완료되었으나 결과 미검증(수동 확인 필요): ${serial.serial_number}`,
+            en: `Pre-expiry D-${daysBefore} auto-cancel — site action completed but UNVERIFIED (manual check required): ${serial.serial_number}`,
+            ja: `失効D-${daysBefore}日自動キャンセル — サイト操作は完了したが結果未確認(手動確認が必要): ${serial.serial_number}`,
+          }),
+        });
       } else if (!result.success) {
         logger.warn(`[auto-cancel] FAILED: ${serial.serial_number} — ${result.error || 'unknown'}`);
+        const reason = result.error || '알 수 없는 오류';
         logActivity({
-          action: 'system',
-          actor: 'auto',
-          severity: 'warn',
-          details: `portal 갱신중단 자동취소 시도 — 시리얼 검색 실패: ${serial.serial_number}`,
+          serial_id: serial.id, action: 'system', actor: 'auto', severity: 'error', trigger_id: `auto-cancel-${serial.serial_number}`,
+          details: pickLang({
+            ko: `만료 D-${daysBefore}일 자동취소 실패 — 시리얼: ${serial.serial_number}, 사유: ${reason}`,
+            en: `Pre-expiry D-${daysBefore} auto-cancel FAILED — serial: ${serial.serial_number}, reason: ${reason}`,
+            ja: `失効D-${daysBefore}日自動キャンセル失敗 — シリアル: ${serial.serial_number}, 理由: ${reason}`,
+          }),
         });
         try {
           const req = findActiveRenewalStopRequest(serial.serial_number);
@@ -792,9 +803,13 @@ export class CancelService {
         await notificationService.sendCriticalAutomationAlert({
           serial_number: serial.serial_number,
           customer_name: serial.customer?.name,
-          action: '만료일 전 자동취소 (스케줄러)',
+          action: { ko: '만료일 전 자동취소 (스케줄러)', en: 'Pre-expiry auto-cancel (scheduler)', ja: '失効前自動キャンセル(スケジューラ)' },
           error: result.error,
-          details: `만료 D-${daysBefore}일 자동취소 스케줄러가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+          details: {
+            ko: `만료 D-${daysBefore}일 자동취소 스케줄러가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+            en: `Pre-expiry D-${daysBefore} auto-cancel scheduler failed. Verify the serial number and reprocess manually if needed.`,
+            ja: `失効D-${daysBefore}日自動キャンセルスケジューラが失敗しました。シリアル番号を確認し、必要に応じて手動で再処理してください。`,
+          },
           trigger_id: `auto-cancel-${serial.serial_number}`,
         });
       }

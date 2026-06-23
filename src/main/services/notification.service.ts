@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
-import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult } from '../../shared/types';
+import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult, LocalizedText } from '../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
 type EffectiveSettings = ReturnType<typeof getSettings>;
@@ -84,6 +84,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     cancel_failures: '⚠️ *Cancel 실패:*',
     retry_failed: '[재시도 실패]',
     menu_button_missing: '옵션 버튼(menu-button)을 찾을 수 없습니다. 시리얼: {serial}',
+    serial_not_found: '검색 결과에서 대상 시리얼을 찾지 못했습니다. 시리얼: {serial}',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 수신 시각: {time}\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
     scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
@@ -126,6 +127,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     cancel_failures: '⚠️ *Cancel Failures:*',
     retry_failed: '[Retry failed]',
     menu_button_missing: 'Could not find the option button (menu-button). Serial: {serial}',
+    serial_not_found: 'Target serial not found in search results. Serial: {serial}',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• Received at: {time}\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
     scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
@@ -168,6 +170,7 @@ const S: Record<SlackLang, Record<string, string>> = {
     cancel_failures: '⚠️ *キャンセル失敗:*',
     retry_failed: '[再試行失敗]',
     menu_button_missing: 'オプションボタン(menu-button)が見つかりません。シリアル: {serial}',
+    serial_not_found: '検索結果に対象シリアルが見つかりませんでした。シリアル: {serial}',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
     scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
@@ -204,6 +207,7 @@ function slackLocale(lang: SlackLang): string {
 function localizeCancelError(error: string | undefined, lang: SlackLang): string {
   if (!error) return '';
   const serial = error.match(/시리얼:\s*([A-Za-z0-9-]+)/)?.[1]
+    || error.match(/대상 시리얼\(([^)]+)\)/)?.[1]
     || error.match(/Serial:\s*([A-Za-z0-9-]+)/)?.[1]
     || error.match(/シリアル:\s*([A-Za-z0-9-]+)/)?.[1]
     || '';
@@ -218,6 +222,14 @@ function localizeCancelError(error: string | undefined, lang: SlackLang): string
     || error.includes('オプションボタン(menu-button)')
   ) {
     return `${retryPrefix}${sf('menu_button_missing', { serial }, lang)}`.trim();
+  }
+
+  if (
+    error.includes('검색 결과에서 대상 시리얼')
+    || error.includes('행을 찾지 못했습니다')
+    || error.includes('Target serial not found')
+  ) {
+    return `${retryPrefix}${sf('serial_not_found', { serial }, lang)}`.trim();
   }
 
   return error.replace(/^\[재시도 실패\]/, sf('retry_failed', {}, lang));
@@ -602,34 +614,52 @@ export class NotificationService {
   async sendCriticalAutomationAlert(input: {
     serial_number: string;
     customer_name?: string;
-    action: string;
-    error?: string;
-    details: string;
+    action: string | LocalizedText;
+    error?: string | LocalizedText;
+    details: string | LocalizedText;
     trigger_id: string;
   }): Promise<void> {
     const settings = getSettings();
-    const subject = `[Exocad Manager][CRITICAL] ${input.action} - ${input.serial_number}`;
-    const text = [
-      '*CRITICAL automation alert*',
-      `Serial: ${input.serial_number}`,
-      input.customer_name ? `Customer: ${input.customer_name}` : '',
-      `Action: ${input.action}`,
-      `Trigger: ${input.trigger_id}`,
-      input.error ? `Error: ${input.error}` : '',
-      '',
-      input.details,
-    ].filter(Boolean).join('\n');
+
+    // 언어별 메시지 해석 헬퍼: 문자열은 그대로, LocalizedText는 해당 언어로
+    const pick = (v: string | LocalizedText | undefined, lang: SlackLang): string => {
+      if (v == null) return '';
+      return typeof v === 'string' ? v : (v[lang] ?? v.ko);
+    };
+
+    // 알림 본문 생성 — error는 localizeCancelError로 알려진 Playwright 오류를 해당 언어로 변환
+    const buildText = (lang: SlackLang): string => {
+      const rawErr = pick(input.error, lang);
+      const err = rawErr ? localizeCancelError(rawErr, lang) : '';
+      return [
+        '*CRITICAL automation alert*',
+        `Serial: ${input.serial_number}`,
+        input.customer_name ? `Customer: ${input.customer_name}` : '',
+        `Action: ${pick(input.action, lang)}`,
+        `Trigger: ${input.trigger_id}`,
+        err ? `Error: ${err}` : '',
+        '',
+        pick(input.details, lang),
+      ].filter(Boolean).join('\n');
+    };
 
     const tasks: Promise<unknown>[] = [];
+
+    // Slack — slack_language 설정 기준
     if (settings.slack_alert_enabled !== false) {
-      tasks.push(this.sendSlack(text, undefined, true));
+      const slackLang = getSlackLanguage();
+      tasks.push(this.sendSlack(buildText(slackLang), undefined, true));
     }
 
+    // Email — 매니저 앱 언어(app_language) 기준
     const recipients = settings.critical_alert_emails?.length
       ? settings.critical_alert_emails
       : (settings.report_email_to ? [settings.report_email_to] : []);
     if (recipients.length > 0) {
-      const html = text.split('\n').map(line => `<div>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+      const appLang = normalizeSlackLang(settings.app_language);
+      const subject = `[Exocad Manager][CRITICAL] ${pick(input.action, appLang)} - ${input.serial_number}`;
+      const emailText = buildText(appLang);
+      const html = emailText.split('\n').map(line => `<div>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
       tasks.push(this.sendEmailTo(recipients, subject, html));
     }
 
@@ -644,20 +674,20 @@ export class NotificationService {
     const settings = getSettings();
     const modules = parseModules(input.serial.modules);
     const moduleText = modules.join(', ') || '-';
-    const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ko-KR', { timeZone: 'Asia/Tokyo' });
-    const subject = `[Exocad Manager] 자동 갱신 주문서 - ${input.serial.serial_number}`;
+    const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    const subject = `[Exocad Manager] 自動更新注文書 - ${input.serial.serial_number}`;
     const html = `
-      <h2>자동 갱신 주문서</h2>
-      <p>아래 시리얼이 자동 갱신 처리되었습니다.</p>
+      <h2>自動更新注文書</h2>
+      <p>以下のシリアルが自動更新処理されました。</p>
       <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-        <tr><td><strong>시리얼 넘버</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
-        <tr><td><strong>고객명</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
-        <tr><td><strong>고객 이메일</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
-        <tr><td><strong>메인 제품</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
-        <tr><td><strong>모듈</strong></td><td>${escapeHtml(moduleText)}</td></tr>
-        <tr><td><strong>이전 만료일</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
-        <tr><td><strong>갱신 후 만료일</strong></td><td>${escapeHtml(input.serial.expiry_date || '')}</td></tr>
-        <tr><td><strong>처리 시각</strong></td><td>${escapeHtml(renewedAt)}</td></tr>
+        <tr><td><strong>シリアル番号</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
+        <tr><td><strong>顧客名</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
+        <tr><td><strong>顧客メール</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
+        <tr><td><strong>メイン製品</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
+        <tr><td><strong>モジュール</strong></td><td>${escapeHtml(moduleText)}</td></tr>
+        <tr><td><strong>更新前の有効期限</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
+        <tr><td><strong>更新後の有効期限</strong></td><td>${escapeHtml(input.serial.expiry_date || '')}</td></tr>
+        <tr><td><strong>処理時刻</strong></td><td>${escapeHtml(renewedAt)}</td></tr>
       </table>
     `;
     const recipientEmail = settings.report_email_to || '';
@@ -668,7 +698,7 @@ export class NotificationService {
       subject,
       html_body: html,
       recipient_email: recipientEmail,
-      message: success ? '메일 발송 성공' : '메일 발송 실패',
+      message: success ? 'メール送信成功' : 'メール送信失敗',
     };
   }
 
@@ -776,7 +806,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 일일 리포트 - ${report.date}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 日次レポート - ${report.date}`, emailHtml),
     ]);
   }
 
@@ -803,17 +833,17 @@ export class NotificationService {
 
   private formatDailyReportEmail(report: DailyReport): string {
     let html = `
-      <h2>일일 작업 리포트 - ${report.date}</h2>
+      <h2>日次作業レポート - ${report.date}</h2>
       <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-        <tr><td><strong>신규 등록</strong></td><td>${report.new_registrations}건</td></tr>
-        <tr><td><strong>자동 갱신</strong></td><td>${report.auto_renewals ?? report.renewals}건</td></tr>
-        <tr><td><strong>수동/주문 갱신</strong></td><td>${report.manual_renewals ?? 0}건</td></tr>
-        <tr><td><strong>Cancel</strong></td><td>${report.cancellations}건</td></tr>
+        <tr><td><strong>新規登録</strong></td><td>${report.new_registrations}件</td></tr>
+        <tr><td><strong>自動更新</strong></td><td>${report.auto_renewals ?? report.renewals}件</td></tr>
+        <tr><td><strong>手動・注文更新</strong></td><td>${report.manual_renewals ?? 0}件</td></tr>
+        <tr><td><strong>キャンセル</strong></td><td>${report.cancellations}件</td></tr>
       </table>
     `;
 
     if (report.failed_cancellations.length > 0) {
-      html += `<h3>Cancel 실패 목록</h3><ul>`;
+      html += `<h3>キャンセル失敗リスト</h3><ul>`;
       for (const f of report.failed_cancellations) {
         html += `<li>${f.serial_number}: ${f.error}</li>`;
       }
@@ -821,8 +851,8 @@ export class NotificationService {
     }
 
     if (report.details.length > 0) {
-      html += `<h3>상세 로그</h3><table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
-        <tr><th>시간</th><th>작업</th><th>상세</th></tr>`;
+      html += `<h3>詳細ログ</h3><table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+        <tr><th>時刻</th><th>作業</th><th>詳細</th></tr>`;
       for (const log of report.details) {
         html += `<tr><td>${log.created_at}</td><td>${log.action}</td><td>${log.details}</td></tr>`;
       }
@@ -839,7 +869,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 만료 예정 리포트 - ${report.target_month}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 失効予定レポート - ${report.target_month}`, emailHtml),
     ]);
   }
 
@@ -862,12 +892,12 @@ export class NotificationService {
 
   private formatMonthlyReportEmail(report: MonthlyExpiryReport): string {
     let html = `
-      <h2>만료 예정 리포트 - ${report.target_month}</h2>
-      <p>총 <strong>${report.total_count}</strong>건의 시리얼이 만료 예정입니다.</p>
+      <h2>失効予定レポート - ${report.target_month}</h2>
+      <p>合計 <strong>${report.total_count}</strong>件のシリアルが失効予定です。</p>
       <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
         <tr>
-          <th>시리얼 넘버</th><th>고객명</th><th>이메일</th>
-          <th>만료일</th><th>Add-ons</th><th>비고</th>
+          <th>シリアル番号</th><th>顧客名</th><th>メール</th>
+          <th>有効期限</th><th>Add-ons</th><th>備考</th>
         </tr>
     `;
 

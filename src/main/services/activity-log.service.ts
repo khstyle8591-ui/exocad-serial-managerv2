@@ -9,7 +9,17 @@
 import { BrowserWindow } from 'electron';
 import { getDb } from '../database';
 import { getNowTimestampString } from '../utils/date-utils';
-import type { ActivityLog, LogFilter } from '../../shared/types';
+import { getSettings } from '../settings';
+import type { ActivityLog, LogFilter, LocalizedText } from '../../shared/types';
+
+/**
+ * 매니저 앱 설정 언어(app_language)에 맞는 문자열을 반환.
+ * activity_logs.details 등 매니저에게 표시되는 로그 문구를 다국어로 기록할 때 사용.
+ */
+export function pickLang(text: LocalizedText): string {
+  const lang = getSettings().app_language;
+  return text[lang] ?? text.ko;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
