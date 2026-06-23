@@ -670,15 +670,19 @@ export class NotificationService {
     serial: SerialWithCustomer;
     previous_expiry_date: string | null;
     renewed_at?: Date;
+    source?: 'auto' | 'manual';
   }): Promise<{ success: boolean; subject: string; html_body: string; recipient_email: string; message: string }> {
     const settings = getSettings();
     const modules = parseModules(input.serial.modules);
     const moduleText = modules.join(', ') || '-';
     const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-    const subject = `[Exocad Manager] 自動更新注文書 - ${input.serial.serial_number}`;
+    const isManual = input.source === 'manual';
+    const subject = isManual
+      ? `[Exocad Manager] 更新注文書 (手動) - ${input.serial.serial_number}`
+      : `[Exocad Manager] 自動更新注文書 - ${input.serial.serial_number}`;
     const html = `
-      <h2>自動更新注文書</h2>
-      <p>以下のシリアルが自動更新処理されました。</p>
+      <h2>${isManual ? '更新注文書（手動更新）' : '自動更新注文書'}</h2>
+      <p>以下のシリアルが${isManual ? '手動で更新処理されました。' : '自動更新処理されました。'}</p>
       <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
         <tr><td><strong>シリアル番号</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
         <tr><td><strong>顧客名</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>

@@ -10,7 +10,10 @@ function today(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 
-export function buildSerialTemplateVars(serial: SerialWithCustomer | null): Record<string, string> {
+export function buildSerialTemplateVars(
+  serial: SerialWithCustomer | null,
+  extraVars: Record<string, string> = {},
+): Record<string, string> {
   const todayStr = today();
   if (!serial) {
     return {
@@ -24,6 +27,7 @@ export function buildSerialTemplateVars(serial: SerialWithCustomer | null): Reco
       TODAY: todayStr,
       DEALER: 'Sample Dealer',
       SALES_MANAGER: 'Sample Manager',
+      ...extraVars,
     };
   }
 
@@ -38,6 +42,7 @@ export function buildSerialTemplateVars(serial: SerialWithCustomer | null): Reco
     TODAY: todayStr,
     DEALER: serial.customer.dealer,
     SALES_MANAGER: serial.customer.sales_manager,
+    ...extraVars,
   };
 }
 
@@ -82,6 +87,26 @@ export async function sendCancelCompleteNotice(serial: SerialWithCustomer): Prom
   );
   if (!result.success) {
     logger.error(`[mail] cancel complete notice failed: ${serial.serial_number} - ${result.message}`);
+  }
+}
+
+export async function sendManualRenewalConfirmNotice(
+  serial: SerialWithCustomer,
+  previousExpiryDate: string | null,
+): Promise<void> {
+  if (!serial.customer.email) {
+    logger.warn(`[mail] manual renewal confirm notice skipped: no customer email (${serial.serial_number})`);
+    return;
+  }
+
+  const result = await sendTemplate(
+    'manual_renewal_confirm',
+    serial.customer.email,
+    buildSerialTemplateVars(serial, { PREVIOUS_EXPIRY_DATE: previousExpiryDate ?? '' }),
+    { serial_id: serial.id, actor: 'manual' }
+  );
+  if (!result.success) {
+    logger.error(`[mail] manual renewal confirm notice failed: ${serial.serial_number} - ${result.message}`);
   }
 }
 

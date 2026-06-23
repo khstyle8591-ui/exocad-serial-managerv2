@@ -194,6 +194,27 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
     enabled: true,
   },
   {
+    code: 'manual_renewal_confirm',
+    name: '更新完了のご案内',
+    subject: '【完了】{{SERIAL_NUMBER}} のライセンス更新が完了しました',
+    body: `{{CUSTOMER_NAME}} 様
+
+いつもお世話になっております。
+
+ご利用中のライセンスの更新が完了いたしましたので、ご案内申し上げます。
+
+■ シリアルナンバー：{{SERIAL_NUMBER}}
+■ 製品名：{{MAIN_PRODUCT}}
+■ 更新前の有効期限：{{PREVIOUS_EXPIRY_DATE}}
+■ 新しい有効期限：{{EXPIRY_DATE}}
+
+引き続きご利用いただけますので、よろしくお願いいたします。
+ご不明な点がございましたら、担当者（{{SALES_MANAGER}}）までお問い合わせください。
+
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'cancel_confirmation',
     name: 'キャンセル確認',
     subject: '【確認】{{SERIAL_NUMBER}} のサブスクリプションキャンセルについて',

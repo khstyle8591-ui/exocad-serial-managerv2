@@ -322,6 +322,43 @@ export async function runAutoRenewNow(): Promise<{ processed: number; renewed: n
   };
 }
 
+/** 매니저 UI의 "발주서 발송?" 팝업에서 승인을 눌렀을 때 호출 — 수동 갱신에 대한 발주서를 발송. */
+export async function sendManualRenewalPo(
+  serialId: number,
+  previousExpiryDate: string | null,
+): Promise<{ success: boolean; message: string }> {
+  const serial = serialService.getById(serialId);
+  if (!serial) return { success: false, message: '시리얼을 찾을 수 없습니다.' };
+
+  const notice = await notificationService.sendAutoRenewalOrderNotice({
+    serial,
+    previous_expiry_date: previousExpiryDate,
+    source: 'manual',
+  }).catch((err: unknown) => {
+    const message = getErrorMessage(err);
+    logger.error(`[automation] manual renewal order notice error: ${serial.serial_number} - ${message}`);
+    return {
+      success: false,
+      subject: `[Exocad Manager] 更新注文書 (手動) - ${serial.serial_number}`,
+      html_body: '',
+      recipient_email: '',
+      message,
+    };
+  });
+
+  logAutoRenewalOrderNotice({
+    serial,
+    previous_expiry_date: previousExpiryDate,
+    recipient_email: notice.recipient_email,
+    subject: notice.subject,
+    html_body: notice.html_body,
+    status: notice.success ? 'sent' : 'failed',
+    message: notice.message,
+  });
+
+  return { success: notice.success, message: notice.message };
+}
+
 export async function runAutoCancelNow(): Promise<{ processed: number; success: number; failed: number; results: CancelResult[] }> {
   const settings = getSettings();
   const daysBefore = settings.auto_cancel_days_before ?? 1;

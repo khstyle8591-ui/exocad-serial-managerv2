@@ -899,6 +899,10 @@ export const translations = {
     mail_notice_history_empty: '최근 1년 내 자동 발송 이력이 없습니다.',
     mail_notice_status_sent: '성공',
     mail_notice_status_failed: '실패',
+    renewal_po_confirm_title: '갱신 발주서 발송',
+    renewal_po_confirm_message: '이 시리얼에 대한 갱신 발주서를 발송하시겠습니까?',
+    renewal_po_confirm_approve: '승인',
+    renewal_po_send_fail: '발주서 발송에 실패했습니다: ',
   },
 
   en: {
@@ -1796,6 +1800,10 @@ export const translations = {
     mail_notice_history_empty: 'No automatic mail notice history in the last year.',
     mail_notice_status_sent: 'Sent',
     mail_notice_status_failed: 'Failed',
+    renewal_po_confirm_title: 'Send Renewal Purchase Order',
+    renewal_po_confirm_message: 'Send a renewal purchase order email for this serial?',
+    renewal_po_confirm_approve: 'Approve',
+    renewal_po_send_fail: 'Failed to send purchase order: ',
   },
 
   ja: {
@@ -2693,6 +2701,10 @@ export const translations = {
     mail_notice_history_empty: '直近1年の自動送信履歴はありません。',
     mail_notice_status_sent: '成功',
     mail_notice_status_failed: '失敗',
+    renewal_po_confirm_title: '更新注文書の発送',
+    renewal_po_confirm_message: 'このシリアルの更新注文書を発送しますか？',
+    renewal_po_confirm_approve: '承認',
+    renewal_po_send_fail: '注文書の送信に失敗しました：',
   },
 } as const;
 

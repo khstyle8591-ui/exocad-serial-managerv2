@@ -9,8 +9,29 @@ import type { PendingOrder, PollSource, Serial, SerialInput, SerialWithCustomer,
 import { customerService } from './customer.service';
 import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
 import { waitForSettledPage } from './playwright-waits';
+import { pickLang } from './activity-log.service';
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+// 폴링 자동수집 노트 라벨 — 매니저 설정 언어(app_language)에 맞춰 출력
+const NOTE_AUTO_COLLECTED = (sourceName: string) => pickLang({
+  ko: `자동수집: ${sourceName}`, en: `Auto-collected: ${sourceName}`, ja: `自動収集: ${sourceName}`,
+});
+const NOTE_INVOICE_NO = (invoiceNo: string) => pickLang({
+  ko: `출고번호: ${invoiceNo}`, en: `Invoice No: ${invoiceNo}`, ja: `出荷番号: ${invoiceNo}`,
+});
+const NOTE_PRODUCT_CODE = (code: string) => pickLang({
+  ko: `상품코드: ${code}`, en: `Product code: ${code}`, ja: `商品コード: ${code}`,
+});
+const NOTE_GROUP = (group: string) => pickLang({
+  ko: `분류: ${group}`, en: `Category: ${group}`, ja: `分類: ${group}`,
+});
+const NOTE_ADDONS = (names: string) => pickLang({
+  ko: `Add-on: ${names}`, en: `Add-ons: ${names}`, ja: `Add-on: ${names}`,
+});
+const NOTE_POLLING_PRODUCT = (productVal: string, today: string) => pickLang({
+  ko: `[${today}] 폴링 상품: ${productVal}`, en: `[${today}] Polling product: ${productVal}`, ja: `[${today}] ポーリング商品: ${productVal}`,
+});
 
 function logMemoryUsage(label: string): void {
   const memory = process.memoryUsage();
@@ -501,7 +522,7 @@ function appendNote(notes: string, note: string): string {
 }
 
 function getPolledProductNote(productVal: string, today: string): string {
-  return productVal ? `[${today}] Polling product: ${productVal}` : '';
+  return productVal ? NOTE_POLLING_PRODUCT(productVal, today) : '';
 }
 
 function getOrderProductMemo(order: PendingOrder, today: string): string {
@@ -577,10 +598,10 @@ function insertPendingFromPolledRow(
     engine_build: '',
     version: productFields.version,
     notes: appendNote([
-      `자동수집: ${source.name}`,
-      row.invoice_no ? `출고번호: ${row.invoice_no}` : '',
-      code ? `상품코드: ${code}` : '',
-      group ? `분류: ${group}` : '',
+      NOTE_AUTO_COLLECTED(source.name),
+      row.invoice_no ? NOTE_INVOICE_NO(row.invoice_no) : '',
+      code ? NOTE_PRODUCT_CODE(code) : '',
+      group ? NOTE_GROUP(group) : '',
     ].filter(Boolean).join(' / '), productFields.notes),
     order_type: orderType,
     raw_data: withPollingMetadata(row._raw || '{}', { _poll_group: group, _product_code: code }),
@@ -956,10 +977,10 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
         engine_build: '',
         version: '',
         notes: [
-          `자동수집: ${source.name}`,
-          baseRow.invoice_no ? `출고번호: ${baseRow.invoice_no}` : '',
+          NOTE_AUTO_COLLECTED(source.name),
+          baseRow.invoice_no ? NOTE_INVOICE_NO(baseRow.invoice_no) : '',
           addonEntries.length > 0
-            ? `Add-ons: ${addonEntries.map(e => e.row.product || e.code).join(', ')}`
+            ? NOTE_ADDONS(addonEntries.map(e => e.row.product || e.code).join(', '))
             : '',
         ].filter(Boolean).join(' / '),
         order_type: mainEntry ? 'new' : 'addon',
@@ -1009,7 +1030,7 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
           engine_build: '',
           main_product: group === 'main' ? getProductFallback(row) : '',
           version: '',
-          notes: appendNote(`자동수집: ${source.name}`, getPolledProductFields(group, getProductFallback(row), today, group === 'main' ? 'new' : 'addon').notes),
+          notes: appendNote(NOTE_AUTO_COLLECTED(source.name), getPolledProductFields(group, getProductFallback(row), today, group === 'main' ? 'new' : 'addon').notes),
           order_type: group === 'main' ? 'new' : 'addon',
           raw_data: withPollingMetadata(row._raw || '{}', { _poll_group: group, _product_code: code }),
           status: 'pending',

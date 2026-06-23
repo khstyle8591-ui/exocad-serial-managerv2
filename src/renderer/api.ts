@@ -69,6 +69,8 @@ export const api = {
     cancelSerialDb: (id: number) => post(`/serials/${id}/cancel-db`),
     removeModule: (id: number, name: string) => post(`/serials/${id}/remove-module`, { name }),
     renewSerial: (id: number) => post(`/serials/${id}/renew`),
+    sendRenewalPo: (id: number, previousExpiryDate: string | null) =>
+        post(`/serials/${id}/send-renewal-po`, { previous_expiry_date: previousExpiryDate }),
     exportSerials: async (serials: unknown[]) => {
         try {
             const res = await fetch(`${BASE}/serials/export`, {

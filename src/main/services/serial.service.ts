@@ -243,14 +243,17 @@ export class SerialService {
       .all() as SerialVersionSummary[];
   }
 
+  /**
+   * 자동 재갱신 대상 — status는 신뢰하지 않고 만료일과 중단 플래그만으로 판단.
+   * (중단 플래그가 없고 만료일이 지났다면 자동 재갱신 대상)
+   */
   getAutoRenewCandidates(today = getTodayDateString()): SerialWithCustomer[] {
     const rows = getDb()
       .prepare(
         `${SERIAL_WITH_CUSTOMER_SQL}
-         WHERE s.status = 'active'
-           AND s.expiry_date IS NOT NULL
+         WHERE s.expiry_date IS NOT NULL
            AND s.expiry_date != ''
-           AND s.expiry_date = ?
+           AND s.expiry_date <= ?
            AND s.renewal_stop_requested = 0
          ORDER BY s.expiry_date ASC, s.id ASC`
       )
@@ -458,7 +461,17 @@ export class SerialService {
       db.prepare(`UPDATE serials SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     }
 
-    return this.getById(id);
+    const updated = this.getById(id);
+
+    // 수동으로 만료일이 미래로 변경된 경우 = 외부에서 실제 갱신 완료 후 사람이 반영한 것 → 갱신 완료 안내 자동 발송
+    if (updated && input.expiry_date && existing.expiry_date && input.expiry_date > existing.expiry_date) {
+      const previousExpiryDate = existing.expiry_date;
+      import('./mail/lifecycle-notice.service')
+        .then(({ sendManualRenewalConfirmNotice }) => sendManualRenewalConfirmNotice(updated, previousExpiryDate))
+        .catch((err: unknown) => logger.error(`[serial] manual renewal confirm notice failed: ${getErrorMessage(err)}`));
+    }
+
+    return updated;
   }
 
   delete(id: number): boolean {

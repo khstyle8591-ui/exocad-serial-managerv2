@@ -3,6 +3,7 @@ import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
 import { excelService } from '../../main/services/excel.service';
 import { sendStopRequestReceivedNotice } from '../../main/services/mail/lifecycle-notice.service';
+import { sendManualRenewalPo } from '../../main/services/automation.service';
 import { listSerialMailNoticeLogs } from '../../main/services/serial-mail-notice-log.service';
 import {
     parseAddOnInput,
@@ -195,6 +196,18 @@ router.post('/:id/remove-module', (req: Request, res: Response) => {
 router.post('/:id/renew', (req: Request, res: Response) => {
     try {
         const result = serialService.renewSerial(Number(req.params.id), 'manual');
+        res.json(result);
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
+    }
+});
+
+// POST /api/serials/:id/send-renewal-po  — 수동 갱신 발주서 발송 팝업에서 "승인" 클릭 시
+router.post('/:id/send-renewal-po', async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const previousExpiryDate = req.body?.previous_expiry_date ?? null;
+        const result = await sendManualRenewalPo(id, previousExpiryDate);
         res.json(result);
     } catch (err) {
         res.status(400).json({ error: errorMessage(err) });

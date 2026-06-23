@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { AppSettings, CustomerInput, Serial, SerialInput, SerialWithCustomer } from '../../shared/types';
 import CustomerAutocomplete, { type CustomerChoice } from './CustomerAutocomplete';
 import ModuleListEditor from './ModuleListEditor';
+import ConfirmModal from './ConfirmModal';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import { api } from '../client';
@@ -103,6 +104,7 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState<CustomerConflict | null>(null);
   const [productList, setProductList] = useState<string[]>([]);
+  const [poConfirm, setPoConfirm] = useState<{ serial: SerialWithCustomer; previousExpiryDate: string } | null>(null);
 
   useEffect(() => {
     api.getSettings().then(raw => {
@@ -265,8 +267,15 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
         }
       }
 
-      onSaved(result);
       setConflict(null);
+
+      // 만료일이 미래로 변경된 수동 갱신 → 발주서 발송 여부를 확인하는 팝업
+      const previousExpiryDate = mode === 'edit' ? initial?.expiry_date : undefined;
+      if (previousExpiryDate && result.expiry_date && result.expiry_date > previousExpiryDate) {
+        setPoConfirm({ serial: result, previousExpiryDate });
+      } else {
+        onSaved(result);
+      }
     } catch (e: unknown) {
       setError(getErrorMessage(e) || t(lang, 'save_fail'));
     } finally {
@@ -431,6 +440,25 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {poConfirm && (
+        <ConfirmModal
+          title={t(lang, 'renewal_po_confirm_title')}
+          message={t(lang, 'renewal_po_confirm_message')}
+          confirmLabel={t(lang, 'renewal_po_confirm_approve')}
+          onCancel={() => { const s = poConfirm.serial; setPoConfirm(null); onSaved(s); }}
+          onConfirm={async () => {
+            const { serial, previousExpiryDate } = poConfirm;
+            setPoConfirm(null);
+            try {
+              await api.sendRenewalPo(serial.id, previousExpiryDate);
+            } catch (e: unknown) {
+              console.error(t(lang, 'renewal_po_send_fail') + getErrorMessage(e));
+            }
+            onSaved(serial);
+          }}
+        />
       )}
     </div>
   );
