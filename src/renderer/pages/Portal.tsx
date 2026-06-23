@@ -72,7 +72,7 @@ const STATUS_COLOR: Record<string, string> = {
   auto_done: 'var(--accent)',
   approved: 'var(--green)',
   rejected: 'var(--red)',
-  user_cancelled: 'var(--text3)',
+  user_cancelled: 'var(--red)',
 };
 
 export default function Portal() {
@@ -501,7 +501,9 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
             </thead>
             <tbody>
               {requests.map(r => (
-                <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
+                <tr key={r.id} style={r.status === 'user_cancelled'
+                  ? { borderTop: '1px solid var(--border)', outline: '2px solid var(--red)', outlineOffset: '-1px', background: 'rgba(229, 62, 62, 0.08)' }
+                  : { borderTop: '1px solid var(--border)' }}>
                   <td style={cell}>{r.id}</td>
                   <td style={cell}>
                     {r.account_name}
@@ -537,6 +539,11 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, creditPackage
                       <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
                         {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
                       </span>
+                    )}
+                    {r.status === 'user_cancelled' && (
+                      <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
+                        {t(lang, 'portal_st_user_cancelled_note')}
+                      </div>
                     )}
                   </td>
                   <td style={{ ...cell, fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
