@@ -1,24 +1,17 @@
 /**
  * Dummy data seed script.
- * Usage: node scripts/seed-dummy.js [--clean]
+ * Usage: DB_PATH=path/to/exocad.db node scripts/seed-dummy.js [--clean]
  *   --clean  : delete all existing rows first (keeps settings & mail_templates)
- *
- * The script targets the active Electron userData DB.
- * Override with: DB_PATH=path/to/exocad.db node scripts/seed-dummy.js
  */
 
 const Database = require('better-sqlite3');
-const path = require('path');
-const os = require('os');
 
 // ── Resolve DB path ────────────────────────────────────────────────────────
-const DB_PATH =
-  process.env.DB_PATH ||
-  path.join(
-    process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-    'Exocad Serial Manager',
-    'exocad.db'
-  );
+if (!process.env.DB_PATH) {
+  console.error('DB_PATH is required. Usage: DB_PATH=path/to/exocad.db node scripts/seed-dummy.js');
+  process.exit(1);
+}
+const DB_PATH = process.env.DB_PATH;
 
 console.log('[seed] Using DB:', DB_PATH);
 
@@ -409,7 +402,7 @@ console.log(`[seed] Pending orders: ${orders.length}`);
 
 // ── Done ───────────────────────────────────────────────────────────────────
 db.close();
-console.log('\n[seed] Done. Restart the Electron app to see the data.\n');
+console.log('\n[seed] Done.\n');
 console.log('Summary:');
 console.log(`  Customers  : ${customers.length}`);
 console.log(`  Serials    : ${serials.length} (active/cancelled/expired/not-activated/broken)`);

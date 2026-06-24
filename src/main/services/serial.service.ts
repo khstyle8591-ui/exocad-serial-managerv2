@@ -820,7 +820,7 @@ export class SerialService {
   // ── Logging ────────────────────────────────────────────────────────────────
 
   /**
-   * Delegate to activity-log.service (which also pushes logs:push to renderer).
+   * Delegate to activity-log.service.
    */
   logActivity(
     serialId: number | null,

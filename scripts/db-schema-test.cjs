@@ -1,5 +1,4 @@
 const path = require('path');
-const { app } = require('electron');
 
 const databaseModulePath = path.join(__dirname, '..', 'dist', 'main', 'main', 'database.js');
 const { closeDatabase, getDb, initDatabaseForTesting } = require(databaseModulePath);
@@ -40,15 +39,13 @@ function runIsolated(name, fn) {
   initDatabaseForTesting();
   try {
     fn();
-    console.log(`[electron-db] PASS ${name}`);
+    console.log(`[db-schema] PASS ${name}`);
   } finally {
     closeDatabase();
   }
 }
 
-async function main() {
-  await app.whenReady();
-
+function main() {
   runIsolated('creates the core application tables', () => {
     assertContainsAll(tableNames(), [
       'customers',
@@ -89,16 +86,17 @@ async function main() {
     assert(getDb().pragma('user_version', { simple: true }) === 4, 'expected user_version = 4 after repeated init');
   });
 
-  console.log('[electron-db] All schema checks passed');
-  app.exit(0);
+  console.log('[db-schema] All schema checks passed');
 }
 
-main().catch(error => {
-  console.error(`[electron-db] FAIL ${error instanceof Error ? error.stack || error.message : String(error)}`);
+try {
+  main();
+} catch (error) {
+  console.error(`[db-schema] FAIL ${error instanceof Error ? error.stack || error.message : String(error)}`);
   try {
     closeDatabase();
   } catch {
     // ignore cleanup errors
   }
-  app.exit(1);
-});
+  process.exit(1);
+}

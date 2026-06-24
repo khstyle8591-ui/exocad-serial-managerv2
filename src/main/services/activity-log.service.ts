@@ -2,11 +2,8 @@
  * activity-log.service.ts
  *
  * Typed activity logger for activity_logs table.
- * After every INSERT, pushes a `logs:push` IPC event to all open renderer windows
- * so the Logs page can poll for the new entry without full polling.
  */
 
-import { BrowserWindow } from 'electron';
 import { getDb } from '../database';
 import { getNowTimestampString } from '../utils/date-utils';
 import { getSettings } from '../settings';
@@ -36,7 +33,7 @@ export interface LogInput {
 // ── Core write ────────────────────────────────────────────────────────────────
 
 /**
- * Insert an activity log entry and push `logs:push` to renderer windows.
+ * Insert an activity log entry.
  */
 export function logActivity(input: LogInput): number {
   const db = getDb();
@@ -57,22 +54,7 @@ export function logActivity(input: LogInput): number {
       getNowTimestampString()
     );
 
-  const id = result.lastInsertRowid as number;
-  pushLogEvent(id);
-  return id;
-}
-
-/** Push logs:push event to all open BrowserWindow instances. */
-function pushLogEvent(id: number): void {
-  try {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('logs:push', { id });
-      }
-    }
-  } catch {
-    // Silently ignore — renderer may not be ready yet (e.g., during startup)
-  }
+  return result.lastInsertRowid as number;
 }
 
 // ── Read ──────────────────────────────────────────────────────────────────────

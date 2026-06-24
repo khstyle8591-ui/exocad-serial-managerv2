@@ -13,34 +13,19 @@ type Migration = {
   run: () => void;
 };
 
-function resolveElectronUserDataPath(): string | null {
-  if (!process.versions.electron) return null;
-
-  try {
-    const { app } = require('electron') as typeof import('electron');
-    if (!app?.isReady()) return null;
-    return app.getPath('userData');
-  } catch {
-    return null;
-  }
-}
-
 export function getDbPath(): string {
-  if (process.env.DB_PATH) return process.env.DB_PATH;
-
-  const electronUserDataPath = resolveElectronUserDataPath();
-  if (!electronUserDataPath) {
+  if (!process.env.DB_PATH) {
     throw new Error(
-      'DB_PATH is required outside the Electron desktop app. ' +
-      'Set DB_PATH to the SQLite database file before running server, GCP, migration, or maintenance scripts.'
+      'DB_PATH is required. Set DB_PATH to the SQLite database file before running the server, ' +
+      'migration, or maintenance scripts.'
     );
   }
-
-  const dataDir = electronUserDataPath;
+  const dbPath = process.env.DB_PATH;
+  const dataDir = path.dirname(dbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  return path.join(dataDir, 'exocad.db');
+  return dbPath;
 }
 
 export function getLegacyDbPath(): string {
