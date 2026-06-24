@@ -240,19 +240,7 @@ export function startScheduler(): void {
   }, { timezone: 'Asia/Tokyo' });
 
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
-  limboCronTask = cron.schedule('0 3 * * *', async () => {
-    logger.info('[Limbo] fallback started');
-    try {
-      const result = await runLimboFallbackNow();
-      if (result.processed > 0) {
-        logger.info(`[Limbo] completed: success=${result.success}, failed=${result.failed}`);
-      } else {
-        logger.info('[Limbo] no fallback targets');
-      }
-    } catch (err: unknown) {
-      logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
-    }
-  }, { timezone: 'Asia/Tokyo' });
+  limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo' });
 
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
@@ -337,6 +325,27 @@ export function startScheduler(): void {
 
   // 9. VM 점검 등으로 다운된 동안 스킵된 cron 보정 (서버 시작 후 1회, 순차 실행)
   void runStartupCatchup();
+}
+
+async function runLimboFallbackOnce(): Promise<void> {
+  const today = getTodayDateString();
+  if (getJobLastRunDate('limbo_fallback') === today) {
+    logger.info('[Limbo] already ran today, skip');
+    return;
+  }
+
+  logger.info('[Limbo] fallback started');
+  try {
+    const result = await runLimboFallbackNow();
+    if (result.processed > 0) {
+      logger.info(`[Limbo] completed: success=${result.success}, failed=${result.failed}`);
+    } else {
+      logger.info('[Limbo] no fallback targets');
+    }
+  } catch (err: unknown) {
+    logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
+  }
+  setJobLastRunDate('limbo_fallback', today);
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -829,6 +838,20 @@ async function runStartupCatchup(): Promise<void> {
     }
   } catch (err: unknown) {
     logger.error(`[Catchup] pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    const today = getTodayDateString();
+    if (hasScheduledTimePassedToday('03:00') && getJobLastRunDate('limbo_fallback') !== today) {
+      // status='expired'인데 stop=1이라 실제 사이트 취소가 안 됐을 수 있는 시리얼 보정.
+      // 다운타임이 자정을 넘기면 위 pre-expiry catchup은 날짜가 바뀌어 대상을 못 찾으므로,
+      // 7일 범위로 조회하는 limbo가 그 갭을 닫는 실질적인 안전망이다.
+      logger.warn("[Catchup] limbo fallback missed today's 03:00 run — executing now");
+      await sleep(10_000);
+      await runLimboFallbackOnce();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Catchup] limbo fallback error: ${getErrorMessage(err)}`);
   }
 
   try {
