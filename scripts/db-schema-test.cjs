@@ -1,7 +1,7 @@
 const path = require('path');
 
 const databaseModulePath = path.join(__dirname, '..', 'dist', 'main', 'main', 'database.js');
-const { closeDatabase, getDb, initDatabaseForTesting } = require(databaseModulePath);
+const { closeDatabase, getDb, initDatabaseForTesting, CURRENT_SCHEMA_VERSION } = require(databaseModulePath);
 
 function assert(condition, message) {
   if (!condition) {
@@ -77,13 +77,19 @@ function main() {
   });
 
   runIsolated('sets the schema user_version to the current migration version', () => {
-    assert(getDb().pragma('user_version', { simple: true }) === 4, 'expected user_version = 4');
+    assert(
+      getDb().pragma('user_version', { simple: true }) === CURRENT_SCHEMA_VERSION,
+      `expected user_version = ${CURRENT_SCHEMA_VERSION}`
+    );
   });
 
   runIsolated('can initialize a fresh in-memory database repeatedly', () => {
     initDatabaseForTesting();
     assert(tableNames().includes('inbound_mails'), 'expected inbound_mails after repeated init');
-    assert(getDb().pragma('user_version', { simple: true }) === 4, 'expected user_version = 4 after repeated init');
+    assert(
+      getDb().pragma('user_version', { simple: true }) === CURRENT_SCHEMA_VERSION,
+      `expected user_version = ${CURRENT_SCHEMA_VERSION} after repeated init`
+    );
   });
 
   console.log('[db-schema] All schema checks passed');

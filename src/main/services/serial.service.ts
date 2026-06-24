@@ -570,7 +570,7 @@ export class SerialService {
       if (existing.renewal_stop_requested === 1) {
         // stop_requested=1인 시리얼을 갱신 처리함 — 운영자가 명시적으로 주문을 승인했으므로
         // stop flag를 초기화하지만, 경고 로그를 남겨 추후 감사 가능하게 함.
-        console.warn(
+        logger.warn(
           `[renewSerialWithExpiry] WARNING: serial_id=${id} (${existing.serial_number}) 은 ` +
           `renewal_stop_requested=1 상태였으나 ${source} 갱신으로 인해 초기화됩니다.`
         );
@@ -606,7 +606,7 @@ export class SerialService {
         )
         .get(id, today);
       if (alreadyRenewed) {
-        console.log(`[renew] skip — 오늘 이미 갱신됨: serial_id=${id}`);
+        logger.info(`[renew] skip — 오늘 이미 갱신됨: serial_id=${id}`);
         db.exec('COMMIT');
         return existing;
       }
@@ -835,7 +835,7 @@ export class SerialService {
       _logActivity({ serial_id: serialId, action, actor, diff, details, trigger_id, severity });
     } catch (err: unknown) {
       // Log write failure must not crash the parent operation
-      console.error(`[logActivity] DB write failed: ${getErrorMessage(err)}`);
+      logger.error(`[logActivity] DB write failed: ${getErrorMessage(err)}`);
     }
   }
 

@@ -12,9 +12,9 @@ npm run dev:web
 tsc --noEmit                        # renderer/portal-client
 tsc --noEmit -p tsconfig.main.json  # main/server process
 
-# Build
-npm run build          # build:main (tsc) + build:renderer (vite, dev-only target)
-npm run build:main     # tsc -p tsconfig.main.json
+# Build (all deployable artifacts)
+npm run build          # build:main + build:manager + build:portal
+npm run build:main     # tsc -p tsconfig.main.json                  → dist/main
 npm run build:portal   # vite build --config vite.portal.config.ts  → dist/portal-client
 npm run build:manager  # vite build --config vite.manager.config.ts → dist/manager
 
@@ -95,7 +95,7 @@ vite.manager.config.ts: root=src/renderer → outDir=dist/manager   (served at /
 vite.portal.config.ts:  root=src/portal-client → outDir=dist/portal-client (served at /)
 ```
 
-`vite.config.mts` (`build:renderer` → `dist/renderer`) is a separate dev-only Vite config; `server.ts` does not serve `dist/renderer` in production.
+`vite.config.mts` is a dev-only Vite config used by `dev:web`/`dev:renderer` to serve the manager UI with HMR; it has no production build target (the deployable manager bundle comes from `vite.manager.config.ts`).
 
 ### Deployment
 

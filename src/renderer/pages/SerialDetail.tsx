@@ -28,7 +28,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
 
     const reload = async () => {
     try {
-      const s = await api.getSerialById(serialId);
+      const s = await api.getSerial(serialId);
       if (!s) { setError(t(lang, 'serial_not_found')); return; }
       setSerial(s);
       const logs = await api.listSerialMailNoticeLogs(serialId) as SerialMailNoticeLog[];

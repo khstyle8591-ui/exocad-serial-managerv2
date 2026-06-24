@@ -34,8 +34,6 @@ async function preq<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
     // ── Serials ────────────────────────────────────────────────────────────────
-    // @deprecated Compatibility API. New browser UI should use listSerials.
-    getSerials: () => get('/serials'),
     listSerials: (query: {
         limit?: number;
         offset?: number;
@@ -55,7 +53,6 @@ export const api = {
         get(`/serials/expiring-soon?days=${days}&limit=${limit}`),
     getSerialVersionSummary: () => get('/serials/version-summary'),
     getSerial: (id: number) => get(`/serials/${id}`),
-    getSerialById: (id: number) => get(`/serials/${id}`),
     listSerialMailNoticeLogs: (id: number) => get(`/serials/${id}/mail-notice-logs`),
     searchSerials: (q: string) => get(`/serials/search?q=${encodeURIComponent(q)}`),
     getStats: () => get('/serials/stats'),
@@ -103,7 +100,6 @@ export const api = {
 
     // 엑셀 템플릿 다운로드
     downloadTemplate: () => { window.location.href = `${BASE}/serials/template/download`; },
-    downloadExcelTemplate: () => { window.location.href = `${BASE}/serials/template/download`; },
 
     // 엑셀 대량 임포트 (multipart)
     bulkImport: async (file: File) => {
@@ -180,10 +176,7 @@ export const api = {
     saveSettings: (data: unknown) => post('/settings', data),
     testSmtp: (override?: unknown) => post('/mail/test-smtp', override),
     testSlack: (override?: unknown) => post('/settings/test-slack', override),
-    testSlackWebhook: (override?: unknown) => post('/settings/test-slack', override),
     testSlackRelated: (override?: unknown) => post('/settings/test-slack-related', override),
-    renewalDryRun: () => post('/mail/inbound-dry-run'),
-    checkRenewalEmails: () => post('/mail/check-inbound-now'),
     updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
     exportSettings: async () => {
         const settings = await api.getSettings();
@@ -198,7 +191,6 @@ export const api = {
         URL.revokeObjectURL(url);
         return { success: true };
     },
-    importSettings: (data: unknown) => post('/settings', data),
     listReportTimes: () => get('/settings/report-times'),
     setReportTimes: (times: string[]) => post('/settings/report-times', { times }),
     sendDailyReportNow: () => post('/reports/send-daily'),
@@ -234,8 +226,6 @@ export const api = {
     getWebhookStatus: () => get<{ running: boolean; port: number }>('/webhook/status'),
     startWebhook: () => post<{ running: boolean; port: number }>('/webhook/start'),
     stopWebhook: () => post<{ running: boolean; port: number }>('/webhook/stop'),
-    startWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/start'),
-    stopWebhookServer: () => post<{ running: boolean; port: number }>('/webhook/stop'),
 
     // ── Portal Admin (/portal/admin) ───────────────────────────────────────────
     portal: {

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ProductCodeRule } from '../src/shared/types';
 import { getPolledProductFields, resolveGroup } from '../src/main/services/order.service';
+import { closeDatabase, initDatabaseForTesting } from '../src/main/database';
+import { saveSettings } from '../src/main/settings';
 
 describe('resolveGroup', () => {
   it('resolves built-in product codes', () => {
@@ -47,6 +49,18 @@ describe('resolveGroup', () => {
 });
 
 describe('getPolledProductFields', () => {
+  // Note labels are localized via pickLang(getSettings().app_language), which
+  // requires an initialized DB. Pin the language to 'en' so the asserted note
+  // strings are deterministic regardless of the default app_language.
+  beforeAll(() => {
+    initDatabaseForTesting();
+    saveSettings({ app_language: 'en' });
+  });
+
+  afterAll(() => {
+    closeDatabase();
+  });
+
   it('routes main and fallback new products into main_product only', () => {
     expect(getPolledProductFields('main', 'EXOCAD Basic', '2026-05-22', 'new')).toEqual({
       main_product: 'EXOCAD Basic',

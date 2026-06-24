@@ -243,7 +243,7 @@ export default function SerialData() {
           {legacyAvailable && (
             <button onClick={() => setShowLegacy(true)} style={btnOutline}>📦 Legacy Import</button>
           )}
-          <button onClick={() => api.downloadExcelTemplate()} style={btnOutline}>
+          <button onClick={() => api.downloadTemplate()} style={btnOutline}>
             📋 {t(lang, 'btn_download_template').replace('📋 ', '')}
           </button>
           <input

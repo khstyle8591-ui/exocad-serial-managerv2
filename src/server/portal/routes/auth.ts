@@ -23,6 +23,7 @@ import {
   consumeResetToken,
 } from '../db';
 import { sendTemplate } from '../../../main/services/mail/smtp.service';
+import { logger } from '../../../main/utils/logger';
 
 const router = Router();
 
@@ -159,7 +160,7 @@ router.post('/reset-request', authLimiter, async (req: Request, res: Response) =
       RESET_URL: resetUrl,
     });
   } catch (err) {
-    console.error('[portal] reset-request: SMTP 발송 실패', err);
+    logger.error(`[portal] reset-request: SMTP 발송 실패: ${err instanceof Error ? err.message : String(err)}`);
     res.status(500).json({ error: 'mail_send_failed' });
     return;
   }

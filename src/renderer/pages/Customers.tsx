@@ -96,8 +96,8 @@ export default function Customers() {
 
   const openSerialPopup = async (customer: Customer) => {
     setSerialPopupCustomer(customer);
-    const all = await api.getSerials() as SerialWithCustomer[];
-    setSerialPopupList(all.filter(s => s.customer_id === customer.id));
+    const res = await api.listSerials({ customer_id: customer.id, limit: 10000 }) as { items: SerialWithCustomer[] };
+    setSerialPopupList(res.items);
   };
 
   const closeSerialPopup = () => {

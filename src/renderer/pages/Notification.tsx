@@ -48,7 +48,7 @@ export default function Notification() {
 
   const runSlackTest = async () => {
     setBusy('slack'); setSlackResult(null);
-    try { setSlackResult(await api.testSlackWebhook()); }
+    try { setSlackResult(await api.testSlack()); }
     finally { setBusy(null); }
   };
 
@@ -104,7 +104,7 @@ export default function Notification() {
     setBusy('import');
     try {
       const parsed = JSON.parse(await file.text());
-      const result = await api.importSettings(parsed);
+      const result = await api.saveSettings(parsed);
       if (result.success) { await load(); alert(t(lang, 'notification_imported')); }
     } finally { setBusy(null); }
   };

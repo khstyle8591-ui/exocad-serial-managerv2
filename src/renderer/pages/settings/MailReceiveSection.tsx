@@ -421,7 +421,7 @@ export function MailReceiveSection({
                 setRenewalDryRunning(true);
                 setRenewalDryRunResult(null);
                 try {
-                  const res = await api.renewalDryRun();
+                  const res = await api.inboundDryRun();
                   setRenewalDryRunResult(res);
                 } catch (e: unknown) {
                   setRenewalDryRunResult({ total_checked: 0, matched: 0, emails: [], error: getErrorMessage(e) });

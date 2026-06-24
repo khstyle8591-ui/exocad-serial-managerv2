@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
+import { logger } from '../../main/utils/logger';
 import { excelService } from '../../main/services/excel.service';
 import { sendStopRequestReceivedNotice } from '../../main/services/mail/lifecycle-notice.service';
 import { sendManualRenewalPo } from '../../main/services/automation.service';
@@ -121,7 +122,7 @@ router.post('/bulk-import', upload.single('file'), async (req: Request, res: Res
         const importResult = serialService.bulkImport(serials);
         res.json({ imported: importResult.imported, errors: [...parseErrors, ...importResult.errors] });
     } catch (err) {
-        console.error('Bulk import error:', err);
+        logger.error(`Bulk import error: ${errorMessage(err)}`);
         res.status(500).json({ error: '임포트 중 오류 발생: ' + errorMessage(err) });
     }
 });

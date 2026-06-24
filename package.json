@@ -7,8 +7,7 @@
   "scripts": {
     "start:server": "node dist/main/server.js",
     "build:server": "tsc -p tsconfig.server.json",
-    "build:renderer": "vite build --config vite.config.mts",
-    "build": "npm run build:main && npm run build:renderer",
+    "build": "npm run build:main && npm run build:manager && npm run build:portal",
     "test": "vitest run",
     "test:db": "npm run build:main && node scripts/db-schema-test.cjs",
     "test:watch": "vitest",

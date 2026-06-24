@@ -84,7 +84,7 @@ export default function Dashboard() {
 
   const handleCheckEmails = async () => {
     try {
-      const result = await api.checkRenewalEmails() as MailCheckResult;
+      const result = await api.checkInboundNow() as MailCheckResult;
       alert(t(lang, 'dash_renewal_result').replace('{processed}', String(result.processed)).replace('{errors}', String(result.errors.length)));
       loadData();
     } catch (err: unknown) {

@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 type Migration = {
   version: number;
@@ -62,7 +62,7 @@ function detectAndRenameLegacy(): boolean {
   if (!fs.existsSync(dbPath)) return false;   // 완전히 새 설치
   if (hasNewSchema(dbPath)) return false;      // 이미 신규 스키마
 
-  console.log('[DB] Old schema detected. Renaming to legacy...');
+  logger.info('[DB] Old schema detected. Renaming to legacy...');
   fs.renameSync(dbPath, legacyPath);
 
   for (const ext of ['-wal', '-shm']) {
@@ -77,7 +77,7 @@ function detectAndRenameLegacy(): boolean {
     }
   }
 
-  console.log(`[DB] Legacy DB saved at: ${legacyPath}`);
+  logger.info(`[DB] Legacy DB saved at: ${legacyPath}`);
   return true;
 }
 
@@ -94,7 +94,7 @@ function migrateSeverityConstraint(): void {
   if (!row) return;                          // 테이블 자체가 없으면 createTables()가 처리
   if (row.sql.includes("'critical'")) return; // 이미 올바른 제약 보유
 
-  console.log('[DB] Migrating activity_logs: adding critical severity...');
+  logger.info('[DB] Migrating activity_logs: adding critical severity...');
 
   db.exec(`
     CREATE TABLE activity_logs_new (
@@ -129,7 +129,7 @@ function migrateSeverityConstraint(): void {
     CREATE INDEX IF NOT EXISTS idx_logs_severity ON activity_logs(severity);
   `);
 
-  console.log('[DB] Migration complete: activity_logs.severity now includes critical');
+  logger.info('[DB] Migration complete: activity_logs.severity now includes critical');
 }
 
 function migrateInboundClassificationConstraint(): void {
@@ -149,7 +149,7 @@ function migrateInboundClassificationConstraint(): void {
     row.sql.includes('admin_review_resolved')
   ) return;
 
-  console.log('[DB] Migrating inbound_mails: adding request classifications...');
+  logger.info('[DB] Migrating inbound_mails: adding request classifications...');
   const columns = db.prepare('PRAGMA table_info(inbound_mails)').all() as { name: string }[];
   const hasMissingFields = columns.some(col => col.name === 'missing_fields');
   const hasTemplateSentAt = columns.some(col => col.name === 'template_sent_at');
@@ -211,7 +211,7 @@ function migrateInboundClassificationConstraint(): void {
     CREATE INDEX IF NOT EXISTS idx_inbound_serial ON inbound_mails(linked_serial_id);
   `);
 
-  console.log('[DB] Migration complete: inbound_mails classifications updated');
+  logger.info('[DB] Migration complete: inbound_mails classifications updated');
 }
 
 function ensureInboundMessageIdUniqueIndex(): void {
@@ -220,7 +220,7 @@ function ensureInboundMessageIdUniqueIndex(): void {
     .get() as { sql: string | null } | undefined;
 
   if (index?.sql?.includes('WHERE message_id IS NOT NULL')) {
-    console.log('[DB] Rebuilding inbound_mails message_id unique index...');
+    logger.info('[DB] Rebuilding inbound_mails message_id unique index...');
     db.exec('DROP INDEX IF EXISTS idx_inbound_msgid;');
   }
 
@@ -243,7 +243,7 @@ function createPendingOrderSourceUniqueIndex(): void {
     .get() as { source_id: string; cnt: number } | undefined;
 
   if (duplicate) {
-    console.warn(
+    logger.warn(
       `[DB] pending_orders.source_id has duplicates; unique index skipped. ` +
       `Example: ${duplicate.source_id} (${duplicate.cnt} rows)`
     );
@@ -417,7 +417,7 @@ function migratePortalRequestsUserCancelled(): void {
   if (!row) return;                              // 테이블 자체가 없으면 createPortalTables()가 처리
   if (row.sql.includes("'user_cancelled'")) return; // 이미 올바른 제약 보유
 
-  console.log('[DB] Migrating portal_requests: adding user_cancelled status...');
+  logger.info('[DB] Migrating portal_requests: adding user_cancelled status...');
 
   db.exec(`
     CREATE TABLE portal_requests_new (
@@ -446,7 +446,7 @@ function migratePortalRequestsUserCancelled(): void {
     CREATE INDEX IF NOT EXISTS idx_pr_serial  ON portal_requests(target_serial) WHERE target_serial != '';
   `);
 
-  console.log('[DB] Migration complete: portal_requests.status now includes user_cancelled');
+  logger.info('[DB] Migration complete: portal_requests.status now includes user_cancelled');
 }
 
 /**
@@ -462,7 +462,7 @@ function migratePortalRequestsCancelRequested(): void {
   if (!row) return;                                  // 테이블 자체가 없으면 createPortalTables()가 처리
   if (row.sql.includes("'cancel_requested'")) return; // 이미 올바른 제약 보유
 
-  console.log('[DB] Migrating portal_requests: adding cancel_requested status...');
+  logger.info('[DB] Migrating portal_requests: adding cancel_requested status...');
 
   db.exec(`
     CREATE TABLE portal_requests_new (
@@ -491,7 +491,7 @@ function migratePortalRequestsCancelRequested(): void {
     CREATE INDEX IF NOT EXISTS idx_pr_serial  ON portal_requests(target_serial) WHERE target_serial != '';
   `);
 
-  console.log('[DB] Migration complete: portal_requests.status now includes cancel_requested');
+  logger.info('[DB] Migration complete: portal_requests.status now includes cancel_requested');
 }
 
 const migrations: Migration[] = [
