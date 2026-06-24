@@ -49,6 +49,46 @@ function setLastReportSentDate(date: string): void {
   } catch { /* DB 미초기화 시 무시 */ }
 }
 
+// ── Cron catch-up (VM 점검 등으로 다운된 동안 스킵된 cron 보정) ──────────────────
+// 날짜 범위 쿼리(autoRenew/limbo)는 다음 실행 때 자연히 따라잡지만, 정확한 날짜를
+// 조회하는 작업(만료예고메일/사전취소)과 전일자 리포트는 그날을 놓치면 영구 손실되므로
+// "마지막 실행일"을 settings에 기록해 서버 시작 시 보정 실행한다.
+function getJobLastRunDate(jobKey: string): string {
+  try {
+    const row = getDb()
+      .prepare('SELECT value FROM settings WHERE key = ?')
+      .get(`cron_last_run:${jobKey}`) as { value: string } | undefined;
+    return row?.value ?? '';
+  } catch { return ''; }
+}
+
+function setJobLastRunDate(jobKey: string, date: string): void {
+  try {
+    getDb()
+      .prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+      .run(`cron_last_run:${jobKey}`, date);
+  } catch { /* DB 미초기화 시 무시 */ }
+}
+
+// 설정된 HH:MM(Asia/Tokyo)이 오늘 이미 지났는지 여부 — timeToCron과 동일한 파싱 사용
+function hasScheduledTimePassedToday(timeStr: string): boolean {
+  const cronExpr = timeToCron(timeStr);
+  const [mStr, hStr] = cronExpr.split(' ');
+  const scheduledMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+  const nowTokyo = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  return nowTokyo.getHours() * 60 + nowTokyo.getMinutes() >= scheduledMinutes;
+}
+
+function addDaysToDateString(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return getDateString(d);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function persistSchedulerSummary(summary: string): void {
   try {
     const payload = JSON.stringify({
@@ -294,6 +334,9 @@ export function startScheduler(): void {
   const summary = buildScheduleSummary(mailTimes, cancelTime, reportTimes, settings.expiry_notice_time || '05:00');
   logger.info(`[Schedule Summary] ${summary}`);
   persistSchedulerSummary(summary);
+
+  // 9. VM 점검 등으로 다운된 동안 스킵된 cron 보정 (서버 시작 후 1회, 순차 실행)
+  void runStartupCatchup();
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -307,37 +350,7 @@ function startPreExpiryTask(): void {
   const cronExpr = timeToCron(settings.auto_cancel_time || '09:00');
   logger.info(`Pre-expiry auto-cancel schedule: ${cronExpr} (auto_cancel_time: ${settings.auto_cancel_time})`);
 
-  preExpiryCancelTask = cron.schedule(cronExpr, async () => {
-    logger.info('Pre-expiry auto-cancel check started');
-    try {
-      const results = await cancelService.processPreExpiryAutoCancel();
-      if (results.length > 0) {
-        dailyCancelResults.push(...results.map(r => withCancelResultDate(r)));
-        persistDailyCancelResults();
-        logger.info(`Pre-expiry auto-cancel completed: ${results.length}`);
-
-        // cancel 결과를 개별적으로 Slack으로 전송
-        for (const result of results) {
-          await notificationService.sendCancelResultSlack(result).catch(() => { });
-        }
-      }
-
-      const failsafe = await runCandidateFailsafeCancelNow();
-      if (failsafe.results.length > 0) {
-        dailyCancelResults.push(...failsafe.results.map(r => withCancelResultDate(r)));
-        persistDailyCancelResults();
-        logger.warn(
-          `[Failsafe] candidate auto-cancel completed: processed=${failsafe.processed}, ` +
-          `success=${failsafe.success}, failed=${failsafe.failed}`
-        );
-        for (const result of failsafe.results) {
-          await notificationService.sendCancelResultSlack(result).catch(() => {});
-        }
-      }
-    } catch (err: unknown) {
-      logger.error(`Pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
-    }
-  }, { timezone: 'Asia/Tokyo' });
+  preExpiryCancelTask = cron.schedule(cronExpr, () => runPreExpiryCancelOnce(), { timezone: 'Asia/Tokyo' });
 
   // 실패 건 재시도 스케줄링 (설정된 시각 2시간 후 실행)
   if (retryCancelTask) {
@@ -360,6 +373,45 @@ function startPreExpiryTask(): void {
   }, { timezone: 'Asia/Tokyo' });
 
   logger.info(`Failure retry schedule: ${retryCron} (2 hours after auto-cancel)`);
+}
+
+async function runPreExpiryCancelOnce(): Promise<void> {
+  const today = getTodayDateString();
+  if (getJobLastRunDate('pre_expiry_cancel') === today) {
+    logger.info('[PreExpiryCancel] already ran today, skip');
+    return;
+  }
+
+  logger.info('Pre-expiry auto-cancel check started');
+  try {
+    const results = await cancelService.processPreExpiryAutoCancel();
+    if (results.length > 0) {
+      dailyCancelResults.push(...results.map(r => withCancelResultDate(r)));
+      persistDailyCancelResults();
+      logger.info(`Pre-expiry auto-cancel completed: ${results.length}`);
+
+      // cancel 결과를 개별적으로 Slack으로 전송
+      for (const result of results) {
+        await notificationService.sendCancelResultSlack(result).catch(() => { });
+      }
+    }
+
+    const failsafe = await runCandidateFailsafeCancelNow();
+    if (failsafe.results.length > 0) {
+      dailyCancelResults.push(...failsafe.results.map(r => withCancelResultDate(r)));
+      persistDailyCancelResults();
+      logger.warn(
+        `[Failsafe] candidate auto-cancel completed: processed=${failsafe.processed}, ` +
+        `success=${failsafe.success}, failed=${failsafe.failed}`
+      );
+      for (const result of failsafe.results) {
+        await notificationService.sendCancelResultSlack(result).catch(() => {});
+      }
+    }
+  } catch (err: unknown) {
+    logger.error(`Pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  }
+  setJobLastRunDate('pre_expiry_cancel', today);
 }
 
 /**
@@ -557,8 +609,18 @@ export function startExpiryNoticeTask(): void {
   const cronExpr = timeToCron(settings.expiry_notice_time || '05:00');
   logger.info(`[ExpiryNotice] 스케줄: ${cronExpr} (time: ${settings.expiry_notice_time || '05:00'})`);
 
-  expiryNoticeTask = cron.schedule(cronExpr, async () => {
-    logger.info('[ExpiryNotice] expiry notice email started');
+  expiryNoticeTask = cron.schedule(cronExpr, () => runExpiryNoticeOnce(settings), { timezone: 'Asia/Tokyo' });
+}
+
+async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Promise<void> {
+  const today = getTodayDateString();
+  if (getJobLastRunDate('expiry_notice') === today) {
+    logger.info('[ExpiryNotice] already ran today, skip');
+    return;
+  }
+
+  logger.info('[ExpiryNotice] expiry notice email started');
+  {
     const now = new Date();
     const rules = normalizeExpiryNoticeRules(settings);
     const stopTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
@@ -622,7 +684,8 @@ export function startExpiryNoticeTask(): void {
         }
       }
     }
-  }, { timezone: 'Asia/Tokyo' });
+  }
+  setJobLastRunDate('expiry_notice', today);
 }
 
 export async function runExpiryNoticeDryRun(input: {
@@ -702,6 +765,77 @@ async function sendDailyReportForDate(targetDateStr: string): Promise<void> {
 
 export async function sendDailyReportNow(): Promise<void> {
   await sendDailyReportForDate(getTodayDateString());
+}
+
+// lastSent 다음날부터 어제까지 빠진 날짜를 순차적으로 백필 (최대 14일 — 폭주 방지)
+async function catchUpDailyReports(): Promise<void> {
+  const lastSent = getLastReportSentDate();
+  if (!lastSent) return; // 최초 실행 — 백필 대상 없음
+
+  const yesterday = getYesterdayDateString();
+  const MAX_BACKFILL_DAYS = 14;
+  let cursor = addDaysToDateString(lastSent, 1);
+  let count = 0;
+
+  while (cursor <= yesterday && count < MAX_BACKFILL_DAYS) {
+    logger.warn(`[Catchup] sending missed daily report for ${cursor}`);
+    await sendDailyReportForDate(cursor).catch((err: unknown) =>
+      logger.error(`[Catchup] daily report ${cursor} error: ${getErrorMessage(err)}`));
+    cursor = addDaysToDateString(cursor, 1);
+    count++;
+  }
+}
+
+// 서버 시작 시 1회 — VM 점검 등으로 다운된 동안 오늘 스케줄을 놓친 작업을 순차적으로 보정.
+// 자연히 따라잡는 작업(autoRenew/limbo/정리작업)은 대상에서 제외 — 정확한 날짜를 조회해
+// 그날을 놓치면 영구 손실되는 작업(만료예고메일/사전취소)과 전일자 리포트만 다룬다.
+async function runStartupCatchup(): Promise<void> {
+  try {
+    logger.info('[Catchup] running inbound mail check on startup');
+    await checkInboundNow();
+  } catch (err: unknown) {
+    logger.error(`[Catchup] mail check error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    const today = getTodayDateString();
+    const settings = getSettings();
+    const noticeTime = settings.expiry_notice_time || '05:00';
+    if (
+      settings.expiry_notice_enabled !== false &&
+      hasScheduledTimePassedToday(noticeTime) &&
+      getJobLastRunDate('expiry_notice') !== today
+    ) {
+      logger.warn(`[Catchup] expiry notice missed today's ${noticeTime} run — executing now`);
+      await runExpiryNoticeOnce(settings);
+    }
+  } catch (err: unknown) {
+    logger.error(`[Catchup] expiry notice error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    const today = getTodayDateString();
+    const settings = getSettings();
+    const cancelTime = settings.auto_cancel_time || '09:00';
+    if (
+      settings.auto_cancel_enabled &&
+      hasScheduledTimePassedToday(cancelTime) &&
+      getJobLastRunDate('pre_expiry_cancel') !== today
+    ) {
+      logger.warn(`[Catchup] pre-expiry auto-cancel missed today's ${cancelTime} run — executing now`);
+      await runPreExpiryCancelOnce();
+      await sleep(10_000); // Playwright 연속 실행 방지 (e2-micro 부하 고려)
+      await retryFailedCancellations();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Catchup] pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    await catchUpDailyReports();
+  } catch (err: unknown) {
+    logger.error(`[Catchup] daily report backfill error: ${getErrorMessage(err)}`);
+  }
 }
 
 export function startDailyReportTasks(): void {
