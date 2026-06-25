@@ -125,6 +125,7 @@ export default function RequestsPage() {
   const [success, setSuccess] = useState('');
   const [warning, setWarning] = useState('');
   const [showFailurePopup, setShowFailurePopup] = useState(false);
+  const [showAlreadyRequestedPopup, setShowAlreadyRequestedPopup] = useState(false);
 
   // credit form
   const [exocadId, setExocadId] = useState('');
@@ -212,7 +213,7 @@ export default function RequestsPage() {
         { target_serial: stopSerial },
       );
       if (res.status === 'already_requested') {
-        setWarning(t(lang, 'already_stop_requested_msg'));
+        setShowAlreadyRequestedPopup(true);
       } else if (res.auto_applied) {
         setSuccess(`${t(lang, 'stop_applied_now')} (${t(lang, 'request_no')}: #${res.request_id})`);
       } else if (res.processing_failed) {
@@ -305,6 +306,15 @@ export default function RequestsPage() {
         closeLabel={t(lang, 'confirm_ok')}
       >
         {t(lang, 'renewal_stop_failed_banner')}
+      </Modal>
+
+      <Modal
+        open={showAlreadyRequestedPopup}
+        title={t(lang, 'already_stop_requested_title')}
+        onClose={() => setShowAlreadyRequestedPopup(false)}
+        closeLabel={t(lang, 'confirm_ok')}
+      >
+        {t(lang, 'already_stop_requested_msg')}
       </Modal>
 
       {/* History */}
