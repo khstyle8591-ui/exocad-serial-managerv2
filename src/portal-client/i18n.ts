@@ -50,6 +50,7 @@ const T = {
     request_submitted: '신청이 접수되었습니다.', request_no: '신청 번호',
     stop_applied_now: '갱신 중단이 즉시 적용되었습니다.',
     stop_request_processing_failed: '신청은 정상적으로 접수되었으나, 처리에는 실패했습니다. 잠시 후 다시 확인해주세요.',
+    already_stop_requested_msg: '이미 중단 요청된 시리얼입니다.',
     renewal_stop_failed_title: '갱신 중단 처리 실패',
     credit_exocad_placeholder: 'My.exocad 계정 ID',
     // Setup
@@ -114,6 +115,7 @@ const T = {
     request_submitted: 'Your request has been received.', request_no: 'Request No.',
     stop_applied_now: 'Renewal stop has been applied immediately.',
     stop_request_processing_failed: 'Your request was submitted successfully, but processing failed. Please check again shortly.',
+    already_stop_requested_msg: 'This serial already has a renewal-stop request.',
     renewal_stop_failed_title: 'Renewal Stop Processing Failed',
     credit_exocad_placeholder: 'My.exocad account ID',
     setup_hint: 'Enter a serial number to link it to your account.',
@@ -177,6 +179,7 @@ const T = {
     request_submitted: '申請を受け付けました。', request_no: '申請番号',
     stop_applied_now: '更新停止が即時適用されました。',
     stop_request_processing_failed: '申請は正常に受け付けられましたが、処理には失敗しました。しばらくしてから再度ご確認ください。',
+    already_stop_requested_msg: 'このシリアルは既に更新停止が申請されています。',
     renewal_stop_failed_title: '更新停止処理の失敗',
     credit_exocad_placeholder: 'My.exocadアカウントID',
     setup_hint: 'シリアル番号を入力すると、ご自身のアカウントに連携されます。',

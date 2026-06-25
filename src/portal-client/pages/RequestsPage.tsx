@@ -207,17 +207,19 @@ export default function RequestsPage() {
     e.preventDefault();
     setError(''); setSuccess(''); setWarning(''); setSubmitting(true);
     try {
-      const res = await api.post<{ request_id: number; auto_applied?: boolean; processing_failed?: boolean }>(
+      const res = await api.post<{ request_id?: number; status?: string; auto_applied?: boolean; processing_failed?: boolean }>(
         '/requests/renewal-stop',
         { target_serial: stopSerial },
       );
-      if (res.auto_applied) {
+      if (res.status === 'already_requested') {
+        setWarning(t(lang, 'already_stop_requested_msg'));
+      } else if (res.auto_applied) {
         setSuccess(`${t(lang, 'stop_applied_now')} (${t(lang, 'request_no')}: #${res.request_id})`);
       } else if (res.processing_failed) {
         setWarning(`${t(lang, 'stop_request_processing_failed')} (${t(lang, 'request_no')}: #${res.request_id})`);
         setShowFailurePopup(true);
       } else {
-        setSuccess(submittedMsg(res.request_id));
+        setSuccess(submittedMsg(res.request_id!));
       }
       setStopSerial('');
       setTab('history');
