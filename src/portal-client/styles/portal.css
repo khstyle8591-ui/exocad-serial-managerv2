@@ -101,6 +101,33 @@ body {
   color: var(--text2);
 }
 
+/* 모바일 전용 — 768px 이하에서만 보임 (기본은 숨김, 데스크톱 영향 없음) */
+.portal-nav-burger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.portal-nav-burger:hover { background: var(--bg3); }
+
+.portal-nav-burger span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: var(--text2);
+  border-radius: 1px;
+}
+
 /* ── Page layout ── */
 
 .portal-page {
@@ -368,6 +395,14 @@ body {
   gap: 12px;
 }
 
+.request-row-main { flex: 1; }
+
+.request-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .request-row:last-child { border-bottom: none; }
 
 .request-type {
@@ -414,9 +449,46 @@ body {
 
 /* ── Responsive ── */
 
+@media (max-width: 768px) {
+  .portal-nav-burger { display: flex; }
+
+  .portal-nav-links {
+    display: none;
+    position: absolute;
+    top: 52px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  .portal-nav.menu-open .portal-nav-links { display: flex; }
+
+  .portal-nav-link { padding: 12px 14px; }
+
+  .portal-nav-logo span { display: none; }
+}
+
 @media (max-width: 600px) {
   .portal-nav { padding: 0 16px; }
   .portal-page, .portal-page-wide { padding: 20px 16px; }
   .auth-card { padding: 24px 20px; }
   .product-card { flex-direction: column; align-items: flex-start; }
+
+  .request-row { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .request-row-main { flex: 1 1 auto; width: 100%; min-width: 0; }
+  .request-row-actions { width: 100%; justify-content: space-between; }
+  .request-type { white-space: normal; word-break: break-word; }
+
+  /* 터치 타겟 44px 기준 (입력창/버튼) — 모바일에서만 확대 */
+  .form-group input,
+  .form-group textarea,
+  .form-group select { min-height: 44px; padding: 11px 14px; }
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 40px; }
 }

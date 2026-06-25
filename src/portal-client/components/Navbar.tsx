@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { t, type Lang } from '../i18n';
@@ -12,14 +13,20 @@ const LANGS: { value: Lang; label: string }[] = [
 export default function Navbar() {
   const { account, lang, setLang, logout } = useAuth();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   async function handleLogout() {
+    setMenuOpen(false);
     await logout();
     navigate('/login');
   }
 
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
   return (
-    <nav className="portal-nav">
+    <nav className={`portal-nav${menuOpen ? ' menu-open' : ''}`}>
       <div className="portal-nav-logo">
         <img
           src={geoMediLogo}
@@ -33,24 +40,28 @@ export default function Navbar() {
         <div className="portal-nav-links">
           <NavLink
             to="/dashboard"
+            onClick={closeMenu}
             className={({ isActive }) => `portal-nav-link${isActive ? ' active' : ''}`}
           >
             {t(lang, 'dashboard')}
           </NavLink>
           <NavLink
             to="/requests"
+            onClick={closeMenu}
             className={({ isActive }) => `portal-nav-link${isActive ? ' active' : ''}`}
           >
             {t(lang, 'requests')}
           </NavLink>
           <NavLink
             to="/setup"
+            onClick={closeMenu}
             className={({ isActive }) => `portal-nav-link${isActive ? ' active' : ''}`}
           >
             {t(lang, 'link_serial_title')}
           </NavLink>
           <NavLink
             to="/profile"
+            onClick={closeMenu}
             className={({ isActive }) => `portal-nav-link${isActive ? ' active' : ''}`}
           >
             {t(lang, 'profile')}
@@ -81,6 +92,18 @@ export default function Navbar() {
         {account && (
           <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
             {t(lang, 'logout')}
+          </button>
+        )}
+
+        {account && (
+          <button
+            type="button"
+            className="portal-nav-burger"
+            aria-label="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)}
+          >
+            <span /><span /><span />
           </button>
         )}
       </div>

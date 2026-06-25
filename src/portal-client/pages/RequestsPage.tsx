@@ -319,7 +319,7 @@ export default function RequestsPage() {
           ) : (
             requests.map(r => (
               <div key={r.id} className="request-row">
-                <div style={{ flex: 1 }}>
+                <div className="request-row-main">
                   <div className="request-type">
                     #{r.id} · {typeLabel(r.type, lang)}
                     {r.target_serial && <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>{r.target_serial}</span>}
@@ -328,7 +328,7 @@ export default function RequestsPage() {
                   </div>
                   <div className="request-meta">{r.created_at.slice(0, 16).replace('T', ' ')}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="request-row-actions">
                   {r.status === 'pending' && (
                     <button
                       className="btn btn-sm btn-ghost"
