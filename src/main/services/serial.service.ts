@@ -2,7 +2,7 @@ import { getDb } from '../database';
 import { logger } from '../utils/logger';
 import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
 import { createCustomerSeparate, findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
-import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs } from './activity-log.service';
+import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs, pickLang } from './activity-log.service';
 import type {
   Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
   LogFilter, StatsCountsResult, StatsSeries, SerialExportQuery, SerialListQuery, SerialListResult,
@@ -351,7 +351,11 @@ export class SerialService {
       );
 
     this.logActivity(result.lastInsertRowid as number, 'registered', 'manual',
-      {}, `Serial registered: ${input.serial_number}`);
+      {}, pickLang({
+        ko: `시리얼 등록: ${input.serial_number}`,
+        en: `Serial registered: ${input.serial_number}`,
+        ja: `シリアル登録: ${input.serial_number}`,
+      }));
     return this.getById(result.lastInsertRowid as number)!;
   }
 
@@ -503,7 +507,11 @@ export class SerialService {
 
     this.logActivity(id, 'activated', 'manual',
       { status: ['not-activated', 'active'], expiry_date: [existing.expiry_date, expiryStr] },
-      `Manual activation: expiry -> ${expiryStr}`);
+      pickLang({
+        ko: `수동 활성화: 만료일 -> ${expiryStr}`,
+        en: `Manual activation: expiry -> ${expiryStr}`,
+        ja: `手動有効化: 失効日 -> ${expiryStr}`,
+      }));
     return this.getById(id);
   }
 
@@ -528,14 +536,23 @@ export class SerialService {
         'UPDATE serials SET renewal_stop_requested = 1, stop_requested_at = ?, updated_at = ? WHERE id = ?'
       ).run(now, now, id);
       this.logActivity(id, 'stop_requested', actor,
-        { renewal_stop_requested: [0, 1] }, details || 'Renewal stop requested',
+        { renewal_stop_requested: [0, 1] },
+        details || pickLang({
+          ko: '갱신 중단 요청됨',
+          en: 'Renewal stop requested',
+          ja: '更新停止リクエストあり',
+        }),
         trigger_id);
     } else {
       db.prepare(
         'UPDATE serials SET renewal_stop_requested = 0, stop_requested_at = NULL, updated_at = ? WHERE id = ?'
       ).run(now, id);
       this.logActivity(id, 'stop_cleared', actor,
-        { renewal_stop_requested: [1, 0] }, 'Renewal stop request cleared');
+        { renewal_stop_requested: [1, 0] }, pickLang({
+          ko: '갱신 중단 요청 해제됨',
+          en: 'Renewal stop request cleared',
+          ja: '更新停止リクエスト解除',
+        }));
     }
     return this.getById(id);
   }
@@ -586,7 +603,11 @@ export class SerialService {
     if (clearStopFlag && existing.renewal_stop_requested === 1) {
       renewDiff.renewal_stop_requested = [1, 0];
     }
-    this.logActivity(id, 'renewed', source, renewDiff, `Expiry renewed: ${existing.expiry_date} -> ${newExpiry} (${source})`);
+    this.logActivity(id, 'renewed', source, renewDiff, pickLang({
+      ko: `만료일 갱신: ${existing.expiry_date} -> ${newExpiry} (${source})`,
+      en: `Expiry renewed: ${existing.expiry_date} -> ${newExpiry} (${source})`,
+      ja: `失効日更新: ${existing.expiry_date} -> ${newExpiry} (${source})`,
+    }));
     return this.getById(id);
   }
 
@@ -624,7 +645,11 @@ export class SerialService {
 
       const renewDiff: Record<string, unknown> = { expiry_date: [existing.expiry_date, newExpiry] };
       if (existing.renewal_stop_requested) renewDiff.renewal_stop_requested = [1, 0];
-      this.logActivity(id, 'renewed', actor, renewDiff, `Expiry renewed: ${existing.expiry_date} -> ${newExpiry}`);
+      this.logActivity(id, 'renewed', actor, renewDiff, pickLang({
+        ko: `만료일 갱신: ${existing.expiry_date} -> ${newExpiry}`,
+        en: `Expiry renewed: ${existing.expiry_date} -> ${newExpiry}`,
+        ja: `失効日更新: ${existing.expiry_date} -> ${newExpiry}`,
+      }));
 
       return this.getById(id);
     });
@@ -640,7 +665,11 @@ export class SerialService {
     const now = getNowTimestampString();
     db.prepare("UPDATE serials SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now, id);
     this.logActivity(id, 'cancelled', 'manual',
-      { status: [existing.status, 'cancelled'] }, 'DB-only cancellation');
+      { status: [existing.status, 'cancelled'] }, pickLang({
+        ko: 'DB 단독 취소 처리',
+        en: 'DB-only cancellation',
+        ja: 'DBのみキャンセル処理',
+      }));
     return this.getById(id);
   }
 
@@ -679,7 +708,11 @@ export class SerialService {
     const now = getNowTimestampString();
     db.prepare('UPDATE serials SET modules = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(modules), now, id);
-    this.logActivity(id, 'addon_added', 'manual', {}, `Module added: ${addon.name}`);
+    this.logActivity(id, 'addon_added', 'manual', {}, pickLang({
+      ko: `모듈 추가: ${addon.name}`,
+      en: `Module added: ${addon.name}`,
+      ja: `モジュール追加: ${addon.name}`,
+    }));
     return this.getById(id);
   }
 
@@ -811,7 +844,11 @@ export class SerialService {
 
     // logActivity는 트랜잭션 커밋 후 별도 실행 — upsert 성공/실패 결과와 독립
     for (const { id, serial_number } of importedIds) {
-      this.logActivity(id, 'bulk_imported', 'manual', {}, `Bulk import: ${serial_number}`);
+      this.logActivity(id, 'bulk_imported', 'manual', {}, pickLang({
+        ko: `대량 가져오기: ${serial_number}`,
+        en: `Bulk import: ${serial_number}`,
+        ja: `一括インポート: ${serial_number}`,
+      }));
     }
 
     return { imported: importedIds.length, errors };

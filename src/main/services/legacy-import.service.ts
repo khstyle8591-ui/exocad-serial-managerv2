@@ -10,7 +10,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import { getDb, getLegacyDbPath } from '../database';
 import { findMergeCandidates, createCustomer, getCustomerById } from './customer.service';
-import { logActivity } from './activity-log.service';
+import { logActivity, pickLang } from './activity-log.service';
 import { getNowTimestampString } from '../utils/date-utils';
 import type { AddOn, MergeCandidate, LegacyImportInput, LegacyImportResult, Serial } from '../../shared/types';
 
@@ -277,7 +277,11 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
       action: 'legacy_imported',
       actor: 'manual',
       diff: { legacy_id: [null, input.legacy_id] },
-      details: `Legacy import: serial=${legacyRow.serial_number}, legacy_id=${input.legacy_id}`,
+      details: pickLang({
+        ko: `레거시 가져오기: 시리얼=${legacyRow.serial_number}, 레거시ID=${input.legacy_id}`,
+        en: `Legacy import: serial=${legacyRow.serial_number}, legacy_id=${input.legacy_id}`,
+        ja: `レガシーインポート: シリアル=${legacyRow.serial_number}, レガシーID=${input.legacy_id}`,
+      }),
       trigger_id: `legacy:${input.legacy_id}`,
       severity: 'info',
     });

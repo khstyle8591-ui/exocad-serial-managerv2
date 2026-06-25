@@ -3,7 +3,7 @@ import { getSettings } from '../../settings';
 import { logger } from '../../utils/logger';
 import { getTemplate } from './template.service';
 import { renderTemplate, type TemplateVars } from './renderer';
-import { logActivity } from '../activity-log.service';
+import { logActivity, pickLang } from '../activity-log.service';
 import type { AppSettings } from '../../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -75,7 +75,11 @@ export async function sendTemplate(
       serial_id: options?.serial_id ?? null,
       action: 'mail_sent',
       actor: options?.actor ?? 'manual',
-      details: `template=${code} to=${to}`,
+      details: pickLang({
+        ko: `템플릿=${code} 수신자=${to}`,
+        en: `template=${code} to=${to}`,
+        ja: `テンプレート=${code} 宛先=${to}`,
+      }),
       severity: 'info',
     });
 
@@ -87,7 +91,11 @@ export async function sendTemplate(
       serial_id: options?.serial_id ?? null,
       action: 'mail_failed',
       actor: options?.actor ?? 'manual',
-      details: `template=${code} to=${to} error=${errorMessage}`,
+      details: pickLang({
+        ko: `템플릿=${code} 수신자=${to} 오류=${errorMessage}`,
+        en: `template=${code} to=${to} error=${errorMessage}`,
+        ja: `テンプレート=${code} 宛先=${to} エラー=${errorMessage}`,
+      }),
       severity: 'error',
     });
     return { success: false, message: `送信失敗: ${errorMessage}` };
