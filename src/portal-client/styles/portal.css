@@ -407,6 +407,20 @@ body {
 
 .serial-input-row { display: flex; align-items: center; gap: 8px; }
 .serial-input-seg-group { display: flex; align-items: center; gap: 8px; }
+
+.serial-input-seg {
+  padding: 9px 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color 0.12s;
+  outline: none;
+}
+
+.serial-input-seg:focus { border-color: var(--accent); }
+
 .serial-input-seg-8 { width: 116px; }
 .serial-input-seg-4 { width: 64px; }
 
