@@ -403,6 +403,13 @@ body {
   gap: 8px;
 }
 
+/* ── Serial input (8-4-8) ── */
+
+.serial-input-row { display: flex; align-items: center; gap: 8px; }
+.serial-input-seg-group { display: flex; align-items: center; gap: 8px; }
+.serial-input-seg-8 { width: 116px; }
+.serial-input-seg-4 { width: 64px; }
+
 .request-row:last-child { border-bottom: none; }
 
 .request-type {
@@ -491,4 +498,10 @@ body {
   .form-group select { min-height: 44px; padding: 11px 14px; }
   .btn { min-height: 44px; }
   .btn-sm { min-height: 40px; }
+
+  /* 8-4-8 시리얼 입력 — 좁은 화면에서 칸 폭을 줄여 화면 밖으로 넘치지 않게 함 */
+  .serial-input-row { gap: 4px; flex-wrap: wrap; }
+  .serial-input-seg-group { gap: 4px; }
+  .serial-input-seg-8 { width: 88px; }
+  .serial-input-seg-4 { width: 50px; }
 }

@@ -63,9 +63,9 @@ export default function SerialInput({ value, onChange, disabled }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div className="serial-input-row">
       {SEGMENTS.map((len, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div key={i} className="serial-input-seg-group">
           <input
             ref={refs[i]}
             type="text"
@@ -79,8 +79,8 @@ export default function SerialInput({ value, onChange, disabled }: Props) {
             onChange={e => handleChange(i, e.target.value)}
             onKeyDown={e => handleKeyDown(i, e)}
             onPaste={e => handlePaste(i, e)}
+            className={len === 4 ? 'serial-input-seg serial-input-seg-4' : 'serial-input-seg serial-input-seg-8'}
             style={{
-              width: len === 4 ? 64 : 116,
               textAlign: 'center',
               letterSpacing: '0.12em',
               fontFamily: 'monospace',
