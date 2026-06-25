@@ -178,14 +178,21 @@ export async function confirmStopRequestFromMail(id: number): Promise<{ success:
 
   if (!serial) return { success: false, error: '메일에서 매칭된 시리얼을 찾을 수 없습니다.' };
 
+  // 알림 발송 여부는 "이번 요청으로 새로 멈춘 것인지"로 판단 — 이미 플래그가 서있거나
+  // 이미 취소된 시리얼이면 중복 접수확인 메일을 보내지 않는다. 갱신으로 플래그가 풀리면
+  // (renewal_stop_requested=0으로 리셋) 다음 중단요청부터는 다시 자연스럽게 발송된다.
+  const alreadyNotified = serial.renewal_stop_requested === 1 || serial.status === 'cancelled';
+
   const updated = serialService.setStopRequested(serial.id, true, `mail:${id}`);
   if (!updated) return { success: false, error: '시리얼 상태 변경에 실패했습니다.' };
 
   db.prepare('UPDATE inbound_mails SET processed = 1, linked_serial_id = ?, classification = ? WHERE id = ?')
     .run(serial.id, 'stop_request_candidate', id);
-  await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
-    logger.error(`[inbound] stop request notice failed: ${getErrorMessage(err)}`),
-  );
+  if (!alreadyNotified) {
+    await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
+      logger.error(`[inbound] stop request notice failed: ${getErrorMessage(err)}`),
+    );
+  }
 
   return { success: true, serial_number: serial.serial_number };
 }
@@ -299,12 +306,17 @@ async function processEmail(
       });
       logger.info(`[inbound] stop request candidate saved: ${analysis.extractedSerial ?? 'no-serial'} (${analysis.evidence.join(',')})`);
       if (inboundId !== null && analysis.structuredResponse && linkedSerial) {
+        // 이미 플래그가 서있거나 이미 취소된 시리얼이면 중복 접수확인 메일을 보내지 않음
+        // (갱신으로 플래그가 리셋되면 다음 요청부터 다시 발송됨)
+        const alreadyNotified = linkedSerial.renewal_stop_requested === 1 || linkedSerial.status === 'cancelled';
         const updated = serialService.setStopRequested(linkedSerial.id, true, `mail:${inboundId}`);
         if (updated) {
           getDb().prepare('UPDATE inbound_mails SET processed = 1 WHERE id = ?').run(inboundId);
-          await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
-            logger.error(`[inbound] structured stop request notice failed: ${getErrorMessage(err)}`),
-          );
+          if (!alreadyNotified) {
+            await sendStopRequestReceivedNotice(updated).catch((err: unknown) =>
+              logger.error(`[inbound] structured stop request notice failed: ${getErrorMessage(err)}`),
+            );
+          }
           logger.info(`[inbound] structured cancellation response confirmed automatically: serial=${linkedSerial.serial_number} [mailId=${inboundId}]`);
         }
       }
