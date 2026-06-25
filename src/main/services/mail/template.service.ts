@@ -215,6 +215,44 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
     enabled: true,
   },
   {
+    code: 'portal_credit_notify_admin',
+    name: 'クレジット申請受付（管理者通知）',
+    subject: '【ポータル】クレジット申請を受け付けました (#{{REQUEST_ID}})',
+    body: `クレジット申請が届きましたのでご確認ください。
+
+■ 申請番号：#{{REQUEST_ID}}
+■ アカウント名：{{ACCOUNT_NAME}}
+■ ログインID：{{LOGIN_ID}}
+■ メールアドレス：{{EMAIL}}
+■ My.exocad ID：{{EXOCAD_ID}}
+■ パッケージ：{{PACKAGE_LABEL}}
+■ 数量：{{PACKAGE_QTY}}
+■ 金額：{{PACKAGE_PRICE}}
+■ 受付日：{{TODAY}}
+
+管理画面の「ポータル」タブから承認処理をお願いいたします。`,
+    enabled: true,
+  },
+  {
+    code: 'portal_credit_confirm',
+    name: 'ポータルクレジット申請受付確認',
+    subject: '【受付完了】クレジットのお申し込みを受け付けました',
+    body: `{{NAME}} 様
+
+Exocad Portalよりクレジットのお申し込みを受け付けました。
+
+■ パッケージ：{{PACKAGE_LABEL}}
+■ My.exocad ID：{{EXOCAD_ID}}
+■ 申請番号：#{{REQUEST_ID}}
+■ 受付日：{{TODAY}}
+
+担当者よりご連絡いたします。
+ご不明な点がございましたらPMまでお問い合わせください。
+
+どうぞよろしくお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'cancel_confirmation',
     name: 'キャンセル確認',
     subject: '【確認】{{SERIAL_NUMBER}} のサブスクリプションキャンセルについて',

@@ -12,6 +12,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { initDatabase, closeDatabase } from './database';
+import { seedBuiltinTemplates } from './services/mail/template.service';
 import { startScheduler, stopScheduler } from './scheduler';
 import { startPollingScheduler, stopPollingScheduler } from './services/order.service';
 import { cancelService } from './services/cancel.service';
@@ -71,6 +72,7 @@ logger.init();
 logger.info('=== Server mode started ===');
 
 initDatabase();
+seedBuiltinTemplates();
 startScheduler();
 startPollingScheduler();
 
