@@ -248,6 +248,16 @@ export function markPortalRequestCancelRejected(id: number): void {
     .run(id);
 }
 
+// 갱신중단 플래그가 이미 선점된 상태에서 들어온 중복 신청 — 매니저 대기열에 노출되지 않도록
+// 즉시 'rejected'로 확정하고 note로만 구분해 포털/매니저 화면에 "중복신청"으로 표시한다.
+export function markPortalRequestDuplicate(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = datetime('now','localtime') WHERE id = ?",
+    )
+    .run(id);
+}
+
 export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
   return (
     getDb()

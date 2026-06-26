@@ -7,6 +7,7 @@ import {
   createPortalRequest,
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailed,
+  markPortalRequestDuplicate,
   getPortalRequestsByAccount,
 } from '../db';
 import { serialService } from '../../../main/services/serial.service';
@@ -143,25 +144,33 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     res.status(400).json({ error: '이미 만료된 시리얼입니다. 재갱신 신청을 이용해주세요.' });
     return;
   }
-  if (serial.renewal_stop_requested === 1) {
-    // 멱등 — 이미 중단 요청 상태. 중복 시도 기록을 남겨 매니저/고객 화면에 "중복신청"으로 표시.
-    // status를 즉시 'rejected'로 확정해 매니저의 처리 대기열(pending/manager_review)에 노출되지 않게 한다.
-    const dupId = createPortalRequest({
-      account_id: accountId,
-      type: 'renewal_stop',
-      target_serial: serial.serial_number,
-      note: 'duplicate',
-    });
-    updatePortalRequestStatus(dupId, 'rejected');
-    res.json({ ok: true, status: 'already_requested' });
-    return;
-  }
-
+  // 신청 레코드를 먼저 생성해 requestId를 확보한 뒤, 플래그 선점을 단일 원자적 UPDATE로 수행한다.
+  // DB 레벨에서 단 하나의 호출만 성공하도록 보장해, 메모리상의 "조회 후 분기" 방식이 갖는
+  // race window(동시 제출 시 둘 다 통과)를 원천적으로 차단한다.
   const requestId = createPortalRequest({
     account_id: accountId,
     type: 'renewal_stop',
     target_serial: serial.serial_number,
   });
+
+  const claimed = serialService.claimStopRequest(
+    serial.id,
+    `portal-req-${requestId}`,
+    'system',
+    pickLang({
+      ko: `포털 갱신 중단 신청(#${requestId}) 접수됨`,
+      en: `Portal renewal-stop request (#${requestId}) received`,
+      ja: `ポータル更新停止申請(#${requestId})受付`,
+    }),
+  );
+
+  if (!claimed) {
+    // 이미 다른 신청이 선점한 상태 — 방금 생성한 레코드를 "중복신청"으로 확정해
+    // 매니저의 처리 대기열(pending/manager_review)에 노출되지 않게 한다.
+    markPortalRequestDuplicate(requestId);
+    res.json({ ok: true, status: 'already_requested' });
+    return;
+  }
 
   logActivity({
     serial_id: serial.id, action: 'system', actor: 'system', severity: 'info',
@@ -171,19 +180,6 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
       ja: `ポータル更新停止申請(#${requestId})受付 — シリアル: ${serial.serial_number}, 顧客: ${serial.customer?.name || ''}`,
     }),
   });
-
-  // 중복신청 방지를 위해 신청 접수 시점에 항상 플래그를 세움 (failsafe 윈도우 여부와 무관)
-  serialService.setStopRequested(
-    serial.id,
-    true,
-    `portal-req-${requestId}`,
-    'system',
-    pickLang({
-      ko: `포털 갱신 중단 신청(#${requestId}) 접수됨`,
-      en: `Portal renewal-stop request (#${requestId}) received`,
-      ja: `ポータル更新停止申請(#${requestId})受付`,
-    }),
-  );
 
   // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 취소까지 수행
   // 인바운드 메일 failsafe와 동일한 처리 흐름

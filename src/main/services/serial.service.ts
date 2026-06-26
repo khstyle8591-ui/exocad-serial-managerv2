@@ -515,6 +515,31 @@ export class SerialService {
     return this.getById(id);
   }
 
+  /**
+   * renewal_stop_requested = 0 → 1 전환을 단일 SQL UPDATE로 원자적으로 수행.
+   * "조회 후 분기 후 업데이트" 방식(setStopRequested)은 동시 요청(예: 더블클릭, 네트워크 재시도)이
+   * 둘 다 플래그=0을 읽은 뒤 둘 다 통과하는 race window가 있어 중복 신청을 막지 못함.
+   * WHERE renewal_stop_requested = 0 조건으로 DB 레벨에서 단 하나의 호출만 changes>0이 되도록 보장.
+   * 반환값 true = 이번 호출이 최초로 플래그를 세움(정상 처리), false = 이미 다른 요청이 선점함(중복).
+   */
+  claimStopRequest(id: number, trigger_id?: string, actor: ActivityLog['actor'] = 'system', details?: string): boolean {
+    const db = getDb();
+    const now = getNowTimestampString();
+    const result = db.prepare(
+      'UPDATE serials SET renewal_stop_requested = 1, stop_requested_at = ?, updated_at = ? WHERE id = ? AND renewal_stop_requested = 0'
+    ).run(now, now, id);
+    if (result.changes === 0) return false;
+    this.logActivity(id, 'stop_requested', actor,
+      { renewal_stop_requested: [0, 1] },
+      details || pickLang({
+        ko: '갱신 중단 요청됨',
+        en: 'Renewal stop requested',
+        ja: '更新停止リクエストあり',
+      }),
+      trigger_id);
+    return true;
+  }
+
   /** renewal_stop_requested 플래그 설정/해제. 이미 같은 값이면 no-op. */
   setStopRequested(
     id: number,
