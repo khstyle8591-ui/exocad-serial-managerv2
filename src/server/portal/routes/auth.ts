@@ -152,7 +152,10 @@ router.post('/reset-request', authLimiter, async (req: Request, res: Response) =
 
   const baseUrl = process.env.PORTAL_BASE_URL ||
     `${req.protocol}://${req.get('host')}`;
-  const resetUrl = `${baseUrl}/portal/reset?token=${resetToken}`;
+  // 주의: /portal/* 은 백엔드 API 전용 경로. 포털 프론트엔드(SPA)는 루트(/)에서 서빙되며
+  // 비밀번호 재설정 페이지의 실제 라우트는 /reset 이다(App.tsx 참조). /portal/reset으로 보내면
+  // 백엔드 라우터를 거쳐 결국 SPA가 로드되어도 React Router가 해당 경로를 몰라 빈 화면/로그인으로 빠진다.
+  const resetUrl = `${baseUrl}/reset?token=${resetToken}`;
 
   try {
     await sendTemplate('portal_reset_password', account.email, {
