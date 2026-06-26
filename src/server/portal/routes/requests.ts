@@ -9,8 +9,10 @@ import {
   markPortalRequestPlaywrightFailed,
   markPortalRequestDuplicate,
   getPortalRequestsByAccount,
+  getAccountLinks,
 } from '../db';
 import { serialService } from '../../../main/services/serial.service';
+import { getCustomerById } from '../../../main/services/customer.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-notice.service';
 import { sendTemplate } from '../../../main/services/mail/smtp.service';
@@ -92,9 +94,16 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
 
   // 자동 배분 OFF(기본) → 관리자 메일로 발송
   if (!settings.credit_auto_alloc_enabled && settings.credit_notification_email) {
+    // 포털 계정에 직접 입력된 이름이 아니라, 연결된 고객 DB(메인 customers 테이블)의 공식 이름/주소를 사용.
+    // 연결된 고객이 여러 개면 가장 먼저 연결된 것을 기준으로 한다(sync.ts의 동기화 기준과 동일).
+    const link = getAccountLinks(accountId)[0];
+    const customer = link ? getCustomerById(link.customer_id) : undefined;
+
     await sendTemplate('portal_credit_notify_admin', settings.credit_notification_email, {
       REQUEST_ID: String(requestId),
       ACCOUNT_NAME: account.name,
+      CUSTOMER_NAME: customer?.name || account.name,
+      ADDRESS: customer?.address || account.address,
       LOGIN_ID: account.login_id,
       EMAIL: account.email,
       EXOCAD_ID: exocad_id.trim(),

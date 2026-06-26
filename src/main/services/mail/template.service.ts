@@ -221,6 +221,8 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
     body: `クレジット申請が届きましたのでご確認ください。
 
 ■ 申請番号：#{{REQUEST_ID}}
+■ 顧客名：{{CUSTOMER_NAME}}
+■ 住所：{{ADDRESS}}
 ■ アカウント名：{{ACCOUNT_NAME}}
 ■ ログインID：{{LOGIN_ID}}
 ■ メールアドレス：{{EMAIL}}

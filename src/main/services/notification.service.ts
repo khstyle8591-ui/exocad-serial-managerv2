@@ -726,6 +726,7 @@ export class NotificationService {
         <tr><td><strong>シリアル番号</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
         <tr><td><strong>顧客名</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
         <tr><td><strong>顧客メール</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
+        <tr><td><strong>顧客住所</strong></td><td>${escapeHtml(input.serial.customer?.address || '')}</td></tr>
         <tr><td><strong>メイン製品</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
         <tr><td><strong>モジュール</strong></td><td>${escapeHtml(moduleText)}</td></tr>
         <tr><td><strong>更新前の有効期限</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
