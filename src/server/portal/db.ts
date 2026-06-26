@@ -1,4 +1,5 @@
 import { getDb } from '../../main/database';
+import { getNowTimestampString } from '../../main/utils/date-utils';
 import type { AppSettings, CustomerPortalInfo } from '../../shared/types';
 
 export interface PortalAccount {
@@ -53,31 +54,33 @@ export function createAccount(params: {
   password_hash: string;
   language: string;
 }): number {
+  // created_at/updated_at도 테이블 DEFAULT(OS 타임존 의존)가 아닌 Asia/Tokyo 명시 값으로 저장한다.
+  const now = getNowTimestampString();
   const result = getDb()
     .prepare(
       `INSERT INTO portal_accounts
-         (login_id, email, phone, address, name, exocad_id, password_hash, language)
+         (login_id, email, phone, address, name, exocad_id, password_hash, language, created_at, updated_at)
        VALUES
-         (@login_id, @email, @phone, @address, @name, @exocad_id, @password_hash, @language)`,
+         (@login_id, @email, @phone, @address, @name, @exocad_id, @password_hash, @language, @now, @now)`,
     )
-    .run(params);
+    .run({ ...params, now });
   return result.lastInsertRowid as number;
 }
 
 export function updateAccountPassword(accountId: number, passwordHash: string): void {
   getDb()
     .prepare(
-      "UPDATE portal_accounts SET password_hash = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+      'UPDATE portal_accounts SET password_hash = ?, updated_at = ? WHERE id = ?',
     )
-    .run(passwordHash, accountId);
+    .run(passwordHash, getNowTimestampString(), accountId);
 }
 
 // ── Reset tokens ──────────────────────────────────────────────────────────────
 
+// Asia/Tokyo 기준으로 통일 (consumeResetToken의 비교 기준과 일치시킴) — date-utils 설명 참조.
 function resetTokenExpiresAt(): string {
   return new Date(Date.now() + 60 * 60_000)
-    .toISOString()
-    .slice(0, 19)
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' })
     .replace('T', ' ');
 }
 
@@ -97,10 +100,10 @@ export interface ResetTokenRow {
 export function consumeResetToken(token: string): ResetTokenRow | null {
   const db = getDb();
   const row = db
-    .prepare<[string], ResetTokenRow>(
-      "SELECT account_id, used FROM portal_reset_tokens WHERE token = ? AND expires_at > datetime('now','localtime') AND used = 0",
+    .prepare<[string, string], ResetTokenRow>(
+      'SELECT account_id, used FROM portal_reset_tokens WHERE token = ? AND expires_at > ? AND used = 0',
     )
-    .get(token);
+    .get(token, getNowTimestampString());
   if (!row) return null;
   db.prepare('UPDATE portal_reset_tokens SET used = 1 WHERE token = ?').run(token);
   return row;
@@ -192,11 +195,14 @@ export function createPortalRequest(params: {
   package_code?: string;
   note?: string;
 }): number {
+  // created_at은 테이블 DEFAULT(datetime('now','localtime'))에 맡기지 않고 명시적으로 전달한다.
+  // DEFAULT는 SQLite가 OS 타임존을 사용하므로, 서버 OS가 UTC인 경우(흔한 GCP VM 기본값)
+  // Asia/Tokyo 기준보다 9시간 어긋난 접수 시각이 저장/표시되는 버그가 있었음.
   const result = getDb()
     .prepare(
       `INSERT INTO portal_requests
-         (account_id, type, target_serial, exocad_id, package_code, note)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (account_id, type, target_serial, exocad_id, package_code, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       params.account_id,
@@ -205,6 +211,7 @@ export function createPortalRequest(params: {
       params.exocad_id ?? '',
       params.package_code ?? '',
       params.note ?? '',
+      getNowTimestampString(),
     );
   return result.lastInsertRowid as number;
 }
@@ -212,18 +219,18 @@ export function createPortalRequest(params: {
 export function updatePortalRequestStatus(id: number, status: PortalRequestStatus): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = ?, processed_at = datetime('now','localtime') WHERE id = ?",
+      'UPDATE portal_requests SET status = ?, processed_at = ? WHERE id = ?',
     )
-    .run(status, id);
+    .run(status, getNowTimestampString(), id);
 }
 
 // 시스템/고객 신청에서 발생한 Playwright 실패 — 포털에 "처리 실패"로 노출됨(고객이 시리얼 확인 후 재신청 유도).
 export function markPortalRequestPlaywrightFailed(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
 }
 
 // 매니저가 승인한 후 Playwright 실행이 실패한 경우 — 매니저는 이미 신청을 검토/승인했으므로
@@ -232,9 +239,9 @@ export function markPortalRequestPlaywrightFailed(id: number): void {
 export function markPortalRequestPlaywrightFailedByManager(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
 }
 
 // 매니저가 고객의 취소 요청(cancel_requested)을 거절한 경우 — 원래 신청은 그대로 승인된 것으로
@@ -243,9 +250,9 @@ export function markPortalRequestPlaywrightFailedByManager(id: number): void {
 export function markPortalRequestCancelRejected(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
 }
 
 // 갱신중단 플래그가 이미 선점된 상태에서 들어온 중복 신청 — 매니저 대기열에 노출되지 않도록
@@ -253,9 +260,9 @@ export function markPortalRequestCancelRejected(id: number): void {
 export function markPortalRequestDuplicate(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
 }
 
 export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
@@ -307,14 +314,14 @@ export function updatePortalAccountFields(
   const set = updates.map(k => `${k} = ?`).join(', ');
   const values = updates.map(k => (fields as Record<string, unknown>)[k]);
   getDb()
-    .prepare(`UPDATE portal_accounts SET ${set}, updated_at = datetime('now','localtime') WHERE id = ?`)
-    .run(...values, id);
+    .prepare(`UPDATE portal_accounts SET ${set}, updated_at = ? WHERE id = ?`)
+    .run(...values, getNowTimestampString(), id);
 }
 
 export function setPortalAccountStatus(id: number, status: 'active' | 'disabled'): void {
   getDb()
-    .prepare("UPDATE portal_accounts SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?")
-    .run(status, id);
+    .prepare('UPDATE portal_accounts SET status = ?, updated_at = ? WHERE id = ?')
+    .run(status, getNowTimestampString(), id);
 }
 
 export interface PortalRequestWithAccount extends PortalRequestRow {

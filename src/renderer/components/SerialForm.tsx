@@ -263,7 +263,11 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
       if (mode === 'edit' && initial) {
         const wasStop = (initial.renewal_stop_requested ?? 0) === 1;
         if (wasStop !== form.renewal_stop_requested) {
-          await api.setStopRequested(initial.id, form.renewal_stop_requested);
+          // updateSerial의 input에는 renewal_stop_requested가 포함되지 않아 result에 반영되지 않으므로,
+          // 별도 호출의 응답으로 result를 갱신해야 화면(목록/상세)에 체크박스 변경이 즉시 반영된다.
+          // (이전 버그: 이 응답을 버려서 새로고침 전까지 화면에 반영되지 않았음)
+          const stopResult = await api.setStopRequested(initial.id, form.renewal_stop_requested) as SerialWithCustomer | undefined;
+          if (stopResult) result = stopResult;
         }
       }
 

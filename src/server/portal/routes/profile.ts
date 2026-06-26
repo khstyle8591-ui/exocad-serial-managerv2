@@ -7,6 +7,7 @@ import { syncPortalAccountIfNeeded } from '../sync';
 import { getDb } from '../../../main/database';
 import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
+import { getNowTimestampString } from '../../../main/utils/date-utils';
 
 const router = Router();
 
@@ -136,9 +137,9 @@ router.patch('/language', requirePortalAuth, requireCsrf, (req: Request, res: Re
 
   getDb()
     .prepare(
-      "UPDATE portal_accounts SET language = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+      'UPDATE portal_accounts SET language = ?, updated_at = ? WHERE id = ?',
     )
-    .run(language, pr.portalSession!.account_id);
+    .run(language, getNowTimestampString(), pr.portalSession!.account_id);
 
   res.json({ ok: true, language });
 });

@@ -350,6 +350,26 @@ router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
     if (action === 'approve') {
       // 취소 확정 — 원래 신청은 최종적으로 취소됨
       updatePortalRequestStatus(id, 'user_cancelled');
+
+      // renewal_stop 신청 자체를 취소하는 것이므로, 시리얼에 세워둔 갱신중단 플래그도 함께 해제한다.
+      // (해제하지 않으면 매니저 승인 후에도 시리얼이 계속 "중단 요청됨" 상태로 남아 재신청이 막힘)
+      if (request.type === 'renewal_stop' && request.target_serial) {
+        const serial = serialService.getBySerialNumber(request.target_serial);
+        if (serial) {
+          serialService.setStopRequested(
+            serial.id,
+            false,
+            `portal-req-${id}`,
+            'manual',
+            pickLang({
+              ko: `관리자 승인 — 포털 갱신중단 신청(#${id}) 취소 요청에 따라 플래그 해제`,
+              en: `Manager approved — stop flag cleared per portal renewal-stop request (#${id}) cancellation`,
+              ja: `管理者承認 — ポータル更新停止申請(#${id})のキャンセル要請により解除`,
+            }),
+          );
+        }
+      }
+
       logActivity({
         action: 'system', actor: 'manual', severity: 'info',
         details: pickLang({
