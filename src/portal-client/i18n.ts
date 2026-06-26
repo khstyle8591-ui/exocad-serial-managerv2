@@ -32,6 +32,7 @@ const T = {
     req_status_rejected: '거절됨', req_status_user_cancelled: '취소됨',
     req_status_cancel_requested: '취소 요청됨',
     req_status_cancel_rejected: '취소 거절됨 (승인됨)',
+    req_status_duplicate: '중복신청',
     no_requests: '신청 이력이 없습니다.',
     // Profile
     my_profile: '내 프로필', change_password: '비밀번호 변경',
@@ -101,6 +102,7 @@ const T = {
     req_status_rejected: 'Rejected', req_status_user_cancelled: 'Cancelled',
     req_status_cancel_requested: 'Cancellation Requested',
     req_status_cancel_rejected: 'Cancellation Rejected (Approved)',
+    req_status_duplicate: 'Duplicate Request',
     no_requests: 'No requests yet.',
     my_profile: 'My Profile', change_password: 'Change Password',
     current_password: 'Current password', save: 'Save',
@@ -166,6 +168,7 @@ const T = {
     req_status_rejected: '却下', req_status_user_cancelled: 'キャンセル済み',
     req_status_cancel_requested: 'キャンセル要請中',
     req_status_cancel_rejected: 'キャンセル却下（承認済み）',
+    req_status_duplicate: '重複申請',
     no_requests: '申請履歴がありません。',
     my_profile: 'マイプロフィール', change_password: 'パスワード変更',
     current_password: '現在のパスワード', save: '保存',

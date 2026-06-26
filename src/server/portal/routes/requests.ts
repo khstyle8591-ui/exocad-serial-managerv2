@@ -144,7 +144,15 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     return;
   }
   if (serial.renewal_stop_requested === 1) {
-    // 멱등 — 이미 중단 요청 상태
+    // 멱등 — 이미 중단 요청 상태. 중복 시도 기록을 남겨 매니저/고객 화면에 "중복신청"으로 표시.
+    // status를 즉시 'rejected'로 확정해 매니저의 처리 대기열(pending/manager_review)에 노출되지 않게 한다.
+    const dupId = createPortalRequest({
+      account_id: accountId,
+      type: 'renewal_stop',
+      target_serial: serial.serial_number,
+      note: 'duplicate',
+    });
+    updatePortalRequestStatus(dupId, 'rejected');
     res.json({ ok: true, status: 'already_requested' });
     return;
   }
@@ -164,19 +172,25 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     }),
   });
 
+  // 중복신청 방지를 위해 신청 접수 시점에 항상 플래그를 세움 (failsafe 윈도우 여부와 무관)
+  serialService.setStopRequested(
+    serial.id,
+    true,
+    `portal-req-${requestId}`,
+    'system',
+    pickLang({
+      ko: `포털 갱신 중단 신청(#${requestId}) 접수됨`,
+      en: `Portal renewal-stop request (#${requestId}) received`,
+      ja: `ポータル更新停止申請(#${requestId})受付`,
+    }),
+  );
+
   // failsafe 윈도우 (만료 당일/익일) → 관리자 승인 없이 즉시 취소까지 수행
   // 인바운드 메일 failsafe와 동일한 처리 흐름
   let autoApplied = false;
   let processingFailed = false;
   if (serial.expiry_date && isInFailsafeWindow(serial.expiry_date)) {
     const triggerId = `portal-req-${requestId}`;
-    serialService.setStopRequested(
-      serial.id,
-      true,
-      triggerId,
-      'system',
-      `포털 갱신 중단 신청(#${requestId}) — 만료 윈도우 자동 적용`,
-    );
     const cancelResult = await cancelService.cancelSubscription(serial.serial_number, true);
     if (cancelResult.success && cancelResult.verified) {
       const updated = serialService.cancelSubscription(serial.id);

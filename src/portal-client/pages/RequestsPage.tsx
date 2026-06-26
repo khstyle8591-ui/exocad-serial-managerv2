@@ -56,6 +56,9 @@ function statusBadge(status: string, note: string, lang: Lang) {
   if (status === 'approved' && note === 'cancel_rejected') {
     return <span className="badge badge-red">{t(lang, 'req_status_cancel_rejected')}</span>;
   }
+  if (status === 'rejected' && note === 'duplicate') {
+    return <span className="badge badge-gray">{t(lang, 'req_status_duplicate')}</span>;
+  }
   const map: Record<string, { cls: string; key: Parameters<typeof t>[1] }> = {
     pending:        { cls: 'badge-yellow', key: 'req_status_pending' },
     manager_review: { cls: 'badge-blue',   key: 'req_status_manager_review' },
@@ -85,6 +88,9 @@ function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
   if (status === 'rejected') {
     if (note === 'playwright_failed') {
       return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
+    }
+    if (note === 'duplicate') {
+      return <span className="badge badge-gray">{t(lang, 'req_status_duplicate')}</span>;
     }
     return <span className="badge badge-red">{t(lang, 'req_status_rejected')}</span>;
   }

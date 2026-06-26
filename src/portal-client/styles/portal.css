@@ -169,8 +169,6 @@ body {
   justify-content: center;
   padding: 40px 24px;
   background: var(--bg);
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
 }
 
 .auth-card {
