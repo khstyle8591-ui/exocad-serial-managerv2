@@ -85,6 +85,13 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[재시도 실패]',
     menu_button_missing: '옵션 버튼(menu-button)을 찾을 수 없습니다. 시리얼: {serial}',
     serial_not_found: '검색 결과에서 대상 시리얼을 찾지 못했습니다. 시리얼: {serial}',
+    login_user_missing: 'Exocad 사용자 이름이 설정되지 않았습니다.',
+    login_pass_missing: 'Exocad 비밀번호가 설정되지 않았습니다.',
+    login_failed: '로그인 실패: 이메일 또는 비밀번호를 확인하세요',
+    session_expired: '로그인 세션이 만료되었습니다. 다시 로그인 절차가 필요합니다.',
+    search_input_failed: '검색창에 시리얼 번호 입력 실패. 시리얼: {serial}',
+    confirm_button_missing: '확인 팝업 버튼을 찾을 수 없습니다. 시리얼: {serial}',
+    dropdown_button_missing: '드롭다운에서 취소 버튼을 찾을 수 없습니다. 시리얼: {serial}',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 수신 시각: {time}\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
     scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
@@ -128,6 +135,13 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[Retry failed]',
     menu_button_missing: 'Could not find the option button (menu-button). Serial: {serial}',
     serial_not_found: 'Target serial not found in search results. Serial: {serial}',
+    login_user_missing: 'Exocad username is not configured.',
+    login_pass_missing: 'Exocad password is not configured.',
+    login_failed: 'Login failed: please check the email or password',
+    session_expired: 'Login session has expired. Login is required again.',
+    search_input_failed: 'Failed to enter the serial number in the search box. Serial: {serial}',
+    confirm_button_missing: 'Could not find the confirmation popup button. Serial: {serial}',
+    dropdown_button_missing: 'Could not find the cancel button in the dropdown. Serial: {serial}',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• Received at: {time}\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
     scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
@@ -171,6 +185,13 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[再試行失敗]',
     menu_button_missing: 'オプションボタン(menu-button)が見つかりません。シリアル: {serial}',
     serial_not_found: '検索結果に対象シリアルが見つかりませんでした。シリアル: {serial}',
+    login_user_missing: 'Exocadユーザー名が設定されていません。',
+    login_pass_missing: 'Exocadパスワードが設定されていません。',
+    login_failed: 'ログイン失敗: メールアドレスまたはパスワードを確認してください',
+    session_expired: 'ログインセッションが期限切れです。再度ログインが必要です。',
+    search_input_failed: '検索ボックスへのシリアル番号入力に失敗しました。シリアル: {serial}',
+    confirm_button_missing: '確認ポップアップボタンが見つかりません。シリアル: {serial}',
+    dropdown_button_missing: 'ドロップダウンでキャンセルボタンが見つかりません。シリアル: {serial}',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
     scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
@@ -216,19 +237,37 @@ function localizeCancelError(error: string | undefined, lang: SlackLang): string
     || /^\[再試行失敗\]\s*/.test(error);
   const retryPrefix = retried ? `${sf('retry_failed', {}, lang)} ` : '';
 
-  if (
-    error.includes('옵션 버튼(menu-button)을 찾을 수 없습니다')
-    || error.includes('Could not find the option button')
-    || error.includes('オプションボタン(menu-button)')
-  ) {
+  // 키워드 기반 매칭 — 메시지 중간에 동적 값(시리얼 등)이 끼어들어도 안정적으로 매칭되도록 부분 키워드 사용
+  const has = (...kws: string[]) => kws.some(k => error.includes(k));
+
+  if (has('menu-button', 'メニューボタン')) {
     return `${retryPrefix}${sf('menu_button_missing', { serial }, lang)}`.trim();
   }
-
-  if (
-    error.includes('검색 결과에서 대상 시리얼')
-    || error.includes('행을 찾지 못했습니다')
-    || error.includes('Target serial not found')
-  ) {
+  if (has('검색 결과에서 대상 시리얼', '행을 찾지 못했습니다', 'Target serial not found', '対象シリアル')) {
+    return `${retryPrefix}${sf('serial_not_found', { serial }, lang)}`.trim();
+  }
+  if (has('사용자 이름이 설정되지 않았습니다', 'username is not configured', 'ユーザー名が設定されていません')) {
+    return `${retryPrefix}${sf('login_user_missing', {}, lang)}`.trim();
+  }
+  if (has('비밀번호가 설정되지 않았습니다', 'password is not configured', 'パスワードが設定されていません')) {
+    return `${retryPrefix}${sf('login_pass_missing', {}, lang)}`.trim();
+  }
+  if (has('로그인 실패: 이메일 또는 비밀번호', 'Login failed', 'ログイン失敗')) {
+    return `${retryPrefix}${sf('login_failed', {}, lang)}`.trim();
+  }
+  if (has('로그인 세션이 만료', 'Login session has expired', 'ログインセッションが期限切れ')) {
+    return `${retryPrefix}${sf('session_expired', {}, lang)}`.trim();
+  }
+  if (has('search-input에 시리얼 번호 입력 실패', 'Failed to enter the serial number', 'シリアル番号入力に失敗')) {
+    return `${retryPrefix}${sf('search_input_failed', { serial }, lang)}`.trim();
+  }
+  if (has('확인 팝업 버튼을 찾을 수 없습니다', 'confirmation popup button', '確認ポップアップボタン')) {
+    return `${retryPrefix}${sf('confirm_button_missing', { serial }, lang)}`.trim();
+  }
+  if (has('드롭다운에서', '버튼을 찾을 수 없음', 'dropdown', 'ドロップダウン')) {
+    return `${retryPrefix}${sf('dropdown_button_missing', { serial }, lang)}`.trim();
+  }
+  if (has('검색 결과에 시리얼', '이 표시되지 않음')) {
     return `${retryPrefix}${sf('serial_not_found', { serial }, lang)}`.trim();
   }
 

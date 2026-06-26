@@ -5,7 +5,7 @@ import { t } from '../i18n';
 import SerialInput from '../components/SerialInput';
 import Modal from '../components/Modal';
 
-interface LocalizedText { ko: string; en: string; ja: string }
+interface LocalizedText { ko: string; en: string; ja: string; color?: string; fontSize?: number; bold?: boolean }
 
 interface SerialEntry {
   serial_number: string;
@@ -172,7 +172,14 @@ export default function SetupPage() {
         onClose={() => setShowMismatch(false)}
         closeLabel={t(lang, 'confirm_ok')}
       >
-        {mismatchMsg ? mismatchMsg[lang] : ''}
+        <div style={{
+          color: mismatchMsg?.color || undefined,
+          fontSize: mismatchMsg?.fontSize || undefined,
+          fontWeight: mismatchMsg?.bold ? 700 : undefined,
+          whiteSpace: 'pre-wrap',
+        }}>
+          {mismatchMsg ? mismatchMsg[lang] : ''}
+        </div>
       </Modal>
     </div>
   );

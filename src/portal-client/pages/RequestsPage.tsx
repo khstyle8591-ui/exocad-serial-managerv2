@@ -11,11 +11,20 @@ interface CreditPackage {
   price: number;
 }
 
-interface LocalizedText { ko: string; en: string; ja: string }
+interface LocalizedText { ko: string; en: string; ja: string; color?: string; fontSize?: number; bold?: boolean }
 interface RequestDescriptions {
   credit: LocalizedText;
   renewal_stop: LocalizedText;
   renewal_resume: LocalizedText;
+}
+
+function msgStyle(msg: LocalizedText | null | undefined, fallbackColor?: string): React.CSSProperties {
+  return {
+    color: msg?.color || fallbackColor,
+    fontSize: msg?.fontSize || 13,
+    fontWeight: msg?.bold ? 700 : 400,
+    whiteSpace: 'pre-wrap',
+  };
 }
 
 interface OwnedSerial {
@@ -123,6 +132,7 @@ export default function RequestsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [successStyle, setSuccessStyle] = useState<React.CSSProperties>({});
   const [warning, setWarning] = useState('');
   const [showFailurePopup, setShowFailurePopup] = useState(false);
   const [showAlreadyRequestedPopup, setShowAlreadyRequestedPopup] = useState(false);
@@ -183,6 +193,9 @@ export default function RequestsPage() {
 
   function desc(type: keyof RequestDescriptions) {
     return descriptions ? descriptions[type][lang] : '';
+  }
+  function descMsg(type: keyof RequestDescriptions) {
+    return descriptions ? descriptions[type] : null;
   }
 
   async function submitCredit(e: React.FormEvent) {
@@ -249,8 +262,10 @@ export default function RequestsPage() {
       }
       if (includeQuote && quoteSent) {
         setSuccess(quoteSent[lang]);
+        setSuccessStyle(msgStyle(quoteSent));
       } else {
         setSuccess(`${t(lang, 'request_submitted')} (${t(lang, 'request_no')}: #${ids.join(', #')})`);
+        setSuccessStyle({});
       }
       setCheckedSerials({});
       setShowQuotePrompt(false);
@@ -296,7 +311,7 @@ export default function RequestsPage() {
       </div>
 
       {error   && <div className="alert alert-error">{error}</div>}
-      {success && <div className="alert alert-success">{success}</div>}
+      {success && <div className="alert alert-success" style={successStyle}>{success}</div>}
       {warning && <div className="alert alert-warn">{warning}</div>}
 
       <Modal
@@ -364,7 +379,7 @@ export default function RequestsPage() {
       {/* Credit */}
       {tab === 'credit' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20 }}>
+          <p style={{ ...msgStyle(descMsg('credit'), '#ffffff'), marginBottom: 20 }}>
             {desc('credit')}
           </p>
           <form onSubmit={submitCredit}>
@@ -406,7 +421,7 @@ export default function RequestsPage() {
       {/* Renewal Stop */}
       {tab === 'renewal_stop' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20 }}>
+          <p style={{ ...msgStyle(descMsg('renewal_stop')), marginBottom: 20 }}>
             {desc('renewal_stop')}
           </p>
           <form onSubmit={submitRenewalStop}>
@@ -430,7 +445,7 @@ export default function RequestsPage() {
       {/* Renewal Resume */}
       {tab === 'renewal_resume' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 16 }}>
+          <p style={{ ...msgStyle(descMsg('renewal_resume')), marginBottom: 16 }}>
             {desc('renewal_resume')}
           </p>
 
@@ -466,7 +481,7 @@ export default function RequestsPage() {
 
               {/* 2단계 견적서 안내 프롬프트 */}
               {showQuotePrompt && quotePrompt && (
-                <div className="alert alert-info" style={{ marginBottom: 16 }}>
+                <div className="alert alert-info" style={{ ...msgStyle(quotePrompt), marginBottom: 16 }}>
                   {quotePrompt[lang]}
                 </div>
               )}

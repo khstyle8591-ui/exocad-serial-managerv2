@@ -14,7 +14,7 @@ const T = {
     new_password: '새 비밀번호',
     // Dashboard
     my_products: '내 제품', no_products: '연결된 제품이 없습니다.',
-    link_serial_nav: '시리얼 연결하기',
+    link_serial_nav: '시리얼 연결하기', expiry_date_label: '만료일',
     status_active: '활성', status_cancelled: '취소됨', status_expired: '만료됨',
     status_stop_requested: '중단 예정',
     // Setup
@@ -85,7 +85,7 @@ const T = {
     send_reset_link: 'Send reset link', reset_password: 'Reset password',
     new_password: 'New password',
     my_products: 'My Products', no_products: 'No linked products.',
-    link_serial_nav: 'Link a serial',
+    link_serial_nav: 'Link a serial', expiry_date_label: 'Expiry date',
     status_active: 'Active', status_cancelled: 'Cancelled', status_expired: 'Expired',
     status_stop_requested: 'Stop pending',
     link_serial_title: 'Link Serial', serial_placeholder: 'Enter serial number', link: 'Link',
@@ -150,7 +150,7 @@ const T = {
     back_to_login: 'ログインに戻る', send_reset_link: 'リセットリンクを送信',
     reset_password: 'パスワードリセット', new_password: '新しいパスワード',
     my_products: 'マイプロダクト', no_products: '連携製品がありません。',
-    link_serial_nav: 'シリアルを連携する',
+    link_serial_nav: 'シリアルを連携する', expiry_date_label: '有効期限',
     status_active: 'アクティブ', status_cancelled: 'キャンセル済み', status_expired: '期限切れ',
     status_stop_requested: '停止予定',
     link_serial_title: 'シリアル連携', serial_placeholder: 'シリアル番号を入力', link: '連携',

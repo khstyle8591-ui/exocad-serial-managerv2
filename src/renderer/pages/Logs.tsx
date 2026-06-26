@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
-import { t, type TranslationKey } from '../i18n';
+import { t, actionLabel } from '../i18n';
 import { api } from '../client';
 import type { ActivityLog } from '../../shared/types';
 
@@ -21,19 +21,6 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // 액션 라벨을 i18n으로 반환
-  const actionLabel = (action: string): string => {
-    const keyMap: Partial<Record<ActivityLog['action'], TranslationKey>> = {
-      registered: 'log_action_registered',
-      renewed: 'log_action_renewed',
-      cancelled: 'log_action_cancelled',
-      addon_added: 'log_action_addon_added',
-      bulk_imported: 'log_action_bulk_imported',
-    };
-    const key = keyMap[action];
-    return key ? t(lang, key) : action;
   };
 
   if (loading) return <div>{t(lang, 'loading')}</div>;
@@ -63,7 +50,7 @@ export default function Logs() {
                   <td style={{ whiteSpace: 'nowrap', color: 'var(--text3)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{log.created_at}</td>
                   <td>
                     <span className={`action-badge action-${log.action}`}>
-                      {actionLabel(log.action)}
+                      {actionLabel(lang, log.action)}
                     </span>
                   </td>
                   <td>{log.details}</td>

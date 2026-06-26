@@ -130,6 +130,7 @@ export const translations = {
     portal_msg_mismatch_title: '데이터 미매치 안내 팝업',
     portal_msg_resume_prompt_title: '갱신 재개 견적서 안내 팝업',
     portal_msg_resume_sent_title: '견적서 신청 완료 안내',
+    portal_style_color: '글자색', portal_style_font_size: '글자 크기', portal_style_bold: '굵게',
     portal_acc_empty: '가입한 계정이 없습니다.',
     portal_acc_created: '가입일',
     portal_acc_disable: '비활성화',
@@ -348,6 +349,16 @@ export const translations = {
     log_action_cancelled: '취소',
     log_action_addon_added: 'Add-on 추가',
     log_action_bulk_imported: '벌크 임포트',
+    log_action_activated: '활성화',
+    log_action_stop_requested: '갱신중단 요청',
+    log_action_stop_cleared: '갱신중단 해제',
+    log_action_status_forced_expired: '상태 강제만료',
+    log_action_customer_merged: '고객 병합',
+    log_action_legacy_imported: '레거시 임포트',
+    log_action_mail_sent: '메일 발송',
+    log_action_mail_failed: '메일 발송 실패',
+    log_action_cron_ran: '스케줄러 실행',
+    log_action_system: '시스템',
 
     // Settings hardcoded strings
     smtp_test_sending: '발송 중...',
@@ -1037,6 +1048,7 @@ export const translations = {
     portal_msg_mismatch_title: 'Data Mismatch Notice Popup',
     portal_msg_resume_prompt_title: 'Resume Renewal Quote Notice Popup',
     portal_msg_resume_sent_title: 'Quote Request Sent Notice',
+    portal_style_color: 'Text color', portal_style_font_size: 'Font size', portal_style_bold: 'Bold',
     portal_acc_empty: 'No accounts registered.',
     portal_acc_created: 'Joined',
     portal_acc_disable: 'Disable',
@@ -1255,6 +1267,16 @@ export const translations = {
     log_action_cancelled: 'Cancelled',
     log_action_addon_added: 'Add-on Added',
     log_action_bulk_imported: 'Bulk Imported',
+    log_action_activated: 'Activated',
+    log_action_stop_requested: 'Stop Requested',
+    log_action_stop_cleared: 'Stop Cleared',
+    log_action_status_forced_expired: 'Forced Expired',
+    log_action_customer_merged: 'Customer Merged',
+    log_action_legacy_imported: 'Legacy Imported',
+    log_action_mail_sent: 'Mail Sent',
+    log_action_mail_failed: 'Mail Failed',
+    log_action_cron_ran: 'Scheduler Ran',
+    log_action_system: 'System',
 
     // Settings hardcoded strings
     smtp_test_sending: 'Sending...',
@@ -1945,6 +1967,7 @@ export const translations = {
     portal_msg_mismatch_title: 'データ不一致の案内ポップアップ',
     portal_msg_resume_prompt_title: '更新再開の見積書案内ポップアップ',
     portal_msg_resume_sent_title: '見積書申請完了の案内',
+    portal_style_color: '文字色', portal_style_font_size: '文字サイズ', portal_style_bold: '太字',
     portal_acc_empty: '登録されたアカウントがありません。',
     portal_acc_created: '登録日',
     portal_acc_disable: '無効化',
@@ -2163,6 +2186,16 @@ export const translations = {
     log_action_cancelled: 'キャンセル',
     log_action_addon_added: 'アドオン追加',
     log_action_bulk_imported: '一括インポート',
+    log_action_activated: '有効化',
+    log_action_stop_requested: '更新停止申請',
+    log_action_stop_cleared: '更新停止解除',
+    log_action_status_forced_expired: '強制失効処理',
+    log_action_customer_merged: '顧客統合',
+    log_action_legacy_imported: 'レガシーインポート',
+    log_action_mail_sent: 'メール送信',
+    log_action_mail_failed: 'メール送信失敗',
+    log_action_cron_ran: 'スケジューラー実行',
+    log_action_system: 'システム',
 
     // Settings hardcoded strings
     smtp_test_sending: '送信中...',
@@ -2733,4 +2766,28 @@ export type TranslationKey = keyof typeof translations['ko'];
 
 export function t(lang: Language, key: TranslationKey): string {
   return (translations[lang] as any)[key] ?? (translations['ko'] as any)[key] ?? key;
+}
+
+// ActivityLog['action'] → 다국어 라벨. action 문자열은 ActivityLog 타입과 1:1로 매칭됨.
+const ACTION_LABEL_KEYS: Record<string, TranslationKey> = {
+  registered: 'log_action_registered',
+  renewed: 'log_action_renewed',
+  cancelled: 'log_action_cancelled',
+  addon_added: 'log_action_addon_added',
+  bulk_imported: 'log_action_bulk_imported',
+  activated: 'log_action_activated',
+  stop_requested: 'log_action_stop_requested',
+  stop_cleared: 'log_action_stop_cleared',
+  status_forced_expired: 'log_action_status_forced_expired',
+  customer_merged: 'log_action_customer_merged',
+  legacy_imported: 'log_action_legacy_imported',
+  mail_sent: 'log_action_mail_sent',
+  mail_failed: 'log_action_mail_failed',
+  cron_ran: 'log_action_cron_ran',
+  system: 'log_action_system',
+};
+
+export function actionLabel(lang: Language, action: string): string {
+  const key = ACTION_LABEL_KEYS[action];
+  return key ? t(lang, key) : action;
 }

@@ -10,17 +10,6 @@ import { logActivity, pickLang } from '../../../main/services/activity-log.servi
 
 const router = Router();
 
-function maskSerial(serial: string): string {
-  const parts = serial.split('-');
-  if (parts.length !== 3) return 'X'.repeat(serial.replace(/-/g, '').length);
-  const [s1, s2, s3] = parts;
-  return [
-    s1.slice(0, 4) + 'X'.repeat(Math.max(0, s1.length - 4)),
-    'X'.repeat(s2.length),
-    'X'.repeat(Math.max(0, s3.length - 4)) + s3.slice(-4),
-  ].join('-');
-}
-
 function validatePassword(pw: string): string | null {
   if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
   if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
@@ -33,9 +22,10 @@ interface SerialRow {
   serial_number: string;
   main_product: string;
   status: string;
+  expiry_date: string | null;
 }
 
-// GET /portal/profile — 프로필 + 연결된 제품(마스킹 시리얼) 반환
+// GET /portal/profile — 프로필 + 연결된 제품(시리얼 전체 + 만료일) 반환
 router.get('/', requirePortalAuth, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
   const accountId = pr.portalSession!.account_id;
@@ -54,13 +44,14 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
   const linkedProducts = links.flatMap(({ customer_id }) =>
     getDb()
       .prepare<[number], SerialRow>(
-        'SELECT serial_number, main_product, status FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+        'SELECT serial_number, main_product, status, expiry_date FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
       )
       .all(customer_id)
       .map(s => ({
         main_product: s.main_product,
-        masked_serial: maskSerial(s.serial_number),
+        serial_number: s.serial_number,
         status: s.status,
+        expiry_date: s.expiry_date,
       })),
   );
 

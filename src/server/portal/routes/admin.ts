@@ -22,7 +22,7 @@ import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { notificationService } from '../../../main/services/notification.service';
-import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
+import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../../shared/types';
 
 const router = Router();
 
@@ -45,10 +45,14 @@ router.get('/settings', (_req: Request, res: Response) => {
   });
 });
 
-function isLocalizedText(v: unknown): v is LocalizedText {
+function isLocalizedText(v: unknown): v is StyledLocalizedText {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
-  return typeof o.ko === 'string' && typeof o.en === 'string' && typeof o.ja === 'string';
+  if (!(typeof o.ko === 'string' && typeof o.en === 'string' && typeof o.ja === 'string')) return false;
+  if (o.color !== undefined && typeof o.color !== 'string') return false;
+  if (o.fontSize !== undefined && typeof o.fontSize !== 'number') return false;
+  if (o.bold !== undefined && typeof o.bold !== 'boolean') return false;
+  return true;
 }
 
 function isRequestDescriptions(v: unknown): v is PortalRequestDescriptions {
@@ -74,9 +78,9 @@ router.patch('/settings', (req: Request, res: Response) => {
     credit_notification_email?: string;
     credit_packages?: CreditPackage[];
     portal_request_descriptions?: PortalRequestDescriptions;
-    portal_mismatch_message?: LocalizedText;
-    portal_resume_quote_prompt?: LocalizedText;
-    portal_resume_quote_sent?: LocalizedText;
+    portal_mismatch_message?: StyledLocalizedText;
+    portal_resume_quote_prompt?: StyledLocalizedText;
+    portal_resume_quote_sent?: StyledLocalizedText;
   };
 
   const patch: Partial<ReturnType<typeof getSettings>> = {};

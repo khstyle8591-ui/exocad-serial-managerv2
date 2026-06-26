@@ -88,6 +88,7 @@ export interface ActivityLog {
   trigger_id: string | null;
   severity: 'info' | 'warn' | 'error' | 'critical';
   created_at: string;
+  serial_number?: string | null; // 일부 조회(getTodayLogs)에서만 JOIN으로 채워짐
 }
 
 export interface SerialMailNoticeLog {
@@ -509,10 +510,17 @@ export interface LocalizedText {
   ja: string;
 }
 
+// 안내 문구 표시 스타일(색상/크기/굵기) — 언어별 텍스트와 별개로 문구 단위로 적용됨
+export interface StyledLocalizedText extends LocalizedText {
+  color?: string;
+  fontSize?: number;
+  bold?: boolean;
+}
+
 export interface PortalRequestDescriptions {
-  credit: LocalizedText;
-  renewal_stop: LocalizedText;
-  renewal_resume: LocalizedText;
+  credit: StyledLocalizedText;
+  renewal_stop: StyledLocalizedText;
+  renewal_resume: StyledLocalizedText;
 }
 
 export interface AppSettings {
@@ -587,11 +595,11 @@ export interface AppSettings {
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
   // 데이터 미매치 시 안내 팝업 문구 (PM 연락 안내 포함)
-  portal_mismatch_message: LocalizedText;
+  portal_mismatch_message: StyledLocalizedText;
   // 갱신재개 신청 시 견적서 안내 2단계 팝업 문구
-  portal_resume_quote_prompt: LocalizedText;
+  portal_resume_quote_prompt: StyledLocalizedText;
   // 견적서 신청 완료 안내 문구
-  portal_resume_quote_sent: LocalizedText;
+  portal_resume_quote_sent: StyledLocalizedText;
   // 제품명 드롭다운 목록 (빈 배열이면 자유 입력)
   product_list: string[];
 }

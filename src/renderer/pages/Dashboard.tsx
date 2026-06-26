@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLang, useNav } from '../App';
-import { t } from '../i18n';
+import { t, actionLabel } from '../i18n';
 import { api } from '../client';
 import type { ActivityLog, CancelResult, SerialWithCustomer } from '../../shared/types';
 
@@ -348,7 +348,15 @@ export default function Dashboard() {
           todayLogs.map(log => (
             <div key={log.id} className="log-entry">
               <span className="time">{log.created_at}</span>
-              <span className={`action-badge action-${log.action}`}>{log.action}</span>
+              <span className={`action-badge action-${log.action}`}>{actionLabel(lang, log.action)}</span>
+              {log.serial_number && (
+                <span style={{
+                  fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+                  color: 'var(--text3)',
+                }}>
+                  {log.serial_number}
+                </span>
+              )}
               <span style={{ fontSize: 12, color: 'var(--text2)' }}>{log.details}</span>
             </div>
           ))

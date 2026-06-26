@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
-import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../shared/types';
+import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../shared/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface PortalSettings {
@@ -11,9 +11,9 @@ interface PortalSettings {
   credit_notification_email: string;
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
-  portal_mismatch_message: LocalizedText;
-  portal_resume_quote_prompt: LocalizedText;
-  portal_resume_quote_sent: LocalizedText;
+  portal_mismatch_message: StyledLocalizedText;
+  portal_resume_quote_prompt: StyledLocalizedText;
+  portal_resume_quote_sent: StyledLocalizedText;
 }
 
 interface PortalAccount {
@@ -325,6 +325,46 @@ function PackagesTab({ lang, settings, setSettings }: {
   );
 }
 
+// ── Style controls (색상/크기/굵기) ──────────────────────────────────────────────
+function StyleControls({ lang, color, fontSize, bold, onColor, onFontSize, onBold }: {
+  lang: Language;
+  color?: string;
+  fontSize?: number;
+  bold?: boolean;
+  onColor: (v: string | undefined) => void;
+  onFontSize: (v: number | undefined) => void;
+  onBold: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        {t(lang, 'portal_style_color')}
+        <input
+          type="color"
+          value={color || '#ffffff'}
+          onChange={e => onColor(e.target.value)}
+          style={{ width: 32, height: 24, padding: 0, border: 'none' }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        {t(lang, 'portal_style_font_size')}
+        <input
+          type="number"
+          min={10}
+          max={32}
+          value={fontSize ?? 13}
+          onChange={e => onFontSize(e.target.value ? Number(e.target.value) : undefined)}
+          style={{ width: 60 }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        <input type="checkbox" checked={!!bold} onChange={e => onBold(e.target.checked)} />
+        {t(lang, 'portal_style_bold')}
+      </label>
+    </div>
+  );
+}
+
 // ── Descriptions tab ───────────────────────────────────────────────────────────
 function DescriptionsTab({ lang, settings, setSettings }: {
   lang: Language;
@@ -337,11 +377,18 @@ function DescriptionsTab({ lang, settings, setSettings }: {
       ...s,
       portal_request_descriptions: { ...s.portal_request_descriptions, [type]: { ...s.portal_request_descriptions[type], [l]: value } },
     } : s));
+  const setDescStyle = (type: keyof PortalRequestDescriptions, field: 'color' | 'fontSize' | 'bold', value: string | number | boolean | undefined) =>
+    setSettings(s => (s ? {
+      ...s,
+      portal_request_descriptions: { ...s.portal_request_descriptions, [type]: { ...s.portal_request_descriptions[type], [field]: value } },
+    } : s));
 
   // 단일 LocalizedText 설정 편집 (미매치 안내 / 견적 안내 문구)
   type MsgKey = 'portal_mismatch_message' | 'portal_resume_quote_prompt' | 'portal_resume_quote_sent';
   const setMsg = (key: MsgKey, l: LangKey, value: string) =>
     setSettings(s => (s ? { ...s, [key]: { ...s[key], [l]: value } } : s));
+  const setMsgStyle = (key: MsgKey, field: 'color' | 'fontSize' | 'bold', value: string | number | boolean | undefined) =>
+    setSettings(s => (s ? { ...s, [key]: { ...s[key], [field]: value } } : s));
 
   const blocks: { type: keyof PortalRequestDescriptions; title: TranslationKey }[] = [
     { type: 'credit', title: 'portal_desc_credit_title' },
@@ -366,6 +413,15 @@ function DescriptionsTab({ lang, settings, setSettings }: {
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {t(lang, b.title)}
           </h3>
+          <StyleControls
+            lang={lang}
+            color={d[b.type].color}
+            fontSize={d[b.type].fontSize}
+            bold={d[b.type].bold}
+            onColor={v => setDescStyle(b.type, 'color', v)}
+            onFontSize={v => setDescStyle(b.type, 'fontSize', v)}
+            onBold={v => setDescStyle(b.type, 'bold', v)}
+          />
           {langs.map(l => (
             <div className="form-group" key={l.key} style={{ marginBottom: 10 }}>
               <label>{l.label}</label>
@@ -383,6 +439,15 @@ function DescriptionsTab({ lang, settings, setSettings }: {
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {t(lang, b.title)}
           </h3>
+          <StyleControls
+            lang={lang}
+            color={settings[b.key].color}
+            fontSize={settings[b.key].fontSize}
+            bold={settings[b.key].bold}
+            onColor={v => setMsgStyle(b.key, 'color', v)}
+            onFontSize={v => setMsgStyle(b.key, 'fontSize', v)}
+            onBold={v => setMsgStyle(b.key, 'bold', v)}
+          />
           {langs.map(l => (
             <div className="form-group" key={l.key} style={{ marginBottom: 10 }}>
               <label>{l.label}</label>
