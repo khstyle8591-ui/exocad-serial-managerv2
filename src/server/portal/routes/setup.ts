@@ -47,13 +47,13 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
   const { serial } = req.body as Record<string, string>;
 
   if (!serial?.trim()) {
-    res.status(400).json({ error: '시리얼을 입력해주세요.' });
+    res.status(400).json({ error: 'serial_required' });
     return;
   }
 
   const serialRecord = serialService.getBySerialNumber(serial.trim());
   if (!serialRecord) {
-    res.status(404).json({ code: 'identity_mismatch', error: '시리얼을 찾을 수 없습니다. 입력을 확인하거나 PM에 문의해주세요.' });
+    res.status(404).json({ code: 'identity_mismatch', error: 'serial_not_found' });
     return;
   }
 
@@ -70,7 +70,7 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
   if (!accountMatchesCustomer(account, serialRecord.customer)) {
     res.status(403).json({
       code: 'identity_mismatch',
-      error: '입력한 시리얼의 고객 정보와 계정 정보가 일치하지 않습니다. 이메일, 연락처, 이름을 확인해주세요.',
+      error: 'identity_mismatch',
     });
     return;
   }

@@ -34,13 +34,13 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const GENERIC_ERROR = '입력하신 정보가 일치하지 않습니다.';
+const GENERIC_ERROR = 'invalid_credentials';
 
 function validatePassword(pw: string): string | null {
-  if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
-  if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
-  if (!/[a-z]/.test(pw)) return '소문자를 포함해야 합니다.';
-  if (!/[0-9]/.test(pw)) return '숫자를 포함해야 합니다.';
+  if (pw.length < 8) return 'pw_too_short';
+  if (!/[A-Z]/.test(pw)) return 'pw_no_uppercase';
+  if (!/[a-z]/.test(pw)) return 'pw_no_lowercase';
+  if (!/[0-9]/.test(pw)) return 'pw_no_number';
   return null;
 }
 
@@ -64,18 +64,18 @@ router.post('/signup', authLimiter, async (req: Request, res: Response) => {
   } = req.body as Record<string, string>;
 
   if (!login_id?.trim() || !email?.trim() || !name?.trim() || !password) {
-    res.status(400).json({ error: '필수 항목을 모두 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
   if (password !== confirm_password) {
-    res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
+    res.status(400).json({ error: 'error_pw_mismatch' });
     return;
   }
   const pwError = validatePassword(password);
   if (pwError) { res.status(400).json({ error: pwError }); return; }
 
   if (loginIdExists(login_id.trim())) {
-    res.status(409).json({ error: '이미 사용 중인 로그인 ID입니다.' });
+    res.status(409).json({ error: 'login_id_taken' });
     return;
   }
 

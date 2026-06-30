@@ -12,10 +12,10 @@ import { getNowTimestampString } from '../../../main/utils/date-utils';
 const router = Router();
 
 function validatePassword(pw: string): string | null {
-  if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
-  if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
-  if (!/[a-z]/.test(pw)) return '소문자를 포함해야 합니다.';
-  if (!/[0-9]/.test(pw)) return '숫자를 포함해야 합니다.';
+  if (pw.length < 8) return 'pw_too_short';
+  if (!/[A-Z]/.test(pw)) return 'pw_no_uppercase';
+  if (!/[a-z]/.test(pw)) return 'pw_no_lowercase';
+  if (!/[0-9]/.test(pw)) return 'pw_no_number';
   return null;
 }
 
@@ -68,7 +68,7 @@ router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) 
   if (email !== undefined) {
     const trimmed = email.trim();
     if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      res.status(400).json({ error: '올바른 이메일 형식을 입력해주세요.' });
+      res.status(400).json({ error: 'invalid_email' });
       return;
     }
   }
@@ -131,7 +131,7 @@ router.patch('/language', requirePortalAuth, requireCsrf, (req: Request, res: Re
   const { language } = req.body as Record<string, string>;
 
   if (!['ko', 'en', 'ja'].includes(language)) {
-    res.status(400).json({ error: '유효하지 않은 언어입니다.' });
+    res.status(400).json({ error: 'invalid_language' });
     return;
   }
 
@@ -150,11 +150,11 @@ router.post('/change-password', requirePortalAuth, requireCsrf, async (req: Requ
   const { current_password, password, confirm_password } = req.body as Record<string, string>;
 
   if (!current_password || !password) {
-    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
   if (password !== confirm_password) {
-    res.status(400).json({ error: '새 비밀번호가 일치하지 않습니다.' });
+    res.status(400).json({ error: 'error_pw_mismatch' });
     return;
   }
   const pwError = validatePassword(password);
@@ -165,7 +165,7 @@ router.post('/change-password', requirePortalAuth, requireCsrf, async (req: Requ
 
   const ok = await bcrypt.compare(current_password, account.password_hash);
   if (!ok) {
-    res.status(401).json({ error: '현재 비밀번호가 일치하지 않습니다.' });
+    res.status(401).json({ error: 'invalid_current_password' });
     return;
   }
 

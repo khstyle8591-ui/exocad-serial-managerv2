@@ -78,7 +78,7 @@ router.get('/mail/:id', (req: Request, res: Response) => {
     try {
         const db = getDb();
         const row = db.prepare('SELECT body FROM inbound_mails WHERE id = ?').get(req.params.id) as { body: string } | undefined;
-        if (!row) return res.status(404).send('메일을 찾을 수 없습니다.');
+        if (!row) return res.status(404).send('Mail not found.');
         res.send(row.body);
     } catch (err: unknown) {
         res.status(500).send(errorMessage(err));
@@ -115,7 +115,7 @@ router.get('/screenshot/:filename', (req: Request, res: Response) => {
         const filepath = path.join(SCREENSHOT_DIR, filename);
 
         if (!fs.existsSync(filepath)) {
-            return res.status(404).send('스크린샷을 찾을 수 없습니다.');
+            return res.status(404).send('Screenshot not found.');
         }
         res.setHeader('Content-Type', 'image/png');
         res.sendFile(filepath);

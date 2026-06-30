@@ -29,9 +29,9 @@ const getErrorMessage = (error: unknown) => error instanceof Error ? error.messa
 
 function resolveOwnedSerial(accountId: number, serialNumber: string) {
   const serial = serialService.getBySerialNumber(serialNumber.trim());
-  if (!serial) return { error: '시리얼을 찾을 수 없습니다.' };
+  if (!serial) return { error: 'serial_not_found' };
   if (!isSerialLinked(accountId, serial.customer_id)) {
-    return { error: '본인 소유의 시리얼이 아닙니다.' };
+    return { error: 'serial_not_owned' };
   }
   return { serial };
 }
@@ -62,14 +62,14 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
   const { exocad_id, package_code } = req.body as Record<string, string>;
 
   if (!exocad_id?.trim() || !package_code?.trim()) {
-    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
 
   const settings = getSettings();
   const pkg = settings.credit_packages.find(p => p.id === package_code.trim());
   if (!pkg) {
-    res.status(400).json({ error: '유효하지 않은 패키지입니다.' });
+    res.status(400).json({ error: 'invalid_package' });
     return;
   }
 
@@ -134,7 +134,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   const { target_serial } = req.body as Record<string, string>;
 
   if (!target_serial?.trim()) {
-    res.status(400).json({ error: '시리얼을 입력해주세요.' });
+    res.status(400).json({ error: 'serial_required' });
     return;
   }
 
@@ -146,11 +146,11 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   const { serial } = resolved;
 
   if (serial.status === 'cancelled') {
-    res.status(400).json({ error: '이미 취소된 시리얼입니다.' });
+    res.status(400).json({ error: 'serial_already_cancelled' });
     return;
   }
   if (serial.status === 'expired') {
-    res.status(400).json({ error: '이미 만료된 시리얼입니다. 재갱신 신청을 이용해주세요.' });
+    res.status(400).json({ error: 'serial_already_expired' });
     return;
   }
   // 신청 레코드를 먼저 생성해 requestId를 확보한 뒤, 플래그 선점을 단일 원자적 UPDATE로 수행한다.
@@ -296,7 +296,7 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
   const { target_serial, include_quote = 'false' } = req.body as Record<string, string>;
 
   if (!target_serial?.trim()) {
-    res.status(400).json({ error: '시리얼을 입력해주세요.' });
+    res.status(400).json({ error: 'serial_required' });
     return;
   }
 
