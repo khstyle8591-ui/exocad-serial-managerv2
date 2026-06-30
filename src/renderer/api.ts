@@ -68,6 +68,8 @@ export const api = {
     renewSerial: (id: number) => post(`/serials/${id}/renew`),
     sendRenewalPo: (id: number, previousExpiryDate: string | null) =>
         post(`/serials/${id}/send-renewal-po`, { previous_expiry_date: previousExpiryDate }),
+    sendRenewalNotice: (id: number, previousExpiryDate: string | null) =>
+        post(`/serials/${id}/send-renewal-notice`, { previous_expiry_date: previousExpiryDate }),
     exportSerials: async (serials: unknown[]) => {
         try {
             const res = await fetch(`${BASE}/serials/export`, {

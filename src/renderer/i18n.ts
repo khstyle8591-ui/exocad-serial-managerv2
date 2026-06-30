@@ -922,6 +922,12 @@ export const translations = {
     renewal_po_confirm_message: '이 시리얼에 대한 갱신 발주서를 발송하시겠습니까?',
     renewal_po_confirm_approve: '승인',
     renewal_po_send_fail: '발주서 발송에 실패했습니다: ',
+    renewal_actions_title: '갱신 처리',
+    renewal_actions_message: '만료일이 갱신되었습니다. 발송할 항목을 선택하세요.',
+    renewal_actions_send_po: '발주서 발송',
+    renewal_actions_send_customer_mail: '고객 갱신 안내 메일 발송',
+    renewal_actions_confirm: '확인',
+    renewal_actions_mail_fail: '갱신 안내 메일 발송에 실패했습니다: ',
   },
 
   en: {
@@ -1842,6 +1848,12 @@ export const translations = {
     renewal_po_confirm_message: 'Send a renewal purchase order email for this serial?',
     renewal_po_confirm_approve: 'Approve',
     renewal_po_send_fail: 'Failed to send purchase order: ',
+    renewal_actions_title: 'Renewal Actions',
+    renewal_actions_message: 'The expiry date has been renewed. Select items to send.',
+    renewal_actions_send_po: 'Send purchase order',
+    renewal_actions_send_customer_mail: 'Send renewal notice to customer',
+    renewal_actions_confirm: 'Confirm',
+    renewal_actions_mail_fail: 'Failed to send renewal notice: ',
   },
 
   ja: {
@@ -2762,6 +2774,12 @@ export const translations = {
     renewal_po_confirm_message: 'このシリアルの更新注文書を発送しますか？',
     renewal_po_confirm_approve: '承認',
     renewal_po_send_fail: '注文書の送信に失敗しました：',
+    renewal_actions_title: '更新手続き',
+    renewal_actions_message: '有効期限が更新されました。送信する項目を選択してください。',
+    renewal_actions_send_po: '注文書を発送',
+    renewal_actions_send_customer_mail: '顧客に更新案内メールを送信',
+    renewal_actions_confirm: '確認',
+    renewal_actions_mail_fail: '更新案内メールの送信に失敗しました：',
   },
 } as const;
 

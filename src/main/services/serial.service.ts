@@ -467,13 +467,7 @@ export class SerialService {
 
     const updated = this.getById(id);
 
-    // 수동으로 만료일이 미래로 변경된 경우 = 외부에서 실제 갱신 완료 후 사람이 반영한 것 → 갱신 완료 안내 자동 발송
-    if (updated && input.expiry_date && existing.expiry_date && input.expiry_date > existing.expiry_date) {
-      const previousExpiryDate = existing.expiry_date;
-      import('./mail/lifecycle-notice.service')
-        .then(({ sendManualRenewalConfirmNotice }) => sendManualRenewalConfirmNotice(updated, previousExpiryDate))
-        .catch((err: unknown) => logger.error(`[serial] manual renewal confirm notice failed: ${getErrorMessage(err)}`));
-    }
+    // 만료일 변경 시 갱신 안내 메일 발송 여부는 매니저 UI 팝업에서 결정 (자동 발송 없음)
 
     return updated;
   }

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import type { AppSettings, CustomerInput, Serial, SerialInput, SerialWithCustomer } from '../../shared/types';
 import CustomerAutocomplete, { type CustomerChoice } from './CustomerAutocomplete';
 import ModuleListEditor from './ModuleListEditor';
-import ConfirmModal from './ConfirmModal';
 import { useLang } from '../App';
 import { t } from '../i18n';
 import { api } from '../client';
@@ -104,7 +103,9 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState<CustomerConflict | null>(null);
   const [productList, setProductList] = useState<string[]>([]);
-  const [poConfirm, setPoConfirm] = useState<{ serial: SerialWithCustomer; previousExpiryDate: string } | null>(null);
+  const [renewalActions, setRenewalActions] = useState<{ serial: SerialWithCustomer; previousExpiryDate: string } | null>(null);
+  const [renewalSendPo, setRenewalSendPo] = useState(true);
+  const [renewalSendMail, setRenewalSendMail] = useState(true);
 
   useEffect(() => {
     api.getSettings().then(raw => {
@@ -273,10 +274,17 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
 
       setConflict(null);
 
-      // 만료일이 미래로 변경된 수동 갱신 → 발주서 발송 여부를 확인하는 팝업
+      // 액티브 시리얼의 만료일이 미래로 변경된 경우 → 발주서/고객 메일 발송 여부 팝업
       const previousExpiryDate = mode === 'edit' ? initial?.expiry_date : undefined;
-      if (previousExpiryDate && result.expiry_date && result.expiry_date > previousExpiryDate) {
-        setPoConfirm({ serial: result, previousExpiryDate });
+      if (
+        previousExpiryDate &&
+        result.expiry_date &&
+        result.expiry_date > previousExpiryDate &&
+        result.status === 'active'
+      ) {
+        setRenewalSendPo(true);
+        setRenewalSendMail(true);
+        setRenewalActions({ serial: result, previousExpiryDate });
       } else {
         onSaved(result);
       }
@@ -446,23 +454,45 @@ export default function SerialForm({ mode, initial, onSaved, onClose }: Props) {
         </div>
       )}
 
-      {poConfirm && (
-        <ConfirmModal
-          title={t(lang, 'renewal_po_confirm_title')}
-          message={t(lang, 'renewal_po_confirm_message')}
-          confirmLabel={t(lang, 'renewal_po_confirm_approve')}
-          onCancel={() => { const s = poConfirm.serial; setPoConfirm(null); onSaved(s); }}
-          onConfirm={async () => {
-            const { serial, previousExpiryDate } = poConfirm;
-            setPoConfirm(null);
-            try {
-              await api.sendRenewalPo(serial.id, previousExpiryDate);
-            } catch (e: unknown) {
-              console.error(t(lang, 'renewal_po_send_fail') + getErrorMessage(e));
-            }
-            onSaved(serial);
-          }}
-        />
+      {renewalActions && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: 'var(--bg2)', borderRadius: 12, width: 420, padding: 28, boxShadow: '0 10px 40px rgba(0,0,0,0.5)', border: '1px solid var(--border2)' }}>
+            <h3 style={{ margin: '0 0 10px', fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{t(lang, 'renewal_actions_title')}</h3>
+            <p style={{ margin: '0 0 18px', color: 'var(--text2)', fontSize: 14, lineHeight: 1.6 }}>{t(lang, 'renewal_actions_message')}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, color: 'var(--text)' }}>
+                <input type="checkbox" checked={renewalSendPo} onChange={e => setRenewalSendPo(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                {t(lang, 'renewal_actions_send_po')}
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, color: 'var(--text)' }}>
+                <input type="checkbox" checked={renewalSendMail} onChange={e => setRenewalSendMail(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                {t(lang, 'renewal_actions_send_customer_mail')}
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => { const s = renewalActions.serial; setRenewalActions(null); onSaved(s); }}>
+                {t(lang, 'cancel')}
+              </button>
+              <button className="btn btn-primary" onClick={async () => {
+                const { serial, previousExpiryDate } = renewalActions;
+                setRenewalActions(null);
+                try {
+                  if (renewalSendPo) await api.sendRenewalPo(serial.id, previousExpiryDate);
+                } catch (e: unknown) {
+                  console.error(t(lang, 'renewal_po_send_fail') + getErrorMessage(e));
+                }
+                try {
+                  if (renewalSendMail) await api.sendRenewalNotice(serial.id, previousExpiryDate);
+                } catch (e: unknown) {
+                  console.error(t(lang, 'renewal_actions_mail_fail') + getErrorMessage(e));
+                }
+                onSaved(serial);
+              }}>
+                {t(lang, 'renewal_actions_confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

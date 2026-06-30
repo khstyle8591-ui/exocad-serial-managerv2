@@ -3,7 +3,7 @@ import multer from 'multer';
 import { serialService } from '../../main/services/serial.service';
 import { logger } from '../../main/utils/logger';
 import { excelService } from '../../main/services/excel.service';
-import { sendStopRequestReceivedNotice } from '../../main/services/mail/lifecycle-notice.service';
+import { sendStopRequestReceivedNotice, sendManualRenewalConfirmNotice } from '../../main/services/mail/lifecycle-notice.service';
 import { sendManualRenewalPo } from '../../main/services/automation.service';
 import { listSerialMailNoticeLogs } from '../../main/services/serial-mail-notice-log.service';
 import {
@@ -198,6 +198,20 @@ router.post('/:id/renew', (req: Request, res: Response) => {
     try {
         const result = serialService.renewSerial(Number(req.params.id), 'manual');
         res.json(result);
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
+    }
+});
+
+// POST /api/serials/:id/send-renewal-notice  — 수동 갱신 팝업에서 "고객 갱신 안내 메일 발송" 선택 시
+router.post('/:id/send-renewal-notice', async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const previousExpiryDate = req.body?.previous_expiry_date ?? null;
+        const serial = serialService.getById(id);
+        if (!serial) { res.status(404).json({ error: 'Serial not found' }); return; }
+        const result = await sendManualRenewalConfirmNotice(serial, previousExpiryDate);
+        res.json(result ?? { ok: true });
     } catch (err) {
         res.status(400).json({ error: errorMessage(err) });
     }
