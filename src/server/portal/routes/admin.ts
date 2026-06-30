@@ -12,6 +12,7 @@ import {
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailedByManager,
   markPortalRequestCancelRejected,
+  markPortalRequestDismissed,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
@@ -355,6 +356,36 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   updatePortalRequestStatus(id, 'approved');
   res.json({ ok: true, status: 'approved' });
+});
+
+// PATCH /portal/admin/requests/:id/dismiss — Playwright 취소 실패(cancel failed) 신청을 매니저가
+// 수동 처리 후 큐에서 닫음. status는 유지하고 note='dismissed'로만 바꿔 actionable 목록에서 제거.
+router.patch('/requests/:id/dismiss', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+  const request = getPortalRequestById(id);
+  if (!request) { res.status(404).json({ error: 'Not found' }); return; }
+
+  // cancel failed 상태(시스템/고객 자동처리 실패 또는 매니저 승인 후 Playwright 실패)만 dismiss 허용
+  const isCancelFailed =
+    (request.status === 'rejected' && request.note === 'playwright_failed') ||
+    (request.status === 'approved' && request.note === 'playwright_failed_manual');
+  if (!isCancelFailed) {
+    res.status(409).json({ error: 'dismiss 가능한 상태가 아닙니다.' });
+    return;
+  }
+
+  markPortalRequestDismissed(id);
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'info',
+    details: pickLang({
+      ko: `포털 신청(#${id}) 취소 실패 건 관리자 dismiss(수동 처리) — 유형: ${request.type}`,
+      en: `Portal request (#${id}) cancel-failed dismissed by manager (handled manually) — type: ${request.type}`,
+      ja: `ポータル申請(#${id})キャンセル失敗を管理者がdismiss(手動処理) — 種類: ${request.type}`,
+    }),
+  });
+  res.json({ ok: true, status: 'dismissed' });
 });
 
 // PATCH /portal/admin/requests/:id/decide-cancel — 고객의 취소 요청(cancel_requested)을 승인/거절

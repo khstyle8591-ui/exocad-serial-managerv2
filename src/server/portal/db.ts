@@ -261,6 +261,18 @@ export function markPortalRequestCancelRejected(id: number): void {
   emitPortalRequestChanged();
 }
 
+// 매니저가 Playwright 취소 실패(cancel failed) 신청을 수동 처리하고 큐에서 닫는 경우 — status는
+// 그대로 두고(고객 화면 의미 유지: approved는 승인됨, rejected는 실패 표시) note만 'dismissed'로
+// 바꿔 매니저 actionable 목록에서 빠지게 한다.
+export function markPortalRequestDismissed(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET note = 'dismissed', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
 // 갱신중단 플래그가 이미 선점된 상태에서 들어온 중복 신청 — 매니저 대기열에 노출되지 않도록
 // 즉시 'rejected'로 확정하고 note로만 구분해 포털/매니저 화면에 "중복신청"으로 표시한다.
 export function markPortalRequestDuplicate(id: number): void {

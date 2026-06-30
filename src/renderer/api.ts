@@ -249,6 +249,8 @@ export const api = {
             preq('PATCH', `/requests/${id}/decide`, { action }),
         decideCancelRequest: (id: number, action: 'approve' | 'reject') =>
             preq('PATCH', `/requests/${id}/decide-cancel`, { action }),
+        dismissRequest: (id: number) =>
+            preq('PATCH', `/requests/${id}/dismiss`),
     },
 };
 

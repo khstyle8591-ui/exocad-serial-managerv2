@@ -86,7 +86,9 @@ function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
     return <span className="badge badge-green">{t(lang, 'req_status_approved')}</span>;
   }
   if (status === 'rejected') {
-    if (note === 'playwright_failed') {
+    // playwright_failed를 매니저가 dismiss(수동 처리)한 경우에도 고객에게는 기존 "처리 실패" 표시를 유지
+    // (dismiss는 매니저 큐 정리용 내부 동작 — 고객 화면을 갑자기 "거절됨"으로 바꾸지 않는다)
+    if (note === 'playwright_failed' || note === 'dismissed') {
       return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
     }
     if (note === 'duplicate') {

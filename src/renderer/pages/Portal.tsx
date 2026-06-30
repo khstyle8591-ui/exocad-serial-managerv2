@@ -191,6 +191,16 @@ export default function Portal() {
     }
   }
 
+  async function dismiss(req: AdminRequest) {
+    if (!window.confirm(t(lang, 'portal_confirm_dismiss'))) return;
+    try {
+      await api.portal.dismissRequest(req.id);
+      loadRequests();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    }
+  }
+
   if (loading || !settings) return <div className="page-wrapper">{t(lang, 'loading')}</div>;
 
   const showSaveBtn = tab === 'settings' || tab === 'packages' || tab === 'descriptions';
@@ -248,6 +258,7 @@ export default function Portal() {
           onFilter={f => { setReqFilter(f); loadRequests(f); }}
           onDecide={decide}
           onDecideCancel={decideCancel}
+          onDismiss={dismiss}
           creditPackages={settings.credit_packages ?? []}
         />
       )}
@@ -545,13 +556,14 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
 }
 
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, creditPackages }: {
+function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, onDismiss, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
   onFilter: (f: string) => void;
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
   onDecideCancel: (r: AdminRequest, action: 'approve' | 'reject') => void;
+  onDismiss: (r: AdminRequest) => void;
   creditPackages: CreditPackage[];
 }) {
   const FILTERS: { id: string; key: TranslationKey }[] = [
@@ -560,10 +572,12 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
     { id: 'renewal_stop', key: 'portal_type_renewal_stop' },
     { id: 'renewal_resume', key: 'portal_type_renewal_resume' },
   ];
-  const isActionable = (r: AdminRequest) =>
-    r.status === 'pending' || r.status === 'manager_review' ||
+  // cancel failed 상태 — approve/reject 외에 dismiss(수동 처리 후 큐에서 닫기)도 가능
+  const isCancelFailed = (r: AdminRequest) =>
     (r.status === 'rejected' && r.note === 'playwright_failed') ||
     (r.status === 'approved' && r.note === 'playwright_failed_manual');
+  const isActionable = (r: AdminRequest) =>
+    r.status === 'pending' || r.status === 'manager_review' || isCancelFailed(r);
 
   return (
     <div>
@@ -637,6 +651,10 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                       <span style={{ color: 'var(--text3)', fontWeight: 600 }}>
                         {t(lang, 'portal_st_duplicate')}
                       </span>
+                    ) : r.note === 'dismissed' ? (
+                      <span style={{ color: 'var(--text3)', fontWeight: 600 }}>
+                        {t(lang, 'portal_st_dismissed')}
+                      </span>
                     ) : (
                       <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
                         {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
@@ -673,6 +691,12 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                           onClick={() => onDecide(r, 'reject')}>
                           {t(lang, 'portal_req_reject')}
                         </button>
+                        {isCancelFailed(r) && (
+                          <button className="btn btn-sm btn-secondary"
+                            onClick={() => onDismiss(r)}>
+                            {t(lang, 'portal_req_dismiss')}
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>
