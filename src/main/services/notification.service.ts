@@ -42,7 +42,7 @@ function parseModules(modulesJson: string): string[] {
 }
 
 // ─── Slack 메시지 다국어 사전 ────────────────────────────────────────────────
-type SlackLang = 'ko' | 'en' | 'ja';
+export type SlackLang = 'ko' | 'en' | 'ja';
 
 const S: Record<SlackLang, Record<string, string>> = {
   ko: {
@@ -225,7 +225,9 @@ function slackLocale(lang: SlackLang): string {
   return lang === 'en' ? 'en-US' : lang === 'ja' ? 'ja-JP' : 'ko-KR';
 }
 
-function localizeCancelError(error: string | undefined, lang: SlackLang): string {
+// 활동 로그(activity_logs)에도 동일한 매핑이 필요해 외부에 공개한다 — 실패 사유를 details 문구에
+// 끼워 넣을 때 ko/en/ja 각각에 대해 호출해야 한국어 원문이 그대로 섞여 나오는 것을 막을 수 있다.
+export function localizeCancelError(error: string | undefined, lang: SlackLang): string {
   if (!error) return '';
   const serial = error.match(/시리얼:\s*([A-Za-z0-9-]+)/)?.[1]
     || error.match(/대상 시리얼\(([^)]+)\)/)?.[1]

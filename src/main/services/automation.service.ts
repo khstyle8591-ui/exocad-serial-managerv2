@@ -1,7 +1,7 @@
 import { cancelService } from './cancel.service';
 import { serialService } from './serial.service';
-import { notificationService } from './notification.service';
-import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
+import { notificationService, localizeCancelError } from './notification.service';
+import { sendCancelCompleteNotice, sendManualRenewalConfirmNotice } from './mail/lifecycle-notice.service';
 import { logAutoRenewalOrderNotice } from './auto-renewal-order-notice-log.service';
 import { pickLang } from './activity-log.service';
 import { markPortalRequestPlaywrightFailed } from '../../server/portal/db';
@@ -170,12 +170,15 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
           triggerId, 'error',
         );
       } else {
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.error
+          ? localizeCancelError(result.error, lang)
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
           pickLang({
-            ko: `Failsafe 취소 실패: ${serial.serial_number} - ${result.error || '알 수 없는 오류'}`,
-            en: `Failsafe cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
-            ja: `Failsafeキャンセル失敗: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+            ko: `Failsafe 취소 실패: ${serial.serial_number} - ${reasonByLang('ko')}`,
+            en: `Failsafe cancellation failed: ${serial.serial_number} - ${reasonByLang('en')}`,
+            ja: `Failsafeキャンセル失敗: ${serial.serial_number} - ${reasonByLang('ja')}`,
           }),
           triggerId, 'error',
         );
@@ -231,15 +234,19 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
       } else {
         // 실패 또는 미검증 → 신청을 실패로 표시(매니저 '취소 실패' + 재승인 가능) + Slack 알림
         markPortalRequestPlaywrightFailed(reqId);
-        const reason = result.success
-          ? pickLang({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })
-          : (result.error || pickLang({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' }));
+        // reason은 언어별로 따로 계산한다 — result.error는 Playwright가 던진 한국어 원문이라,
+        // 단순히 pickLang()으로 감싸기만 하면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.success
+          ? ({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })[lang]
+          : (result.error
+            ? localizeCancelError(result.error, lang)
+            : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]);
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
           pickLang({
-            ko: `포털 갱신중단 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${reqId}), 사유: ${reason}`,
-            en: `Portal renewal-stop auto-cancel FAILED — serial: ${serial.serial_number} (request #${reqId}), reason: ${reason}`,
-            ja: `ポータル更新停止自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${reqId}), 理由: ${reason}`,
+            ko: `포털 갱신중단 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${reqId}), 사유: ${reasonByLang('ko')}`,
+            en: `Portal renewal-stop auto-cancel FAILED — serial: ${serial.serial_number} (request #${reqId}), reason: ${reasonByLang('en')}`,
+            ja: `ポータル更新停止自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${reqId}), 理由: ${reasonByLang('ja')}`,
           }),
           triggerId, 'error',
         );
@@ -311,6 +318,11 @@ export async function runAutoRenewNow(): Promise<{ processed: number; renewed: n
     } else {
       logger.warn(`[automation] auto renewal order notice failed: ${updated.serial_number}`);
     }
+
+    // 내부 발주메일과 별개로, 고객에게도 갱신 완료를 안내 (수동 갱신 시 쓰는 기존 템플릿 재사용)
+    await sendManualRenewalConfirmNotice(updated, serial.expiry_date).catch((err: unknown) => {
+      logger.error(`[automation] auto renewal customer notice error: ${serial.serial_number} - ${getErrorMessage(err)}`);
+    });
   }
 
   logger.info(`[automation] auto renew run: ${renewed.length} renewed`);
@@ -423,23 +435,27 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
 
       // 실패했거나(success=false), 완료됐지만 검증되지 않은(success && !verified) 경우 모두
       // 아래 fallback(로컬 강제 만료 + critical 알림)으로 처리하여 사람이 확인하도록 한다.
-      const limboReason = result.success
-        ? pickLang({
+      // result.error는 Playwright가 던진 한국어 원문이므로 언어별로 따로 변환해야
+      // en/ja 문장 안에 한국어가 그대로 섞여 나오는 것을 막을 수 있다.
+      const limboReasonByLang = (lang: 'ko' | 'en' | 'ja') => result.success
+        ? ({
             ko: `취소 미검증 (상태=${result.verified_status || 'unknown'})`,
             en: `cancel UNVERIFIED (status=${result.verified_status || 'unknown'})`,
             ja: `キャンセル未確認 (状態=${result.verified_status || 'unknown'})`,
-          })
-        : pickLang({
-            ko: `취소 실패: ${result.error || '알 수 없는 오류'}`,
-            en: `cancel failed: ${result.error || 'unknown error'}`,
-            ja: `キャンセル失敗: ${result.error || 'unknown error'}`,
-          });
+          })[lang]
+        : `${({ ko: '취소 실패', en: 'cancel failed', ja: 'キャンセル失敗' })[lang]}: ${
+            result.error ? localizeCancelError(result.error, lang) : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]
+          }`;
       serialService.logActivity(
         serial.id,
         'system',
         'auto',
         {},
-        pickLang({ ko: `Limbo 보정 — ${limboReason}`, en: `Limbo ${limboReason}`, ja: `Limbo補正 — ${limboReason}` }),
+        pickLang({
+          ko: `Limbo 보정 — ${limboReasonByLang('ko')}`,
+          en: `Limbo ${limboReasonByLang('en')}`,
+          ja: `Limbo補正 — ${limboReasonByLang('ja')}`,
+        }),
         triggerId,
         'warn'
       );

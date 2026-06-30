@@ -18,7 +18,7 @@ import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-
 import { sendTemplate } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
-import { notificationService } from '../../../main/services/notification.service';
+import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
 import { logger } from '../../../main/utils/logger';
 
 const router = Router();
@@ -213,13 +213,19 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     } else {
       processingFailed = true;
       markPortalRequestPlaywrightFailed(requestId);
-      const reason = cancelResult.error || (cancelResult.success ? '취소 결과 미검증' : '알 수 없는 오류');
+      // reason은 언어별로 따로 계산 — cancelResult.error는 Playwright가 던진 한국어 원문이라
+      // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+      const reasonByLang = (lang: 'ko' | 'en' | 'ja') => cancelResult.error
+        ? localizeCancelError(cancelResult.error, lang)
+        : (cancelResult.success
+          ? ({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })[lang]
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]);
       logActivity({
         serial_id: serial.id, action: 'system', actor: 'system', severity: 'error', trigger_id: triggerId,
         details: pickLang({
-          ko: `포털 만료 윈도우 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${requestId}), 사유: ${reason}`,
-          en: `Portal expiry-window auto-cancel FAILED — serial: ${serial.serial_number} (request #${requestId}), reason: ${reason}`,
-          ja: `ポータル失効ウィンドウ自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${requestId}), 理由: ${reason}`,
+          ko: `포털 만료 윈도우 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${requestId}), 사유: ${reasonByLang('ko')}`,
+          en: `Portal expiry-window auto-cancel FAILED — serial: ${serial.serial_number} (request #${requestId}), reason: ${reasonByLang('en')}`,
+          ja: `ポータル失効ウィンドウ自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${requestId}), 理由: ${reasonByLang('ja')}`,
         }),
       });
       await notificationService.sendCriticalAutomationAlert({

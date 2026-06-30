@@ -15,13 +15,14 @@ import {
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
+import { portalRequestEvents } from '../request-events';
 import { updateCustomer } from '../../../main/services/customer.service';
 import { getDb } from '../../../main/database';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
-import { notificationService } from '../../../main/services/notification.service';
+import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
 import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../../shared/types';
 
 const router = Router();
@@ -213,6 +214,30 @@ router.get('/requests', (req: Request, res: Response) => {
   res.json({ requests: getAllPortalRequests(filter) });
 });
 
+// GET /portal/admin/requests/stream — SSE: 신청이 생성/상태변경될 때마다 알림을 보내
+// 매니저 화면이 폴링 주기(30초)를 기다리지 않고 즉시 다시 조회하도록 한다.
+// :id 라우트보다 먼저 등록해야 Express가 "stream"을 id 파라미터로 잘못 매칭하지 않는다.
+router.get('/requests/stream', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+
+  const onChanged = () => res.write('event: changed\ndata: {}\n\n');
+  portalRequestEvents.on('changed', onChanged);
+
+  // 일부 프록시/터널이 idle 커넥션을 끊는 것을 막기 위한 주기적 heartbeat
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    portalRequestEvents.off('changed', onChanged);
+  });
+});
+
 // GET /portal/admin/requests/:id
 router.get('/requests/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
@@ -280,13 +305,17 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       // 매니저가 이미 승인했으므로 포털 고객에게는 '승인됨'으로 보이게 status='approved' 유지,
       // note로만 Playwright 실패를 구분해 매니저가 재시도할 수 있도록 한다.
       markPortalRequestPlaywrightFailedByManager(id);
-      const reason = cancelResult.error || '알 수 없는 오류';
+      // reason은 언어별로 따로 계산 — cancelResult.error는 Playwright가 던진 한국어 원문이라
+      // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+      const reasonByLang = (lang: 'ko' | 'en' | 'ja') => cancelResult.error
+        ? localizeCancelError(cancelResult.error, lang)
+        : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
       logActivity({
         serial_id: serial.id, action: 'system', actor: 'manual', severity: 'error', trigger_id: `portal-req-${id}`,
         details: pickLang({
-          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reason}`,
-          en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reason}`,
-          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reason}`,
+          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reasonByLang('ko')}`,
+          en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reasonByLang('en')}`,
+          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reasonByLang('ja')}`,
         }),
       });
       await notificationService.sendCriticalAutomationAlert({

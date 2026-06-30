@@ -88,6 +88,7 @@ export default function Portal() {
   const [requests, setRequests] = useState<AdminRequest[]>([]);
   const [reqFilter, setReqFilter] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     api.portal.getSettings<PortalSettings>()
@@ -113,14 +114,27 @@ export default function Portal() {
     if (next === 'accounts') loadAccounts();
     if (next === 'requests') {
       loadRequests();
+
+      // 포털에서 신청이 들어오는 즉시 갱신: SSE로 변경 신호를 받으면 바로 재조회.
+      // 터널/프록시가 SSE 연결을 끊는 경우를 대비해 30초 폴링도 안전망으로 함께 둔다.
+      if (sseRef.current) sseRef.current.close();
+      const es = new EventSource('/portal/admin/requests/stream');
+      es.addEventListener('changed', () => loadRequests());
+      es.onerror = () => { /* EventSource 자체가 자동 재연결을 시도함 */ };
+      sseRef.current = es;
+
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(() => loadRequests(), 30_000);
     } else {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
     }
   }
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (sseRef.current) sseRef.current.close();
+  }, []);
 
   async function save() {
     if (!settings) return;

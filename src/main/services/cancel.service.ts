@@ -4,7 +4,7 @@ import fs from 'fs';
 import { serialService } from './serial.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
 import { logActivity, pickLang } from './activity-log.service';
-import { notificationService } from './notification.service';
+import { notificationService, localizeCancelError } from './notification.service';
 import { markPortalRequestPlaywrightFailed, findActiveRenewalStopRequest } from '../../server/portal/db';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
@@ -785,13 +785,17 @@ export class CancelService {
         });
       } else if (!result.success) {
         logger.warn(`[auto-cancel] FAILED: ${serial.serial_number} — ${result.error || 'unknown'}`);
-        const reason = result.error || '알 수 없는 오류';
+        // reason은 언어별로 따로 계산 — result.error는 Playwright가 던진 한국어 원문이라
+        // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.error
+          ? localizeCancelError(result.error, lang)
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
         logActivity({
           serial_id: serial.id, action: 'system', actor: 'auto', severity: 'error', trigger_id: `auto-cancel-${serial.serial_number}`,
           details: pickLang({
-            ko: `만료 D-${daysBefore}일 자동취소 실패 — 시리얼: ${serial.serial_number}, 사유: ${reason}`,
-            en: `Pre-expiry D-${daysBefore} auto-cancel FAILED — serial: ${serial.serial_number}, reason: ${reason}`,
-            ja: `失効D-${daysBefore}日自動キャンセル失敗 — シリアル: ${serial.serial_number}, 理由: ${reason}`,
+            ko: `만료 D-${daysBefore}일 자동취소 실패 — 시리얼: ${serial.serial_number}, 사유: ${reasonByLang('ko')}`,
+            en: `Pre-expiry D-${daysBefore} auto-cancel FAILED — serial: ${serial.serial_number}, reason: ${reasonByLang('en')}`,
+            ja: `失効D-${daysBefore}日自動キャンセル失敗 — シリアル: ${serial.serial_number}, 理由: ${reasonByLang('ja')}`,
           }),
         });
         try {

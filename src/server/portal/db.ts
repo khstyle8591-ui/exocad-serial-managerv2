@@ -1,5 +1,6 @@
 import { getDb } from '../../main/database';
 import { getNowTimestampString } from '../../main/utils/date-utils';
+import { emitPortalRequestChanged } from './request-events';
 import type { AppSettings, CustomerPortalInfo } from '../../shared/types';
 
 export interface PortalAccount {
@@ -213,6 +214,7 @@ export function createPortalRequest(params: {
       params.note ?? '',
       getNowTimestampString(),
     );
+  emitPortalRequestChanged();
   return result.lastInsertRowid as number;
 }
 
@@ -222,6 +224,7 @@ export function updatePortalRequestStatus(id: number, status: PortalRequestStatu
       'UPDATE portal_requests SET status = ?, processed_at = ? WHERE id = ?',
     )
     .run(status, getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 시스템/고객 신청에서 발생한 Playwright 실패 — 포털에 "처리 실패"로 노출됨(고객이 시리얼 확인 후 재신청 유도).
@@ -231,6 +234,7 @@ export function markPortalRequestPlaywrightFailed(id: number): void {
       "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = ? WHERE id = ?",
     )
     .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 매니저가 승인한 후 Playwright 실행이 실패한 경우 — 매니저는 이미 신청을 검토/승인했으므로
@@ -242,6 +246,7 @@ export function markPortalRequestPlaywrightFailedByManager(id: number): void {
       "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = ? WHERE id = ?",
     )
     .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 매니저가 고객의 취소 요청(cancel_requested)을 거절한 경우 — 원래 신청은 그대로 승인된 것으로
@@ -253,6 +258,7 @@ export function markPortalRequestCancelRejected(id: number): void {
       "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = ? WHERE id = ?",
     )
     .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 갱신중단 플래그가 이미 선점된 상태에서 들어온 중복 신청 — 매니저 대기열에 노출되지 않도록
@@ -263,6 +269,7 @@ export function markPortalRequestDuplicate(id: number): void {
       "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = ? WHERE id = ?",
     )
     .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
