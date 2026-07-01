@@ -924,15 +924,29 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
 
       const serial = (row.serial || '').trim();
 
-      // GROUP C: Renewal — renewal_conflict 룰 체크 (취소됨 또는 중단 요청 활성 시리얼)
+      // GROUP C: Renewal — stop_cleared / renewal_conflict 룰 체크
       if (group === 'renewal') {
         if (!serial) continue;
         let renewalReviewFlag = '';
         try {
           const existingSerial = serialService.getBySerialNumber(serial);
           if (existingSerial) {
-            if (existingSerial.status === 'cancelled' || existingSerial.renewal_stop_requested) {
+            if (existingSerial.status === 'cancelled') {
               renewalReviewFlag = 'renewal_conflict';
+            } else if (existingSerial.renewal_stop_requested) {
+              serialService.update(existingSerial.id, { renewal_stop_requested: false });
+              logActivity({
+                serial_id: existingSerial.id,
+                action: 'stop_cleared',
+                actor: 'polling',
+                details: pickLang({
+                  ko: `폴링 갱신 감지로 중단 요청 자동 해제: ${code}`,
+                  en: `Stop request auto-cleared by renewal poll: ${code}`,
+                  ja: `更新ポーリング検知により中断要求を自動解除: ${code}`,
+                }),
+                severity: 'warn',
+              });
+              renewalReviewFlag = 'stop_cleared';
             }
           }
         } catch (ruleErr: unknown) {
