@@ -10,6 +10,7 @@ import { getTodayDateString } from '../utils/date-utils';
 import { getSettings } from '../settings';
 import { getDb } from '../database';
 import type { CancelResult, SerialWithCustomer } from '../../shared/types';
+import { SERVER_ERRORS } from '../../shared/server-errors';
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -340,7 +341,7 @@ export async function sendManualRenewalPo(
   previousExpiryDate: string | null,
 ): Promise<{ success: boolean; message: string }> {
   const serial = serialService.getById(serialId);
-  if (!serial) return { success: false, message: '시리얼을 찾을 수 없습니다.' };
+  if (!serial) return { success: false, message: SERVER_ERRORS.SERIAL_NOT_FOUND };
 
   const notice = await notificationService.sendAutoRenewalOrderNotice({
     serial,

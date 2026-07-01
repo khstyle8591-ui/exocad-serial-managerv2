@@ -8,6 +8,7 @@ import {
   searchCustomers,
   listCustomerSerialSummaries,
   findMergeCandidates,
+  listCreditLogs,
 } from '../../main/services/customer.service';
 import { listCustomerPortalInfo } from '../portal/db';
 import {
@@ -81,6 +82,13 @@ router.post('/merge-candidates', (req: Request, res: Response) => {
   } catch (err) {
     res.status(400).json({ error: errorMessage(err) });
   }
+});
+
+router.get('/:id/credits', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid id' });
+  const page = Math.max(1, Number(req.query.page) || 1);
+  res.json(listCreditLogs(id, page));
 });
 
 export default router;

@@ -122,6 +122,7 @@ export const api = {
     deleteCustomer: (id: number) => del(`/customers/${id}`),
     searchCustomers: (q: string) => get(`/customers/search?q=${encodeURIComponent(q)}`),
     getCustomerMergeCandidates: (q: unknown) => post('/customers/merge-candidates', q),
+    getCustomerCreditLogs: (id: number, page = 1) => get(`/customers/${id}/credits?page=${page}`),
 
     // ── Orders ────────────────────────────────────────────────────────────────
     getOrders: () => get('/orders'),

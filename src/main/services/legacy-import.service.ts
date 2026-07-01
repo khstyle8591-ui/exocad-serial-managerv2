@@ -13,6 +13,7 @@ import { findMergeCandidates, createCustomer, getCustomerById } from './customer
 import { logActivity, pickLang } from './activity-log.service';
 import { getNowTimestampString } from '../utils/date-utils';
 import type { AddOn, MergeCandidate, LegacyImportInput, LegacyImportResult, Serial } from '../../shared/types';
+import { SERVER_ERRORS, serverError } from '../../shared/server-errors';
 
 // ── 타입 ──────────────────────────────────────────────────────────────────────
 
@@ -213,7 +214,7 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
       .get(input.legacy_id) as LegacySerialRow | undefined;
 
     if (!legacyRow) {
-      return { success: false, error: `레거시 행 id=${input.legacy_id} 를 찾을 수 없습니다.` };
+      return { success: false, error: serverError('LEGACY_ROW_NOT_FOUND', input.legacy_id) };
     }
 
     // 2. Resolve customer_id
@@ -221,7 +222,7 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
     if (input.target_customer.kind === 'existing') {
       const existing = getCustomerById(input.target_customer.customer_id);
       if (!existing) {
-        return { success: false, error: `고객 id=${input.target_customer.customer_id} 를 찾을 수 없습니다.` };
+        return { success: false, error: serverError('LEGACY_CUSTOMER_NOT_FOUND', input.target_customer.customer_id) };
       }
       customerId = existing.id;
     } else {
@@ -291,7 +292,7 @@ export function importSerial(input: LegacyImportInput): LegacyImportResult {
     const msg = getErrorMessage(err);
     // serial_number UNIQUE constraint
     if (msg.includes('UNIQUE constraint')) {
-      return { success: false, error: '이미 동일한 시리얼 번호가 존재합니다.' };
+      return { success: false, error: SERVER_ERRORS.SERIAL_ALREADY_EXISTS };
     }
     return { success: false, error: msg };
   }

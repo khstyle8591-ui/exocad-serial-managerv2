@@ -1,6 +1,7 @@
 import { getDb } from '../database';
 import { getNowTimestampString } from '../utils/date-utils';
-import type { Customer, CustomerInput, CustomerSerialSummary, MergeCandidate } from '../../shared/types';
+import type { Customer, CustomerCreditLog, CustomerInput, CustomerSerialSummary, MergeCandidate } from '../../shared/types';
+import { serverError } from '../../shared/server-errors';
 
 function normalizeCustomerText(value: unknown): string {
   return String(value ?? '')
@@ -124,7 +125,7 @@ export function deleteCustomer(id: number): { success: boolean; error?: string }
     .prepare('SELECT COUNT(*) as cnt FROM serials WHERE customer_id = ?')
     .get(id) as { cnt: number };
   if (inUse.cnt > 0) {
-    return { success: false, error: `이 고객에 연결된 시리얼 ${inUse.cnt}건이 있어 삭제할 수 없습니다.` };
+    return { success: false, error: serverError('CUSTOMER_HAS_SERIALS', inUse.cnt) };
   }
   const result = db.prepare('DELETE FROM customers WHERE id = ?').run(id);
   return { success: result.changes > 0 };
@@ -280,6 +281,22 @@ export function findOrCreateCustomer(input: CustomerInput): Customer {
 
   // 신규 생성
   return createCustomer(clean);
+}
+
+export function listCreditLogs(customerId: number, page = 1, pageSize = 20): {
+  items: CustomerCreditLog[];
+  total: number;
+  totalPages: number;
+} {
+  const db = getDb();
+  const { cnt } = db.prepare(
+    'SELECT COUNT(*) as cnt FROM customer_credit_logs WHERE customer_id = ?'
+  ).get(customerId) as { cnt: number };
+  const offset = (page - 1) * pageSize;
+  const items = db.prepare(
+    'SELECT * FROM customer_credit_logs WHERE customer_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  ).all(customerId, pageSize, offset) as CustomerCreditLog[];
+  return { items, total: cnt, totalPages: Math.max(1, Math.ceil(cnt / pageSize)) };
 }
 
 // ── Singleton export for use in serial.service ────────────────────────────────

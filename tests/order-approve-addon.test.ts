@@ -71,13 +71,14 @@ describeSqlite('approvePendingOrder addon handling', () => {
     });
   });
 
-  it('reclassifies an already pending moved add-on code as a main product during approval', async () => {
+  it('registers a built-in main product code as a main product during approval', async () => {
+    // 006-001010은 built-in 단일 소스에서 main으로 분류됨(과거 강제 재분류 훅 제거).
     const result = getDb().prepare(`
       INSERT INTO pending_orders
         (source_id, serial_number, customer_name, main_product, version, product_code, order_type, raw_data, status)
       VALUES
-        ('poll-main-reclassified', 'MOVED-MAIN-SERIAL', 'Moved Customer', '', 'EXOCAD Main Product', '006-001010',
-         'addon', '{"_poll_group":"addon","品名":"EXOCAD Main Product"}', 'pending')
+        ('poll-main-builtin', 'MOVED-MAIN-SERIAL', 'Moved Customer', '', 'EXOCAD Main Product', '006-001010',
+         'new', '{"_poll_group":"main","品名":"EXOCAD Main Product"}', 'pending')
     `).run();
 
     const approval = await approvePendingOrder(result.lastInsertRowid as number, {

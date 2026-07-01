@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 13;
 
 type Migration = {
   version: number;
@@ -494,6 +494,38 @@ function migratePortalRequestsCancelRequested(): void {
   logger.info('[DB] Migration complete: portal_requests.status now includes cancel_requested');
 }
 
+function addPendingOrdersReviewFlag(): void {
+  const columns = db.prepare('PRAGMA table_info(pending_orders)').all() as { name: string }[];
+  if (columns.some(c => c.name === 'review_flag')) return;
+  db.exec(`ALTER TABLE pending_orders ADD COLUMN review_flag TEXT NOT NULL DEFAULT ''`);
+  logger.info('[DB] Migration complete: pending_orders.review_flag added');
+}
+
+function addCustomersAiCredits(): void {
+  const columns = db.prepare('PRAGMA table_info(customers)').all() as { name: string }[];
+  if (columns.some(c => c.name === 'ai_credits')) return;
+  db.exec(`ALTER TABLE customers ADD COLUMN ai_credits INTEGER NOT NULL DEFAULT 0`);
+  logger.info('[DB] Migration complete: customers.ai_credits added');
+}
+
+function createCustomerCreditLogsTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customer_credit_logs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id   INTEGER NOT NULL,
+      credits       INTEGER NOT NULL DEFAULT 0,
+      purchase_date TEXT NOT NULL DEFAULT '',
+      source        TEXT NOT NULL DEFAULT '',
+      pending_id    INTEGER,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (pending_id)  REFERENCES pending_orders(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_credit_logs_customer
+      ON customer_credit_logs(customer_id, created_at DESC);
+  `);
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -544,6 +576,21 @@ const migrations: Migration[] = [
     version: 10,
     name: 'portal_requests cancel_requested status',
     run: migratePortalRequestsCancelRequested,
+  },
+  {
+    version: 11,
+    name: 'pending_orders review_flag column',
+    run: addPendingOrdersReviewFlag,
+  },
+  {
+    version: 12,
+    name: 'customers ai_credits column',
+    run: addCustomersAiCredits,
+  },
+  {
+    version: 13,
+    name: 'customer_credit_logs table',
+    run: createCustomerCreditLogsTable,
   },
 ];
 
@@ -624,6 +671,7 @@ function createTables(): void {
       dealer        TEXT NOT NULL DEFAULT '',
       sales_manager TEXT NOT NULL DEFAULT '',
       notes         TEXT NOT NULL DEFAULT '',
+      ai_credits    INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -767,6 +815,7 @@ function createTables(): void {
       status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK(status IN ('pending','approved','rejected')),
       flag_duplicate   INTEGER NOT NULL DEFAULT 0,
+      review_flag      TEXT NOT NULL DEFAULT '',
       notes            TEXT NOT NULL DEFAULT '',
       created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -825,6 +874,23 @@ function createTables(): void {
       ON auto_renewal_order_notice_logs(serial_id, sent_at DESC);
     CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_status
       ON auto_renewal_order_notice_logs(status);
+
+    -- =========================================================
+    -- customer_credit_logs  (AI credits purchase history)
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS customer_credit_logs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id   INTEGER NOT NULL,
+      credits       INTEGER NOT NULL DEFAULT 0,
+      purchase_date TEXT NOT NULL DEFAULT '',
+      source        TEXT NOT NULL DEFAULT '',
+      pending_id    INTEGER,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (pending_id)  REFERENCES pending_orders(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_credit_logs_customer
+      ON customer_credit_logs(customer_id, created_at DESC);
 
     -- =========================================================
     -- settings  (UNCHANGED)

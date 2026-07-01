@@ -12,8 +12,19 @@ export interface Customer {
   dealer: string;
   sales_manager: string;
   notes: string;
+  ai_credits: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CustomerCreditLog {
+  id: number;
+  customer_id: number;
+  credits: number;
+  purchase_date: string;
+  source: string;
+  pending_id: number | null;
+  created_at: string;
 }
 
 export interface CustomerInput {
@@ -195,6 +206,7 @@ export interface PendingOrder {
   raw_data: string;
   status: 'pending' | 'approved' | 'rejected';
   flag_duplicate: number;
+  review_flag: string;
   notes: string;
   product_code: string;
   created_at: string;
@@ -203,6 +215,7 @@ export interface PendingOrder {
   existing_status?: string;
   existing_expiry?: string;
   existing_customer_name?: string;
+  customer_name_mismatch?: boolean;
   serial_status?: Serial['status'];
 }
 
@@ -211,6 +224,7 @@ export interface GroupedOrder {
   main: PendingOrder | null;
   modules: PendingOrder[];
   flagged_duplicate: boolean;
+  review_flag: string;
   created_at: string;
 }
 
@@ -357,7 +371,15 @@ export interface ExcelSerialRow {
 
 // ── Product Code Groups ───────────────────────────────────────────────────────
 
-export type ProductCodeGroup = 'renewal' | 'addon' | 'main' | 'memo' | 'version_update' | 'ignore';
+export type ProductCodeGroup =
+  | 'main'           // 신규 필수 메인 프로덕트. serial이 DB에 있으면 중복(노랑)
+  | 'addon'          // 메인에 종속되는 모듈. 연결 메인 없으면 orphan(노랑)
+  | 'renewal'        // 메인 갱신 시 발급. 자동갱신 처리 / stop-flag 충돌 시 대응
+  | 'renewal_addon'  // 갱신과 함께 발급되는 모듈. 단독이면 노랑
+  | 'memo'           // 메모만 추가
+  | 'upgrade'        // 스페셜1 — Basic→Ultimate 승급(메인 교체+갱신 수동)
+  | 'credits'        // 스페셜2 — AI credits, customer DB에 기록
+  | 'ignore';        // 완전 무시(수집 안 함)
 
 export interface ProductCodeRule {
   code: string;

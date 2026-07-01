@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useLang } from '../App';
 import { t } from '../i18n';
-import type { Customer, CustomerInput, CustomerPortalInfo, CustomerSerialSummary, SerialWithCustomer } from '../../shared/types';
+import type { Customer, CustomerCreditLog, CustomerInput, CustomerPortalInfo, CustomerSerialSummary, SerialWithCustomer } from '../../shared/types';
 import { api } from '../client';
+import { translateServerError } from '../utils/serverError';
 
 const EMPTY_CUSTOMER: CustomerInput = {
   name: '',
@@ -29,6 +30,10 @@ export default function Customers() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [serialPopupCustomer, setSerialPopupCustomer] = useState<Customer | null>(null);
   const [serialPopupList, setSerialPopupList] = useState<SerialWithCustomer[]>([]);
+  const [creditLogs, setCreditLogs] = useState<CustomerCreditLog[]>([]);
+  const [creditTotal, setCreditTotal] = useState(0);
+  const [creditTotalPages, setCreditTotalPages] = useState(1);
+  const [creditPage, setCreditPage] = useState(1);
   const [form, setForm] = useState<CustomerInput>(EMPTY_CUSTOMER);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -96,13 +101,32 @@ export default function Customers() {
 
   const openSerialPopup = async (customer: Customer) => {
     setSerialPopupCustomer(customer);
-    const res = await api.listSerials({ customer_id: customer.id, limit: 10000 }) as { items: SerialWithCustomer[] };
-    setSerialPopupList(res.items);
+    setCreditPage(1);
+    const [serialRes, creditRes] = await Promise.all([
+      api.listSerials({ customer_id: customer.id, limit: 10000 }) as Promise<{ items: SerialWithCustomer[] }>,
+      api.getCustomerCreditLogs(customer.id, 1) as Promise<{ items: CustomerCreditLog[]; total: number; totalPages: number }>,
+    ]);
+    setSerialPopupList(serialRes.items);
+    setCreditLogs(creditRes.items);
+    setCreditTotal(creditRes.total);
+    setCreditTotalPages(creditRes.totalPages);
+  };
+
+  const loadCreditPage = async (customer: Customer, page: number) => {
+    setCreditPage(page);
+    const res = await api.getCustomerCreditLogs(customer.id, page) as { items: CustomerCreditLog[]; total: number; totalPages: number };
+    setCreditLogs(res.items);
+    setCreditTotal(res.total);
+    setCreditTotalPages(res.totalPages);
   };
 
   const closeSerialPopup = () => {
     setSerialPopupCustomer(null);
     setSerialPopupList([]);
+    setCreditLogs([]);
+    setCreditTotal(0);
+    setCreditTotalPages(1);
+    setCreditPage(1);
   };
 
   const closeForm = () => {
@@ -165,7 +189,7 @@ export default function Customers() {
       if (!result.success) throw new Error(result.error ?? t(lang, 'delete_failed'));
       setCustomers(prev => prev.filter(c => c.id !== customer.id));
     } catch (err: any) {
-      setError(err?.message ?? t(lang, 'delete_failed'));
+      setError(translateServerError(err?.message, lang) || t(lang, 'delete_failed'));
     }
   };
 
@@ -411,51 +435,97 @@ export default function Customers() {
         <div style={overlay}>
           <div style={{
             ...modal,
-            maxWidth: 660,
-            width: '90vw',
-            maxHeight: '80vh',
+            maxWidth: 980,
+            width: '94vw',
+            maxHeight: '82vh',
             display: 'flex',
             flexDirection: 'column',
             padding: 0,
           }}>
-            {/* 헤더 — 고정 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px 14px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+            {/* 헤더 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 22px 12px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
               <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
                 {serialPopupCustomer.name} — {t(lang, 'customer_serials_title')}
               </h2>
               <button onClick={closeSerialPopup} style={closeBtn}>✕</button>
             </div>
 
-            {/* 본문 — 스크롤 */}
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {serialPopupList.length === 0 ? (
-                <p style={{ color: 'var(--text3)', fontSize: 13, padding: '16px 22px' }}>{t(lang, 'customer_no_serials')}</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--bg3)', textAlign: 'left', position: 'sticky', top: 0 }}>
-                      <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'label_serial_number')}</th>
-                      <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'label_main_product')}</th>
-                      <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'col_status')}</th>
-                      <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'col_expiry_date')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {serialPopupList.map(s => (
-                      <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
-                        <td style={{ padding: '8px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{s.serial_number}</td>
-                        <td style={{ padding: '8px 12px' }}>{s.main_product || '—'}</td>
-                        <td style={{ padding: '8px 12px' }}>{s.status}</td>
-                        <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text2)' }}>{s.expiry_date?.slice(0, 10) ?? '—'}</td>
+            {/* 본문 — 2열 */}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+              {/* 왼쪽: 시리얼 목록 */}
+              <div style={{ flex: '1 1 55%', overflowY: 'auto', borderRight: '1px solid var(--border)' }}>
+                {serialPopupList.length === 0 ? (
+                  <p style={{ color: 'var(--text3)', fontSize: 13, padding: '16px 22px' }}>{t(lang, 'customer_no_serials')}</p>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg3)', textAlign: 'left', position: 'sticky', top: 0 }}>
+                        <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'label_serial_number')}</th>
+                        <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'label_main_product')}</th>
+                        <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'col_status')}</th>
+                        <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t(lang, 'col_expiry_date')}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody>
+                      {serialPopupList.map(s => (
+                        <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '8px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{s.serial_number}</td>
+                          <td style={{ padding: '8px 12px' }}>{s.main_product || '—'}</td>
+                          <td style={{ padding: '8px 12px' }}>{s.status}</td>
+                          <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text2)' }}>{s.expiry_date?.slice(0, 10) ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* 오른쪽: AI 크레딧 히스토리 */}
+              <div style={{ flex: '1 1 45%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <div style={{ padding: '10px 16px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{t(lang, 'credit_panel_title')}</span>
+                  <span style={{ fontSize: 11, background: 'rgba(61,216,200,0.12)', color: 'var(--accent)', borderRadius: 999, padding: '2px 8px', fontWeight: 700 }}>
+                    {t(lang, 'credit_total').replace('{n}', String(serialPopupCustomer.ai_credits ?? 0))}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+                    {creditTotal} {t(lang, 'credit_records')}
+                  </span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                  {creditLogs.length === 0 ? (
+                    <p style={{ color: 'var(--text3)', fontSize: 12, padding: '14px 16px' }}>{t(lang, 'credit_no_history')}</p>
+                  ) : (
+                    creditLogs.map(log => (
+                      <div key={log.id} style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                        <div>
+                          <div style={{ color: 'var(--text)', fontWeight: 600 }}>{log.purchase_date || log.created_at.slice(0, 10)}</div>
+                          <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 2 }}>{log.source || '—'}</div>
+                        </div>
+                        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>+{log.credits}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {creditTotalPages > 1 && (
+                  <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <button
+                      disabled={creditPage <= 1}
+                      onClick={() => loadCreditPage(serialPopupCustomer, creditPage - 1)}
+                      style={{ ...secondaryBtn, padding: '4px 10px', fontSize: 12, opacity: creditPage <= 1 ? 0.4 : 1 }}
+                    >‹</button>
+                    <span style={{ fontSize: 12, color: 'var(--text3)' }}>{creditPage} / {creditTotalPages}</span>
+                    <button
+                      disabled={creditPage >= creditTotalPages}
+                      onClick={() => loadCreditPage(serialPopupCustomer, creditPage + 1)}
+                      style={{ ...secondaryBtn, padding: '4px 10px', fontSize: 12, opacity: creditPage >= creditTotalPages ? 0.4 : 1 }}
+                    >›</button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* 푸터 — 고정 */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 22px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+            {/* 푸터 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 22px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
               <button onClick={closeSerialPopup} style={secondaryBtn}>{t(lang, 'close')}</button>
             </div>
           </div>

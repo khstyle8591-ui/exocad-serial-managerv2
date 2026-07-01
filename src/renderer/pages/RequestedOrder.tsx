@@ -3,6 +3,7 @@ import type { GroupedOrder, PendingOrder, MergeCandidate, Serial } from '../../s
 import { useLang } from '../App';
 import { t, type TranslationKey } from '../i18n';
 import { api } from '../client';
+import { translateServerError } from '../utils/serverError';
 
 type FilterType = 'all' | 'duplicate' | 'single' | 'grouped';
 type CustomerMode = 'auto' | 'existing' | 'new';
@@ -111,7 +112,7 @@ export default function RequestedOrder() {
     } catch (error: unknown) {
       setApproveErrorByKey(current => ({
         ...current,
-        [key]: getErrorMessage(error) || t(lang, 'requested_order_approve_error'),
+        [key]: translateServerError(getErrorMessage(error), lang) || t(lang, 'requested_order_approve_error'),
       }));
     } finally {
       setBusyKey(null);
@@ -211,8 +212,10 @@ export default function RequestedOrder() {
           const orders = [group.main, ...group.modules].filter(Boolean) as PendingOrder[];
           const addonOnly = orders.length > 0 && orders.every(order => order.order_type === 'addon');
           const approveError = approveErrorByKey[key];
+          const reviewFlag = group.review_flag;
+          const flagCardStyle = reviewFlagCardStyle(reviewFlag);
           return (
-            <section key={key} style={panelStyle}>
+            <section key={key} style={{ ...panelStyle, ...flagCardStyle }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -228,6 +231,7 @@ export default function RequestedOrder() {
                     {group.flagged_duplicate && (
                       <span style={badgeStyle('rgba(239,68,68,0.1)', '#fc8181')}>{t(lang, 'requested_order_duplicate_badge')}</span>
                     )}
+                    {reviewFlag && <ReviewFlagBadge flag={reviewFlag} lang={lang} />}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                     {t(lang, 'requested_order_collected_at')} {group.created_at?.slice(0, 16)}
@@ -265,21 +269,16 @@ export default function RequestedOrder() {
                 <div style={blockStyle}>
                   <div style={blockTitleStyle}>{t(lang, 'requested_order_main')}</div>
                   <OrderSummary order={main} lang={lang} />
-                  <div style={{ marginTop: 10, padding: 12, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>{t(lang, 'requested_order_customer_mode')}</div>
-                      <button onClick={() => loadCandidates(group)} style={ghostButtonStyle}>
-                        {t(lang, 'requested_order_find_candidates')}
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700 }}>{t(lang, 'requested_order_customer_mode')}:</span>
                       {([
                         ['auto', t(lang, 'requested_order_customer_auto')],
                         ['existing', t(lang, 'requested_order_customer_existing')],
                         ['new', t(lang, 'requested_order_customer_new')],
                       ] as [CustomerMode, string][]).map(([mode, label]) => (
                         <button key={mode} onClick={() => setCustomerModeByKey(c => ({ ...c, [key]: mode }))} style={{
-                          ...chipStyle,
+                          ...chipStyle, padding: '3px 9px', fontSize: 11,
                           background: customerMode === mode ? 'var(--text)' : 'var(--bg3)',
                           color: customerMode === mode ? 'var(--bg)' : 'var(--text)',
                           borderColor: customerMode === mode ? 'var(--text)' : 'var(--border)',
@@ -287,7 +286,24 @@ export default function RequestedOrder() {
                           {label}
                         </button>
                       ))}
+                      <button onClick={() => loadCandidates(group)} style={{ ...ghostButtonStyle, fontSize: 11, padding: '3px 8px' }}>
+                        {t(lang, 'requested_order_find_candidates')}
+                      </button>
                     </div>
+                    {main.existing_customer_name && (
+                      main.customer_name_mismatch ? (
+                        <div style={{ fontSize: 12, color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 6, padding: '5px 10px', display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700 }}>{t(lang, 'customer_name_mismatch_label')}:</span>
+                          <span style={{ textDecoration: 'line-through', color: 'var(--text3)', fontSize: 11 }}>{main.customer_name}</span>
+                          <span style={{ color: 'var(--text3)', fontSize: 11 }}>→</span>
+                          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{main.existing_customer_name}</span>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          ✓ {t(lang, 'customer_name_match')}
+                        </div>
+                      )
+                    )}
                     {customerMode === 'existing' && (
                       candidates.length > 0 ? (
                         <select
@@ -382,6 +398,32 @@ function SummaryField({ label, value, highlight = false }: { label: string; valu
 
 function badgeStyle(background: string, color: string): React.CSSProperties {
   return { background, color, borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 700 };
+}
+
+type ReviewFlagKey = 'review_flag_duplicate' | 'review_flag_orphan_module' | 'review_flag_stop_cleared' |
+  'review_flag_renewal_conflict' | 'review_flag_upgrade' | 'review_flag_credits';
+
+const REVIEW_FLAG_META: Record<string, { color: string; bg: string; labelKey: ReviewFlagKey }> = {
+  duplicate:        { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  labelKey: 'review_flag_duplicate' },
+  orphan_module:    { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  labelKey: 'review_flag_orphan_module' },
+  stop_cleared:     { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  labelKey: 'review_flag_stop_cleared' },
+  renewal_conflict: { color: '#fc8181', bg: 'rgba(239,68,68,0.14)',   labelKey: 'review_flag_renewal_conflict' },
+  upgrade:          { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  labelKey: 'review_flag_upgrade' },
+  credits:          { color: 'var(--accent)', bg: 'rgba(61,216,200,0.12)', labelKey: 'review_flag_credits' },
+};
+
+function ReviewFlagBadge({ flag, lang }: { flag: string; lang: Parameters<typeof t>[0] }) {
+  const meta = REVIEW_FLAG_META[flag];
+  if (!meta) return null;
+  return <span style={badgeStyle(meta.bg, meta.color)}>{t(lang, meta.labelKey)}</span>;
+}
+
+function reviewFlagCardStyle(flag: string): React.CSSProperties {
+  if (flag === 'renewal_conflict') return { borderColor: 'rgba(239,68,68,0.5)', boxShadow: '0 0 0 2px rgba(239,68,68,0.08)' };
+  if (['duplicate', 'orphan_module', 'stop_cleared', 'upgrade'].includes(flag))
+    return { borderColor: 'rgba(251,191,36,0.5)', boxShadow: '0 0 0 2px rgba(251,191,36,0.06)' };
+  if (flag === 'credits') return { borderColor: 'rgba(61,216,200,0.4)' };
+  return {};
 }
 
 function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {

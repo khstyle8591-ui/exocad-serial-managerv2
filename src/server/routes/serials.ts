@@ -12,6 +12,7 @@ import {
     parseSerialListQuery,
     parseSerialUpdateInput,
 } from '../../shared/serial-contract';
+import { SERVER_ERRORS } from '../../shared/server-errors';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -107,7 +108,7 @@ router.post('/', (req: Request, res: Response) => {
 router.post('/bulk-import', upload.single('file'), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ error: '파일이 없습니다' });
+            return res.status(400).json({ error: SERVER_ERRORS.IMPORT_NO_FILE });
         }
 
         const { serials, errors: parseErrors } = await excelService.parseExcelBuffer(req.file.buffer);
@@ -115,7 +116,7 @@ router.post('/bulk-import', upload.single('file'), async (req: Request, res: Res
         if (serials.length === 0) {
             return res.json({
                 imported: 0,
-                errors: parseErrors.length > 0 ? parseErrors : ['유효한 데이터가 없습니다. 엑셀 행 구성을 확인해주세요.']
+                errors: parseErrors.length > 0 ? parseErrors : [SERVER_ERRORS.IMPORT_NO_DATA]
             });
         }
 

@@ -9,7 +9,9 @@ import type { PendingOrder, PollSource, Serial, SerialInput, SerialWithCustomer,
 import { customerService } from './customer.service';
 import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
 import { waitForSettledPage } from './playwright-waits';
-import { pickLang } from './activity-log.service';
+import { pickLang, logActivity } from './activity-log.service';
+import { BUILT_IN_CODES } from '../../shared/constants';
+import { SERVER_ERRORS, serverError } from '../../shared/server-errors';
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -63,43 +65,11 @@ let pollStartedAtMs = 0;
 const MAX_POLL_DURATION_MS = 15 * 60 * 1000; // 15분
 
 // ────────────────────────────────────────────────────────────
-// Product Code 그룹 상수
+// Product Code 그룹 분류
+// 내장 코드표(BUILT_IN_CODES)는 src/shared/constants.ts의 단일 소스를 사용.
 // ────────────────────────────────────────────────────────────
-const BUILT_IN_CODES: Record<ProductCodeGroup, string[]> = {
-  renewal: [
-    '006-001017', '006-001035',
-    '006-005200', '006-005201', '006-005212', '006-005213', '006-005214', '006-005215',
-  ],
-  addon: [
-    '006-001002', '006-001003', '006-001004', '006-001005', '006-001006', '006-001007',
-    '006-001008', '006-001009', '006-001011', '006-001012', '006-001013',
-    '006-001014', '006-001015', '006-001016', '006-001037', '006-001039',
-    '006-005100', '006-005101', '006-005102', '006-005103', '006-005104', '006-005105',
-    '006-005106', '006-005107', '006-005108', '006-005109', '006-005110',
-  ],
-  main: [
-    '006-001001', '006-001010', '006-001020', '006-001032', '006-001034',
-    '006-005080',
-    '006-005082', '006-005083', '006-005098', '006-005099',
-    '006-006100',
-  ],
-  memo: [
-    '006-001031', '006-001033', '006-001036', '006-001040', '006-001041',
-    '006-005081', '006-006104',
-  ],
-  version_update: [],
-  ignore: [
-    '006-001018', '006-001019', '006-001021', '006-001022', '006-001023', '006-001024',
-    '006-001025', '006-001026', '006-001027', '006-001028', '006-001029', '006-001030',
-    '006-001038',
-    '006-005198', '006-005199', '006-005202', '006-005203', '006-005204', '006-005205',
-    '006-005206', '006-005207', '006-005208', '006-005209', '006-005210', '006-005211',
-  ],
-};
 
-const RECLASSIFIED_MAIN_CODES = new Set(['006-001010', '006-001032', '006-006100', '006-005080']);
-
-// resolveGroup: 코드 → 그룹 결정 (내장 횤옜 커스텀 순서)
+// resolveGroup: 코드 → 그룹 결정 (커스텀 → 내장 순서)
 export function resolveGroup(code: string, customRules: ProductCodeRule[]): ProductCodeGroup | null {
   const c = code.trim();
   if (!c) return null;
@@ -157,9 +127,30 @@ export function getAllOrders(): PendingOrder[] {
 }
 
 export function listGroupedOrders(): GroupedOrder[] {
-  const orders = getPendingOrders();
-  const grouped = new Map<string, PendingOrder[]>();
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT
+      po.*,
+      s.status      AS existing_status,
+      s.expiry_date AS existing_expiry,
+      c.name        AS existing_customer_name
+    FROM pending_orders po
+    LEFT JOIN serials s   ON s.serial_number = po.serial_number AND po.serial_number != ''
+    LEFT JOIN customers c ON c.id = s.customer_id
+    WHERE po.status = 'pending'
+    ORDER BY po.created_at DESC
+  `).all() as PendingOrder[];
 
+  const orders: PendingOrder[] = rows.map(o => ({
+    ...o,
+    customer_name_mismatch: !!(
+      o.existing_customer_name &&
+      o.customer_name &&
+      o.existing_customer_name.trim() !== o.customer_name.trim()
+    ),
+  }));
+
+  const grouped = new Map<string, PendingOrder[]>();
   for (const order of orders) {
     const key = order.trade_number?.trim() || `single:${order.id}`;
     const bucket = grouped.get(key) ?? [];
@@ -170,13 +161,14 @@ export function listGroupedOrders(): GroupedOrder[] {
   return Array.from(grouped.entries())
     .map(([tradeNumber, bucket]) => {
       const ordersInGroup = bucket.sort((a, b) => a.id - b.id);
-      const main = ordersInGroup.find(order => order.order_type === 'new' || order.order_type === 'renewal') ?? ordersInGroup[0] ?? null;
-      const modules = ordersInGroup.filter(order => order !== main);
+      const main = ordersInGroup.find(o => o.order_type === 'new' || o.order_type === 'renewal') ?? ordersInGroup[0] ?? null;
+      const modules = ordersInGroup.filter(o => o !== main);
       return {
         trade_number: tradeNumber.startsWith('single:') ? '' : tradeNumber,
         main,
         modules,
-        flagged_duplicate: ordersInGroup.some(order => !!order.flag_duplicate),
+        flagged_duplicate: ordersInGroup.some(o => !!o.flag_duplicate),
+        review_flag: main?.review_flag || modules.find(m => m.review_flag)?.review_flag || '',
         created_at: ordersInGroup[0]?.created_at || '',
       };
     })
@@ -214,7 +206,7 @@ export async function approvePendingOrder(
 ): Promise<{ success: boolean; error?: string; customer_id?: number; was_renewed?: boolean }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
-  if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
+  if (!order) return { success: false, error: SERVER_ERRORS.ORDER_NOT_FOUND };
 
   try {
     return db.transaction(() => {
@@ -262,8 +254,9 @@ export async function approvePendingOrder(
       return { success: true, customer_id: selectedCustomerId };
     }
 
-    if (pollGroup === 'version_update') {
-      const memoText = getOrderProductMemo(order, today) || `[${today}] ${order.product_code || 'version update'}`;
+    if (pollGroup === 'renewal_addon') {
+      // 갱신 모듈은 자동갱신이 처리하므로 승인 시 메모만 남긴다(정교한 규칙은 규칙 엔진 단계에서).
+      const memoText = getOrderProductMemo(order, today) || `[${today}] ${order.product_code || 'renewal add-on'}`;
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (!existing) {
         serialService.create({
@@ -286,6 +279,38 @@ export async function approvePendingOrder(
       }
       db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
       return { success: true, customer_id: selectedCustomerId };
+    }
+
+    if (pollGroup === 'upgrade') {
+      // Basic→Ultimate 승급은 Exocad 사이트에서 수동 처리 — 승인 시 메모만 남김
+      const memoText = getOrderProductMemo(order, today) || `[${today}] ${order.product_code || 'upgrade'}`;
+      const existing = serialService.getBySerialNumber(order.serial_number);
+      if (existing) {
+        const newNotes = existing.notes ? `${existing.notes}\n${memoText}` : memoText;
+        serialService.update(existing.id, { notes: newNotes });
+      }
+      db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
+      return { success: true, customer_id: selectedCustomerId };
+    }
+
+    if (pollGroup === 'credits') {
+      // AI Credits: customer_credit_logs에 기록 + customers.ai_credits 누적
+      const existing = serialService.getBySerialNumber(order.serial_number);
+      const customerId = selectedCustomerId ?? existing?.customer_id;
+      if (customerId) {
+        db.prepare(`
+          INSERT INTO customer_credit_logs (customer_id, credits, purchase_date, source, pending_id)
+          VALUES (?, 1, ?, ?, ?)
+        `).run(customerId, order.purchase_date || today, order.product_code || 'credits', id);
+        db.prepare(`UPDATE customers SET ai_credits = ai_credits + 1 WHERE id = ?`).run(customerId);
+      }
+      const memoText = `[${today}] AI Credits: ${order.product_code || ''}`;
+      if (existing) {
+        const newNotes = existing.notes ? `${existing.notes}\n${memoText}` : memoText;
+        serialService.update(existing.id, { notes: newNotes });
+      }
+      db.prepare("UPDATE pending_orders SET status = 'approved' WHERE id = ?").run(id);
+      return { success: true, customer_id: customerId ?? selectedCustomerId };
     }
 
     if (order.order_type === 'new' || pollGroup === 'main') {
@@ -335,7 +360,7 @@ export async function approvePendingOrder(
       }
     } else if (order.order_type === 'renewal') {
       const serial = serialService.getBySerialNumber(order.serial_number);
-      if (!serial) return { success: false, error: `시리얼 ${order.serial_number}을 찾을 수 없습니다.` };
+      if (!serial) return { success: false, error: serverError('SERIAL_NOT_FOUND', order.serial_number) };
       const pollExpiry = normalizeDate(order.expiry_date);
       if (pollGroup === 'renewal' && pollExpiry) {
         const newExpiry = new Date(pollExpiry);
@@ -354,7 +379,7 @@ export async function approvePendingOrder(
       // addon: serial DB에 add_ons 추가
       const serial = serialService.getBySerialNumber(order.serial_number);
       if (!serial) {
-        return { success: false, error: `Add-on 대상 시리얼 ${order.serial_number}을 찾을 수 없습니다.` };
+        return { success: false, error: serverError('ADDON_SERIAL_NOT_FOUND', order.serial_number) };
       }
       try {
         const rawObj = JSON.parse(order.raw_data || '{}');
@@ -378,12 +403,12 @@ export async function approvePendingOrder(
 export async function updateDataFromPendingOrder(id: number, form: Partial<PendingOrder>): Promise<{ success: boolean; data?: SerialWithCustomer; error?: string }> {
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
-  if (!order) return { success: false, error: '주문을 찾을 수 없습니다.' };
+  if (!order) return { success: false, error: SERVER_ERRORS.ORDER_NOT_FOUND };
 
   try {
     const targetSerialName = form.serial_number || order.serial_number;
     const existing = serialService.getBySerialNumber(targetSerialName);
-    if (!existing) return { success: false, error: `DB에 시리얼 ${targetSerialName}이 존재하지 않습니다.` };
+    if (!existing) return { success: false, error: serverError('SERIAL_NOT_IN_DB', targetSerialName) };
 
     const updates: Partial<SerialInput> = {};
     const copyIfPresent = <K extends keyof PendingOrder, T extends keyof SerialInput>(formKey: K, updateKey: T) => {
@@ -446,8 +471,10 @@ export function isAlreadyFetched(sourceId: string): boolean {
 }
 
 type PendingOrderInsert =
-  Omit<PendingOrder, 'id' | 'created_at' | 'trade_number' | 'dealer' | 'main_product' | 'modules'> &
-  { trade_number?: string; dealer?: string; main_product?: string; modules?: string };
+  Omit<PendingOrder, 'id' | 'created_at' | 'trade_number' | 'dealer' | 'main_product' | 'modules' |
+    'review_flag' | 'existing_status' | 'existing_expiry' | 'existing_customer_name' |
+    'customer_name_mismatch' | 'serial_status'> &
+  { trade_number?: string; dealer?: string; main_product?: string; modules?: string; review_flag?: string };
 
 export function insertPendingOrder(
   data: PendingOrderInsert,
@@ -458,14 +485,15 @@ export function insertPendingOrder(
       (source_id, source_url, trade_number, serial_number, customer_name, customer_email,
        customer_address, customer_phone, dealer, sales_manager, purchase_date,
        expiry_date, engine_build, version, main_product, modules, notes, order_type, raw_data, status,
-       product_code, flag_duplicate)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)
+       product_code, flag_duplicate, review_flag)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)
   `).run(
     data.source_id, data.source_url, data.trade_number ?? '', data.serial_number, data.customer_name,
     data.customer_email, data.customer_address, data.customer_phone,
     data.dealer ?? '', data.sales_manager, data.purchase_date, data.expiry_date,
     data.engine_build, data.version, data.main_product ?? '', data.modules ?? '[]',
     data.notes, data.order_type, data.raw_data, data.product_code ?? '', data.flag_duplicate ?? 0,
+    data.review_flag ?? '',
   );
   if (result.changes === 0) {
     logger.info(`[Polling] duplicate pending order ignored: source_id=${data.source_id} serial=${data.serial_number || '(empty)'}`);
@@ -485,7 +513,6 @@ function withPollingMetadata(rawData: string, metadata: Record<string, unknown>)
 }
 
 function getPendingOrderPollGroup(order: PendingOrder): ProductCodeGroup | null {
-  if (RECLASSIFIED_MAIN_CODES.has(order.product_code?.trim())) return 'main';
   try {
     const rawObj = JSON.parse(order.raw_data || '{}');
     if (typeof rawObj._poll_group === 'string') return rawObj._poll_group as ProductCodeGroup;
@@ -542,7 +569,7 @@ export function getPolledProductFields(
   if (group === 'main' || (group === null && orderType === 'new')) {
     return { main_product: productVal, version: '', notes: baseNotes };
   }
-  if (group === 'renewal' || group === 'memo' || group === 'version_update') {
+  if (group === 'renewal' || group === 'memo' || group === 'renewal_addon' || group === 'upgrade' || group === 'credits') {
     return {
       main_product: '',
       version: '',
@@ -897,28 +924,61 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
 
       const serial = (row.serial || '').trim();
 
-      // GROUP A: Renewal — 대기 주문으로 저장 후 사용자 승인 시 처리
+      // GROUP C: Renewal — stop_cleared / renewal_conflict 룰 체크
       if (group === 'renewal') {
         if (!serial) continue;
-        if (insertPendingFromPolledRow(source, row, group, code, 'renewal')) found++;
+        let renewalReviewFlag = '';
+        try {
+          const existingSerial = serialService.getBySerialNumber(serial);
+          if (existingSerial) {
+            if (existingSerial.status === 'cancelled') {
+              renewalReviewFlag = 'renewal_conflict';
+            } else if (existingSerial.renewal_stop_requested) {
+              serialService.update(existingSerial.id, { renewal_stop_requested: false });
+              logActivity({
+                serial_id: existingSerial.id,
+                action: 'stop_cleared',
+                actor: 'polling',
+                details: pickLang({
+                  ko: `폴링 갱신 감지로 중단 요청 자동 해제: ${code}`,
+                  en: `Stop request auto-cleared by renewal poll: ${code}`,
+                  ja: `更新ポーリング検知により中断要求を自動解除: ${code}`,
+                }),
+                severity: 'warn',
+              });
+              renewalReviewFlag = 'stop_cleared';
+            }
+          }
+        } catch (ruleErr: unknown) {
+          logger.warn(`[Polling] renewal rule check failed for serial=${serial}: ${getErrorMessage(ruleErr)}`);
+        }
+        if (insertPendingFromPolledRow(source, row, group, code, 'renewal', { review_flag: renewalReviewFlag })) found++;
         continue;
       }
 
-      // GROUP D: Memo — 대기 주문으로 저장 후 사용자 승인 시 처리
+      // GROUP E: Memo — 대기 주문으로 저장 후 사용자 승인 시 처리
       if (group === 'memo') {
         if (!serial) continue;
         if (insertPendingFromPolledRow(source, row, group, code, 'new')) found++;
         continue;
       }
 
-      // GROUP E: Version Update — 대기 주문으로 저장 후 사용자 승인 시 처리
-      if (group === 'version_update') {
+      // GROUP D: Renewal Add-On — serial 미존재 시 orphan_module 플래그
+      if (group === 'renewal_addon') {
         if (!serial) continue;
-        if (insertPendingFromPolledRow(source, row, group, code, 'new')) found++;
+        const existingSerial = serialService.getBySerialNumber(serial);
+        const review_flag = existingSerial ? '' : 'orphan_module';
+        if (insertPendingFromPolledRow(source, row, group, code, 'new', { review_flag })) found++;
         continue;
       }
 
-      // GROUP B + C (main / addon): serial로 그룹키록
+      // 스페셜1(upgrade) / 스페셜2(credits) — review_flag 설정
+      if (group === 'upgrade' || group === 'credits') {
+        if (insertPendingFromPolledRow(source, row, group, code, 'new', { review_flag: group })) found++;
+        continue;
+      }
+
+      // main / addon: serial로 그룹핑 (renewal_addon은 위 브랜치에서 개별 처리됨)
       if (serial) {
         if (!serialGroups.has(serial)) serialGroups.set(serial, []);
         serialGroups.get(serial)!.push({ row, group, code });
@@ -959,6 +1019,13 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
         logger.info(`[Polling] duplicate serial detected (flag): ${serial}`);
       }
 
+      // review_flag 결정:
+      // main 코드가 있고 serial이 DB에 있으면 → duplicate
+      // main 코드가 없고(addon-only) serial도 DB에 없으면 → orphan_module
+      const serialReviewFlag: string =
+        mainEntry && isDuplicate ? 'duplicate' :
+        !mainEntry && !existingSerial ? 'orphan_module' : '';
+
       const pendingData: PendingOrderInsert = {
         source_id: sourceId,
         source_url: source.url,
@@ -988,6 +1055,7 @@ async function crawlSource(source: PollSource, targetDate?: string): Promise<{ f
         status: 'pending',
         product_code: mainCode,
         flag_duplicate: isDuplicate,
+        review_flag: serialReviewFlag,
       };
 
       // add_ons를 pending_orders의 raw_data에도 포함 (승인 시 사용)
