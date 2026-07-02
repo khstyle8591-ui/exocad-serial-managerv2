@@ -472,6 +472,21 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
         triggerId
       );
 
+      // Limbo 재시도 자체가 실패하면 더 이상 재시도하지 않는다 — 최초 실패 시점과 Limbo 실패
+      // 시점에 이미 관리자에게 critical 알림이 발송되었으므로, renewal_stop_requested를 해제해
+      // 다음 날 Limbo 후보에서 제외시킨다(중복 재시도/중복 알림 방지).
+      serialService.setStopRequested(
+        serial.id,
+        false,
+        triggerId,
+        'auto',
+        pickLang({
+          ko: 'Limbo 재시도 실패 — 재시도 중단(이미 관리자 알림 발송됨)',
+          en: 'Limbo retry failed — retries stopped (manager already alerted)',
+          ja: 'Limboリトライ失敗 — リトライ停止(管理者へ通知済み)',
+        }),
+      );
+
       const suppressKey = `alert_suppress:${serial.serial_number}:status_forced_expired`;
       const db = getDb();
       const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(suppressKey) as { value: string } | undefined;
