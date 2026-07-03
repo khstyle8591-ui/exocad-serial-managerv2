@@ -82,7 +82,7 @@ export default function Orders() {
             .replace('{version}', d.version)
             .replace('{expiry}', d.expiry_date ?? ''));
         } else {
-          alert(t(lang, 'orders_update_fail').replace('{error}', res.error));
+          alert(t(lang, 'orders_update_fail').replace('{error}', res.error ?? ''));
         }
       }
     } catch (e: unknown) {

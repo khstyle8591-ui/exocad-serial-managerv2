@@ -132,8 +132,9 @@ export function PollSourcesSection({ initialSources, loadKey, onSourcesChange, o
           </div>
 
           {/* Poll Dry-Run Result Panel */}
-          {dryRunState[src.id]?.result !== null && dryRunState[src.id]?.result !== undefined && (() => {
-            const dr = dryRunState[src.id].result;
+          {(() => {
+            const dr = dryRunState[src.id]?.result;
+            if (!dr) return null;
             return (
               <div style={{ borderTop: '1px solid #e5e7eb', background: 'var(--bg3)' }}>
                 <div style={{ padding: '8px 14px', background: 'var(--bg3)', fontWeight: 700, fontSize: 12, color: 'var(--accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

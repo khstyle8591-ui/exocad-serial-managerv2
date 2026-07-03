@@ -1,7 +1,4 @@
 /**
-
-import { api } from '../client';
-/**
  * LegacyImportWizard.tsx — 4-step legacy DB migration modal (dark theme)
  */
 import React, { useState, useEffect, useCallback } from 'react';
@@ -9,6 +6,7 @@ import type { MergeCandidate, CustomerInput, LegacyImportResult } from '../../sh
 import { useLang } from '../App';
 import { t } from '../i18n';
 import { translateServerError } from '../utils/serverError';
+import { api } from '../client';
 
 interface LegacyRow {
   id: number;

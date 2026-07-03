@@ -85,11 +85,11 @@ export default function SerialData() {
   }, [search, statusFilter, specialFilter]);
 
   useEffect(() => {
-    const filter = params?.filter;
+    const filter = (params as { filter?: string } | null)?.filter;
     if (filter === 'expiring') {
       setStatusFilter('all');
       setSpecialFilter('expiring');
-    } else if (['active', 'not-activated', 'expired', 'cancelled', 'broken'].includes(filter)) {
+    } else if (filter && ['active', 'not-activated', 'expired', 'cancelled', 'broken'].includes(filter)) {
       setStatusFilter(filter as StatusFilter);
       setSpecialFilter(null);
     } else {
@@ -206,7 +206,7 @@ export default function SerialData() {
         status: specialFilter ? undefined : statusFilter,
         expiring_this_month: specialFilter === 'expiring' || undefined,
       });
-      if (result.success) setExcelMsg(result.filePath ? t(lang, 'export_done_path').replace('{path}', result.filePath) : t(lang, 'export_done'));
+      if (result.success) setExcelMsg(t(lang, 'export_done'));
       else if (result.error) setExcelMsg(t(lang, 'export_failed').replace('{error}', result.error));
     } catch (e) {
       setExcelMsg(t(lang, 'export_failed').replace('{error}', errorMessage(e)));

@@ -2,6 +2,95 @@
  * Web 서버 모드용 API 클라이언트 (fetch 기반)
  * Electron의 window.electronAPI를 대체합니다
  */
+import type {
+    ActivityLog,
+    AppSettings,
+    AutoRenewalOrderNoticeLog,
+    CancelDryRunResult,
+    CancelResult,
+    Customer,
+    CustomerCreditLog,
+    CustomerPortalInfo,
+    CustomerSerialSummary,
+    DailyReport,
+    InboundDryRunResult,
+    InboundMail,
+    LegacyImportResult,
+    MailConnectionResult,
+    MailTemplate,
+    MergeCandidate,
+    MonthlyExpiryReport,
+    PendingOrder,
+    GroupedOrder,
+    PollDryRunResult,
+    SerialListResult,
+    SerialMailNoticeLog,
+    SerialVersionSummary,
+    SerialWithCustomer,
+    StatsCountsResult,
+    StatsSeries,
+} from '../shared/types';
+
+// 서버 전용 응답 모양(main 프로세스에 정의되어 있으나 shared/types.ts에는 없음) — 여기서만 쓰는 최소 형태로 로컬 정의
+interface TestResult {
+    success: boolean;
+    message: string;
+}
+
+interface AdminReviewRow {
+    id: number;
+    received_at: string;
+    mail_from: string;
+    subject: string;
+    extracted_serial: string | null;
+    response_errors: string;
+    response_attempt: number;
+}
+
+interface SystemLogsResult {
+    systemLogs: string[];
+    relatedEmails: string[];
+    adminReviews: AdminReviewRow[];
+}
+
+interface SchedulerSummary {
+    summary: string;
+    updated_at: string;
+}
+
+interface PollStatus {
+    running: boolean;
+    lastRun: string;
+    message: string;
+}
+
+interface LegacyDetectResult {
+    available: boolean;
+    path: string;
+    serial_count: number;
+    last_modified: string | null;
+}
+
+interface LegacySerialRow {
+    id: number;
+    serial_number: string;
+    customer_name: string;
+    customer_email: string;
+    customer_phone: string;
+    customer_address: string;
+    customer_manager: string;
+    purchase_date: string | null;
+    expiry_date: string | null;
+    status: string;
+    engine_build: string;
+    version: string;
+    add_ons: string;
+    notes: string;
+    created_at: string;
+    updated_at: string;
+    has_unprocessed_stop_request: boolean;
+}
+
 const BASE = '/api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -47,29 +136,29 @@ export const api = {
         for (const [key, value] of Object.entries(query)) {
             if (value !== undefined && value !== '') params.set(key, String(value));
         }
-        return get(`/serials?${params.toString()}`);
+        return get<SerialListResult>(`/serials?${params.toString()}`);
     },
     getExpiringSoonSerials: (days = 60, limit = 50) =>
-        get(`/serials/expiring-soon?days=${days}&limit=${limit}`),
-    getSerialVersionSummary: () => get('/serials/version-summary'),
-    getSerial: (id: number) => get(`/serials/${id}`),
-    listSerialMailNoticeLogs: (id: number) => get(`/serials/${id}/mail-notice-logs`),
-    searchSerials: (q: string) => get(`/serials/search?q=${encodeURIComponent(q)}`),
-    getStats: () => get('/serials/stats'),
-    createSerial: (data: unknown) => post('/serials', data),
-    updateSerial: (id: number, data: unknown) => put(`/serials/${id}`, data),
-    deleteSerial: (id: number) => del(`/serials/${id}`),
-    addAddon: (id: number, addon: unknown) => post(`/serials/${id}/addon`, addon),
-    activateSerial: (id: number) => post(`/serials/${id}/activate`),
+        get<SerialWithCustomer[]>(`/serials/expiring-soon?days=${days}&limit=${limit}`),
+    getSerialVersionSummary: () => get<SerialVersionSummary[]>('/serials/version-summary'),
+    getSerial: (id: number) => get<SerialWithCustomer>(`/serials/${id}`),
+    listSerialMailNoticeLogs: (id: number) => get<SerialMailNoticeLog[]>(`/serials/${id}/mail-notice-logs`),
+    searchSerials: (q: string) => get<SerialWithCustomer[]>(`/serials/search?q=${encodeURIComponent(q)}`),
+    getStats: () => get<StatsCountsResult & { notActivated: number }>('/serials/stats'),
+    createSerial: (data: unknown) => post<SerialWithCustomer>('/serials', data),
+    updateSerial: (id: number, data: unknown) => put<SerialWithCustomer | undefined>(`/serials/${id}`, data),
+    deleteSerial: (id: number) => del<{ ok: boolean }>(`/serials/${id}`),
+    addAddon: (id: number, addon: unknown) => post<SerialWithCustomer | undefined>(`/serials/${id}/addon`, addon),
+    activateSerial: (id: number) => post<SerialWithCustomer | undefined>(`/serials/${id}/activate`),
     setStopRequested: (id: number, flag: boolean, triggerId?: string) =>
-        post(`/serials/${id}/stop-requested`, { flag, triggerId }),
-    cancelSerialDb: (id: number) => post(`/serials/${id}/cancel-db`),
-    removeModule: (id: number, name: string) => post(`/serials/${id}/remove-module`, { name }),
-    renewSerial: (id: number) => post(`/serials/${id}/renew`),
+        post<SerialWithCustomer | undefined>(`/serials/${id}/stop-requested`, { flag, triggerId }),
+    cancelSerialDb: (id: number) => post<SerialWithCustomer | undefined>(`/serials/${id}/cancel-db`),
+    removeModule: (id: number, name: string) => post<SerialWithCustomer | undefined>(`/serials/${id}/remove-module`, { name }),
+    renewSerial: (id: number) => post<SerialWithCustomer | undefined>(`/serials/${id}/renew`),
     sendRenewalPo: (id: number, previousExpiryDate: string | null) =>
-        post(`/serials/${id}/send-renewal-po`, { previous_expiry_date: previousExpiryDate }),
+        post<TestResult>(`/serials/${id}/send-renewal-po`, { previous_expiry_date: previousExpiryDate }),
     sendRenewalNotice: (id: number, previousExpiryDate: string | null) =>
-        post(`/serials/${id}/send-renewal-notice`, { previous_expiry_date: previousExpiryDate }),
+        post<{ ok: true }>(`/serials/${id}/send-renewal-notice`, { previous_expiry_date: previousExpiryDate }),
     exportSerials: async (serials: unknown[]) => {
         try {
             const res = await fetch(`${BASE}/serials/export`, {
@@ -96,7 +185,7 @@ export const api = {
         }
     },
     exportSerialsByFilter: async (query: Record<string, unknown>) => {
-        const data = await api.listSerials({ ...query, limit: 10000, offset: 0 }) as { items: unknown[] };
+        const data = await api.listSerials({ ...query, limit: 10000, offset: 0 });
         return api.exportSerials(data.items);
     },
 
@@ -113,74 +202,79 @@ export const api = {
     },
 
     // ── Customers ─────────────────────────────────────────────────────────────
-    listCustomers: () => get('/customers'),
-    listCustomerSerialSummaries: () => get('/customers/serial-summaries'),
-    listCustomerPortalInfo: () => get('/customers/portal-info'),
-    getCustomerById: (id: number) => get(`/customers/${id}`),
-    createCustomer: (data: unknown) => post('/customers', data),
-    updateCustomer: (id: number, data: unknown) => put(`/customers/${id}`, data),
-    deleteCustomer: (id: number) => del(`/customers/${id}`),
-    searchCustomers: (q: string) => get(`/customers/search?q=${encodeURIComponent(q)}`),
-    getCustomerMergeCandidates: (q: unknown) => post('/customers/merge-candidates', q),
-    getCustomerCreditLogs: (id: number, page = 1) => get(`/customers/${id}/credits?page=${page}`),
+    listCustomers: () => get<Customer[]>('/customers'),
+    listCustomerSerialSummaries: () => get<CustomerSerialSummary[]>('/customers/serial-summaries'),
+    listCustomerPortalInfo: () => get<CustomerPortalInfo[]>('/customers/portal-info'),
+    getCustomerById: (id: number) => get<Customer>(`/customers/${id}`),
+    createCustomer: (data: unknown) => post<Customer>('/customers', data),
+    updateCustomer: (id: number, data: unknown) => put<Customer>(`/customers/${id}`, data),
+    deleteCustomer: (id: number) => del<{ success: boolean; error?: string }>(`/customers/${id}`),
+    searchCustomers: (q: string) => get<Customer[]>(`/customers/search?q=${encodeURIComponent(q)}`),
+    getCustomerMergeCandidates: (q: unknown) => post<MergeCandidate[]>('/customers/merge-candidates', q),
+    getCustomerCreditLogs: (id: number, page = 1) =>
+        get<{ items: CustomerCreditLog[]; total: number; totalPages: number }>(`/customers/${id}/credits?page=${page}`),
 
     // ── Orders ────────────────────────────────────────────────────────────────
-    getOrders: () => get('/orders'),
-    listGroupedOrders: () => get('/orders/grouped'),
-    getPollStatus: () => get('/orders/poll-status'),
-    pollNow: (sourceId?: string, targetDate?: string) => post('/orders/poll-now', { sourceId, targetDate }),
+    getOrders: () => get<PendingOrder[]>('/orders'),
+    listGroupedOrders: () => get<GroupedOrder[]>('/orders/grouped'),
+    getPollStatus: () => get<PollStatus>('/orders/poll-status'),
+    pollNow: (sourceId?: string, targetDate?: string) =>
+        post<{ found: number; errors: string[] }>('/orders/poll-now', { sourceId, targetDate }),
     pollDryRun: (sourceId?: string, overrides?: unknown, targetDate?: string) =>
-        post('/orders/poll-dry-run', { sourceId, sourceOverrides: overrides, targetDate }),
-    restartOrderScheduler: () => post('/orders/restart-scheduler'),
-    updateOrder: (id: number, data: unknown) => put(`/orders/${id}`, data),
-    approveOrder: (id: number, data?: unknown) => post(`/orders/${id}/approve`, data),
-    rejectOrder: (id: number) => post(`/orders/${id}/reject`),
-    deleteOrder: (id: number) => del(`/orders/${id}`),
+        post<PollDryRunResult>('/orders/poll-dry-run', { sourceId, sourceOverrides: overrides, targetDate }),
+    restartOrderScheduler: () => post<{ ok: boolean }>('/orders/restart-scheduler'),
+    updateOrder: (id: number, data: unknown) => put<PendingOrder | undefined>(`/orders/${id}`, data),
+    approveOrder: (id: number, data?: unknown) =>
+        post<{ success: boolean; error?: string; customer_id?: number; was_renewed?: boolean }>(`/orders/${id}/approve`, data),
+    rejectOrder: (id: number) => post<{ ok: boolean }>(`/orders/${id}/reject`),
+    deleteOrder: (id: number) => del<{ ok: boolean }>(`/orders/${id}`),
 
     // ── Cancel ────────────────────────────────────────────────────────────────
-    cancelSubscription: (serialNumber: string) => post(`/cancel/${encodeURIComponent(serialNumber)}`),
-    checkExpiring: () => post('/cancel/run/expired'),
-    cancelDryRun: () => post('/cancel/run/dry-run'),
-    cancelRestartScheduler: () => post('/cancel/restart-scheduler'),
+    cancelSubscription: (serialNumber: string) => post<CancelResult>(`/cancel/${encodeURIComponent(serialNumber)}`),
+    checkExpiring: () => post<CancelResult[]>('/cancel/run/expired'),
+    cancelDryRun: () => post<CancelDryRunResult[]>('/cancel/run/dry-run'),
+    cancelRestartScheduler: () => post<{ ok: boolean }>('/cancel/restart-scheduler'),
 
     // ── Automation ────────────────────────────────────────────────────────────
-    runAutoRenewNow: () => post('/automation/run-auto-renew'),
-    runAutoCancelNow: () => post('/automation/run-auto-cancel'),
-    runLimboFallbackNow: () => post('/automation/run-limbo-fallback'),
+    runAutoRenewNow: () => post<{ processed: number; renewed: number; skipped: number; serials: string[] }>('/automation/run-auto-renew'),
+    runAutoCancelNow: () => post<{ processed: number; success: number; failed: number; results: CancelResult[] }>('/automation/run-auto-cancel'),
+    runLimboFallbackNow: () => post<{ processed: number; success: number; failed: number; results: CancelResult[] }>('/automation/run-limbo-fallback'),
 
     // ── Mail Inbound ──────────────────────────────────────────────────────────
-    checkInboundNow: () => post('/mail/check-inbound-now'),
-    inboundDryRun: () => post('/mail/inbound-dry-run'),
-    testMailConnection: (override?: unknown) => post('/mail/test-connection', override),
-    listInboundMails: (filter?: unknown) => post('/mail/inbound-mails', filter),
-    confirmStopRequestFromMail: (id: number) => post(`/mail/inbound-mails/${id}/confirm-stop`),
-    sendMissingInfoTemplateForMail: (id: number) => post(`/mail/inbound-mails/${id}/send-missing-info`),
+    checkInboundNow: () => post<{ processed: number; saved: number; errors: string[] }>('/mail/check-inbound-now'),
+    inboundDryRun: () => post<InboundDryRunResult>('/mail/inbound-dry-run'),
+    testMailConnection: (override?: unknown) => post<MailConnectionResult>('/mail/test-connection', override),
+    listInboundMails: (filter?: unknown) => post<InboundMail[]>('/mail/inbound-mails', filter),
+    confirmStopRequestFromMail: (id: number) =>
+        post<{ success: boolean; error?: string; serial_number?: string }>(`/mail/inbound-mails/${id}/confirm-stop`),
+    sendMissingInfoTemplateForMail: (id: number) => post<TestResult>(`/mail/inbound-mails/${id}/send-missing-info`),
 
     // ── Mail Templates ────────────────────────────────────────────────────────
-    listMailTemplates: () => get('/mail-templates'),
-    getMailTemplate: (code: string) => get(`/mail-templates/${code}`),
-    upsertMailTemplate: (data: unknown) => post('/mail-templates', data),
-    deleteMailTemplate: (code: string) => del(`/mail-templates/${encodeURIComponent(code)}`),
+    listMailTemplates: () => get<MailTemplate[]>('/mail-templates'),
+    getMailTemplate: (code: string) => get<MailTemplate>(`/mail-templates/${code}`),
+    upsertMailTemplate: (data: unknown) => post<MailTemplate>('/mail-templates', data),
+    deleteMailTemplate: (code: string) => del<{ success: boolean }>(`/mail-templates/${encodeURIComponent(code)}`),
     previewMailTemplate: (code: string, serialId: number) =>
-        get(`/mail-templates/${encodeURIComponent(code)}/preview?serialId=${serialId}`),
+        get<{ subject: string; body: string }>(`/mail-templates/${encodeURIComponent(code)}/preview?serialId=${serialId}`),
     sendMailTemplate: (code: string, to: string, vars: Record<string, string>, options?: unknown) =>
-        post('/mail/send-template', { code, to, vars, options }),
-    sendTestDryRun: (override?: unknown) => post('/mail/send-test-dry-run', override),
+        post<TestResult>('/mail/send-template', { code, to, vars, options }),
+    sendTestDryRun: (override?: unknown) => post<TestResult>('/mail/send-test-dry-run', override),
 
     // ── Stats ─────────────────────────────────────────────────────────────────
-    getStatsCounts: () => get('/serials/stats/counts'),
+    getStatsCounts: () => get<StatsCountsResult & { notActivated: number }>('/serials/stats/counts'),
     getStatsSeries: (granularity: string, range: number) =>
-        get(`/serials/stats/series?granularity=${granularity}&range=${range}`),
-    getStatsFailures: () => get('/logs?type=failure&limit=20'),
+        get<StatsSeries>(`/serials/stats/series?granularity=${granularity}&range=${range}`),
+    getStatsFailures: () => get<ActivityLog[]>('/logs?type=failure&limit=20'),
 
     // ── Settings ──────────────────────────────────────────────────────────────
-    getSettings: () => get('/settings'),
-    getSchedulerSummary: () => get('/settings/scheduler-summary'),
-    saveSettings: (data: unknown) => post('/settings', data),
-    testSmtp: (override?: unknown) => post('/mail/test-smtp', override),
-    testSlack: (override?: unknown) => post('/settings/test-slack', override),
-    testSlackRelated: (override?: unknown) => post('/settings/test-slack-related', override),
-    updateDataOrder: (id: number, data: unknown) => post(`/orders/${id}/update-data`, data),
+    getSettings: () => get<AppSettings>('/settings'),
+    getSchedulerSummary: () => get<SchedulerSummary>('/settings/scheduler-summary'),
+    saveSettings: (data: unknown) => post<AppSettings>('/settings', data),
+    testSmtp: (override?: unknown) => post<TestResult>('/mail/test-smtp', override),
+    testSlack: (override?: unknown) => post<TestResult>('/settings/test-slack', override),
+    testSlackRelated: (override?: unknown) => post<TestResult>('/settings/test-slack-related', override),
+    updateDataOrder: (id: number, data: unknown) =>
+        post<{ success: boolean; data?: SerialWithCustomer; error?: string }>(`/orders/${id}/update-data`, data),
     exportSettings: async () => {
         const settings = await api.getSettings();
         const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
@@ -194,20 +288,31 @@ export const api = {
         URL.revokeObjectURL(url);
         return { success: true };
     },
-    listReportTimes: () => get('/settings/report-times'),
-    setReportTimes: (times: string[]) => post('/settings/report-times', { times }),
-    sendDailyReportNow: () => post('/reports/send-daily'),
-    runExpiryNoticeDryRun: (input: unknown) => post('/settings/expiry-notice-dry-run', input),
-    runStopLifecycleNoticeDryRun: (input: unknown) => post('/settings/stop-lifecycle-notice-dry-run', input),
+    listReportTimes: () => get<string[]>('/settings/report-times'),
+    setReportTimes: (times: string[]) => post<string[]>('/settings/report-times', { times }),
+    sendDailyReportNow: () => post<{ ok: boolean }>('/reports/send-daily'),
+    runExpiryNoticeDryRun: (input: unknown) =>
+        post<{
+            success: boolean;
+            message: string;
+            target_date: string;
+            matched_count: number;
+            sample_serial?: string;
+            sample_sent_to?: string;
+        }>('/settings/expiry-notice-dry-run', input),
+    runStopLifecycleNoticeDryRun: (input: unknown) =>
+        post<{ success: boolean; message: string; sample_serial?: string; sample_sent_to?: string }>(
+            '/settings/stop-lifecycle-notice-dry-run', input,
+        ),
 
     // ── Logs ──────────────────────────────────────────────────────────────────
-    getLogs: (limit = 100, offset = 0) => get(`/logs?limit=${limit}&offset=${offset}`),
-    getTodayLogs: () => get('/logs/today'),
-    getSystemLogs: (date?: string) => get('/logs/system' + (date ? `?date=${date}` : '')),
+    getLogs: (limit = 100, offset = 0) => get<ActivityLog[]>(`/logs?limit=${limit}&offset=${offset}`),
+    getTodayLogs: () => get<ActivityLog[]>('/logs/today'),
+    getSystemLogs: (date?: string) => get<SystemLogsResult>('/logs/system' + (date ? `?date=${date}` : '')),
     getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
-    listAutoRenewalOrderNotices: (limit = 100) => get(`/logs/auto-renewal-order-notices?limit=${limit}`),
-    getAutoRenewalOrderNotice: (id: number) => get(`/logs/auto-renewal-order-notices/${id}`),
-    resolveAdminReview: (id: number) => post(`/logs/admin-review/${id}/resolve`, {}),
+    listAutoRenewalOrderNotices: (limit = 100) => get<AutoRenewalOrderNoticeLog[]>(`/logs/auto-renewal-order-notices?limit=${limit}`),
+    getAutoRenewalOrderNotice: (id: number) => get<AutoRenewalOrderNoticeLog>(`/logs/auto-renewal-order-notices/${id}`),
+    resolveAdminReview: (id: number) => post<{ success: boolean }>(`/logs/admin-review/${id}/resolve`, {}),
     listLogs: (filter?: unknown) => post('/logs/list', filter),
     onLogsPush: (callback: (payload: { id: number }) => void): () => void => {
         const interval = setInterval(() => callback({ id: 0 }), 30000);
@@ -215,15 +320,15 @@ export const api = {
     },
 
     // ── Legacy Import ─────────────────────────────────────────────────────────
-    detectLegacy: () => get('/legacy/detect'),
-    listLegacySerials: (filter?: unknown) => post('/legacy/serials', filter),
-    suggestLegacyMerge: (row: unknown) => post('/legacy/suggest-merge', row),
-    importLegacySerial: (input: unknown) => post('/legacy/import', input),
+    detectLegacy: () => get<LegacyDetectResult>('/legacy/detect'),
+    listLegacySerials: (filter?: unknown) => post<LegacySerialRow[]>('/legacy/serials', filter),
+    suggestLegacyMerge: (row: unknown) => post<MergeCandidate[]>('/legacy/suggest-merge', row),
+    importLegacySerial: (input: unknown) => post<LegacyImportResult>('/legacy/import', input),
 
     // ── Reports ───────────────────────────────────────────────────────────────
-    getDailyReport: () => get('/reports/daily'),
-    getMonthlyExpiry: () => get('/reports/monthly-expiry'),
-    sendReport: (type: 'daily' | 'monthly') => post(`/reports/send-${type}`),
+    getDailyReport: () => get<DailyReport>('/reports/daily'),
+    getMonthlyExpiry: () => get<MonthlyExpiryReport>('/reports/monthly-expiry'),
+    sendReport: (type: 'daily' | 'monthly') => post<{ ok: boolean }>(`/reports/send-${type}`),
 
     // ── Webhook ───────────────────────────────────────────────────────────────
     getWebhookStatus: () => get<{ running: boolean; port: number }>('/webhook/status'),

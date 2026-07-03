@@ -182,6 +182,27 @@ export interface InboundMail {
   error: string | null;
 }
 
+export interface InboundDryRunEntry {
+  from: string;
+  subject: string;
+  date: string;
+  classification: InboundMail['classification'];
+  matched_keywords: string[];
+  extracted_serial: string | null;
+  serial_exists: boolean;
+  is_duplicate: boolean;
+  message_id: string | null;
+  missing_fields: string[];
+}
+
+export interface InboundDryRunResult {
+  total_checked: number;
+  would_save: number;
+  would_skip: number;
+  entries: InboundDryRunEntry[];
+  error?: string;
+}
+
 // ── Pending Orders ────────────────────────────────────────────────────────────
 
 export interface PendingOrder {

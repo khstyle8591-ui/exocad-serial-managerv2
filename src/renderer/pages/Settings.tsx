@@ -216,7 +216,7 @@ export default function Settings() {
           renewal_template: rule.renewal_template || 'renewal_reminder',
         }))
         .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
-      const finalSettings = {
+      const finalSettings: Record<string, unknown> = {
         ...formVals.current,
         mail_protocol: protocol,
         auto_cancel_enabled: autoCancelEnabled,

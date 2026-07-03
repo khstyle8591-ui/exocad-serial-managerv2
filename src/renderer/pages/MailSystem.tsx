@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import TemplateEditor from '../components/TemplateEditor';
 import { useLang } from '../App';
 import { t, type TranslationKey } from '../i18n';
-import type { AppSettings, InboundMail, MailConnectionResult, MailTemplate, MailTemplateUpsert } from '../../shared/types';
+import type { AppSettings, InboundDryRunResult, InboundMail, MailConnectionResult, MailTemplate, MailTemplateUpsert } from '../../shared/types';
 import { api } from '../client';
 
 type Tab = 'templates' | 'inbound' | 'smtp';
@@ -11,27 +11,6 @@ type InboundFilter = MailClassification | 'all';
 type EditorTarget = MailTemplate | 'new' | undefined;
 type CheckInboundResult = { processed: number; saved: number; errors: string[] };
 type GenericResult = { success: boolean; message?: string; error?: string };
-
-interface InboundDryRunEntry {
-  from: string;
-  subject: string;
-  date: string;
-  classification: MailClassification;
-  matched_keywords: string[];
-  extracted_serial: string | null;
-  serial_exists: boolean;
-  is_duplicate: boolean;
-  message_id: string | null;
-  missing_fields: string[];
-}
-
-interface InboundDryRunResult {
-  total_checked: number;
-  would_save: number;
-  would_skip: number;
-  entries: InboundDryRunEntry[];
-  error?: string;
-}
 
 const badgeStyle = (color: string): React.CSSProperties => ({
   display: 'inline-block', padding: '1px 8px', borderRadius: 10,
@@ -729,7 +708,7 @@ export default function MailSystem() {
                 <span style={{ color: 'var(--text)' }}>{selectedMail.mail_to || '—'}</span>
                 <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_col_serial_label')}</span>
                 <span>{selectedMail.extracted_serial ? <code style={{ fontSize: 12, background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4, color: 'var(--text)' }}>{selectedMail.extracted_serial}</code> : <span style={{ color: 'var(--text3)' }}>—</span>}</span>
-                <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_dryrun_col_keyword')}</span>
+                <span style={{ color: 'var(--text3)' }}>{t(lang, 'renewal_dryrun_col_keyword')}</span>
                 <span style={{ color: 'var(--text)' }}>{matchedKeywords(selectedMail.matched_keywords).join(', ') || '—'}</span>
                 {selectedMail.classification === 'missing_info' && (
                   <>

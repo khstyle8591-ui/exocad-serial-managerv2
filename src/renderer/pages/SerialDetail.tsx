@@ -166,8 +166,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             label: t(lang, 'delete'),
             danger: true,
             action: async () => {
-              const r = await api.deleteSerial(serial.id);
-              if (!r.success) { alert(r.error ?? t(lang, 'delete')); return; }
+              await api.deleteSerial(serial.id);
               onDeleted(serial.id);
             },
           })}
