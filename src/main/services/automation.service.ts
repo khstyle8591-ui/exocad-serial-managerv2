@@ -4,13 +4,25 @@ import { notificationService, localizeCancelError } from './notification.service
 import { sendCancelCompleteNotice, sendManualRenewalConfirmNotice } from './mail/lifecycle-notice.service';
 import { logAutoRenewalOrderNotice } from './auto-renewal-order-notice-log.service';
 import { pickLang } from './activity-log.service';
-import { markPortalRequestPlaywrightFailed } from '../../server/portal/db';
+import {
+  markPortalRequestPlaywrightFailed,
+  findCreditRequestsReadyForAutoDistribution,
+  claimCreditForDistribution,
+  markCreditDistributed,
+  markCreditDistributionFailed,
+  getPortalRequestById,
+  updatePortalRequestStatus,
+} from '../../server/portal/db';
+import { sendCreditInvoiceMail } from './credit-request.service';
 import { logger } from '../utils/logger';
-import { getTodayDateString } from '../utils/date-utils';
+import { getTodayDateString, getNowTimestampString, getTimestampMinutesAgoString } from '../utils/date-utils';
 import { getSettings } from '../settings';
 import { getDb } from '../database';
-import type { CancelResult, SerialWithCustomer } from '../../shared/types';
+import type { CancelResult, CreditDistributeResult, SerialWithCustomer } from '../../shared/types';
 import { SERVER_ERRORS } from '../../shared/server-errors';
+
+// 크레딧 신청 접수 후 자동배분 시작까지의 유예기간(분) — 신청자가 그 사이 취소할 수 있도록 함.
+const CREDIT_AUTO_DISTRIBUTE_GRACE_MINUTES = 5;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -519,6 +531,102 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
     processed: candidates.length,
     success: results.filter(result => result.success).length,
     failed: results.filter(result => !result.success).length,
+    results,
+  };
+}
+
+// ── 포털 크레딧 자동배분 ─────────────────────────────────────────────────────────
+// 크레딧 신청 접수 5분 후부터, 자동배분 토글이 켜져 있으면 partner.exocad.com에서
+// 크레딧을 자동 배분한다. 신청 status는 배분 성공/실패와 무관하게 'pending'으로 유지되어
+// 매니저의 승인/거절은 그대로 노출된다(배분은 승인과 별개의 선행 단계).
+export async function runCreditAutoDistributionNow(): Promise<{ processed: number; success: number; failed: number; results: CreditDistributeResult[] }> {
+  const settings = getSettings();
+  if (!settings.credit_auto_alloc_enabled) {
+    return { processed: 0, success: 0, failed: 0, results: [] };
+  }
+
+  const cutoff = getTimestampMinutesAgoString(CREDIT_AUTO_DISTRIBUTE_GRACE_MINUTES);
+  const candidates = findCreditRequestsReadyForAutoDistribution(cutoff);
+  const results: CreditDistributeResult[] = [];
+
+  for (const req of candidates) {
+    const pkg = settings.credit_packages.find(p => p.id === req.package_code);
+    if (!pkg) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} has unknown package_code "${req.package_code}" — skipping`);
+      continue;
+    }
+    if (!req.exocad_id?.trim()) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} has no exocad_id — skipping`);
+      continue;
+    }
+
+    // 원자적 선점 — 이미 다른 실행(중복 크론 틱 등)이 처리 중이면 skip
+    if (!claimCreditForDistribution(req.id)) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} already claimed by another run — skipping`);
+      continue;
+    }
+
+    const triggerId = `credit-auto-distribute:${req.id}`;
+    const note = `${getNowTimestampString()} autodistribution qty:${pkg.quantity}`;
+    logger.info(`[credit-auto-distribute] distributing: request #${req.id}, exocadId=${req.exocad_id}, qty=${pkg.quantity}`);
+
+    const result = await cancelService.distributeCredits(req.exocad_id, pkg.quantity, note, true);
+    results.push(result);
+
+    if (result.success) {
+      markCreditDistributed(req.id);
+      logger.info(`[credit-auto-distribute] success: request #${req.id}`);
+
+      // 배분 성공 → 자동 승인(발주서 메일 발송)으로 넘긴다.
+      // 단, distributeCredits가 진행되는 동안(수 초) 고객이 취소요청을 넣고 매니저가 이미
+      // 승인해버렸을 수 있는 극히 드문 race를 대비해 상태를 다시 확인한다 —
+      // status가 더 이상 'pending'이 아니면(취소 처리됨) 자동승인/메일발송을 건너뛰고
+      // 크레딧이 이미 지급되었음을 관리자에게 알려 수동 확인을 받는다.
+      const fresh = getPortalRequestById(req.id);
+      if (fresh && fresh.status === 'pending') {
+        await sendCreditInvoiceMail(req.id, 'auto');
+        updatePortalRequestStatus(req.id, 'approved');
+      } else {
+        logger.warn(
+          `[credit-auto-distribute] request #${req.id} distributed successfully but status is now "${fresh?.status}" ` +
+          `(likely cancelled while distribution was in flight) — NOT auto-approving; needs manual reconciliation`
+        );
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: req.exocad_id,
+          target_label: 'my.exocad ID',
+          action: { ko: '포털 크레딧 자동배분/승인 불일치', en: 'Portal credit auto-distribution/approval mismatch', ja: 'ポータルクレジット自動配分/承認の不一致' },
+          details: {
+            ko: `크레딧이 이미 배분되었으나 처리 도중 신청(#${req.id}) 상태가 "${fresh?.status}"로 변경되어 자동승인하지 않았습니다. 수동으로 확인해주세요.`,
+            en: `Credits were already distributed but request (#${req.id}) status changed to "${fresh?.status}" during processing — skipped auto-approval. Please verify manually.`,
+            ja: `クレジットは既に配分されましたが、処理中に申請(#${req.id})の状態が"${fresh?.status}"に変わったため自動承認しませんでした。手動で確認してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch((err: unknown) => logger.error(`[credit-auto-distribute] critical alert failed: ${getErrorMessage(err)}`));
+      }
+    } else {
+      markCreditDistributionFailed(req.id, result.error || 'unknown error');
+      logger.error(`[credit-auto-distribute] FAILED: request #${req.id} - ${result.error}`);
+      await notificationService.sendCriticalAutomationAlert({
+        serial_number: req.exocad_id,
+        target_label: 'my.exocad ID',
+        action: { ko: '포털 크레딧 자동배분', en: 'Portal credit auto-distribution', ja: 'ポータルクレジット自動配分' },
+        error: result.error,
+        details: {
+          ko: `포털 크레딧 신청(#${req.id})의 자동배분이 실패했습니다. partner.exocad.com에서 수동으로 확인 후 재처리해주세요.`,
+          en: `Portal credit request (#${req.id}) auto-distribution failed. Check partner.exocad.com and reprocess manually if needed.`,
+          ja: `ポータルクレジット申請(#${req.id})の自動配分が失敗しました。partner.exocad.comで確認の上、必要に応じて手動で再処理してください。`,
+        },
+        trigger_id: triggerId,
+      }).catch((err: unknown) => logger.error(`[credit-auto-distribute] critical alert failed: ${getErrorMessage(err)}`));
+    }
+
+    await sleep(2000);
+  }
+
+  return {
+    processed: candidates.length,
+    success: results.filter(r => r.success).length,
+    failed: results.filter(r => !r.success).length,
     results,
   };
 }

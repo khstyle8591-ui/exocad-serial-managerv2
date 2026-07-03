@@ -451,6 +451,15 @@ export interface CancelResult {
   screenshot_path?: string;
 }
 
+// ── Credit distribution (partner.exocad.com/credits) ───────────────────────────
+
+export interface CreditDistributeResult {
+  exocad_id: string;
+  success: boolean;
+  error?: string;
+  screenshot_path?: string;
+}
+
 export interface CancelDryRunResult {
   serial_number: string;
   customer_name: string;

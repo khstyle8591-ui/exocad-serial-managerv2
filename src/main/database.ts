@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 13;
+export const CURRENT_SCHEMA_VERSION = 14;
 
 type Migration = {
   version: number;
@@ -508,6 +508,15 @@ function addCustomersAiCredits(): void {
   logger.info('[DB] Migration complete: customers.ai_credits added');
 }
 
+function addPortalRequestsAllocColumns(): void {
+  const columns = db.prepare('PRAGMA table_info(portal_requests)').all() as { name: string }[];
+  const existing = new Set(columns.map(c => c.name));
+  if (!existing.has('alloc_status')) db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_status TEXT`);
+  if (!existing.has('alloc_error'))  db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_error TEXT`);
+  if (!existing.has('alloc_at'))     db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_at TEXT`);
+  logger.info('[DB] Migration complete: portal_requests.alloc_status/alloc_error/alloc_at added');
+}
+
 function createCustomerCreditLogsTable(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS customer_credit_logs (
@@ -591,6 +600,11 @@ const migrations: Migration[] = [
     version: 13,
     name: 'customer_credit_logs table',
     run: createCustomerCreditLogsTable,
+  },
+  {
+    version: 14,
+    name: 'portal_requests alloc_status columns',
+    run: addPortalRequestsAllocColumns,
   },
 ];
 

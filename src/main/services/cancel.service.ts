@@ -1,4 +1,4 @@
-import { Browser, Page, BrowserContext } from 'playwright';
+import { Browser, Page, BrowserContext, Locator } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { serialService } from './serial.service';
@@ -10,13 +10,16 @@ import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
 import { SCREENSHOT_DIR } from '../utils/paths';
-import type { CancelResult, CancelDryRunResult } from '../../shared/types';
+import type { CancelResult, CancelDryRunResult, CreditDistributeResult } from '../../shared/types';
 import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
 import { shortPause, waitForSettledPage } from './playwright-waits';
 
 type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+// partner.exocad.com의 크레딧 배분 화면 — 취소 자동화와 동일 관리자 SSO 세션을 공유한다.
+const EXOCAD_CREDITS_URL = 'https://partner.exocad.com/credits';
 
 // 스크린샷 저장 디렉토리
 function getScreenshotDir(): string {
@@ -67,45 +70,94 @@ export class CancelService {
     return op;
   }
 
+  // ============================================================
+  // 크레딧 배분 (partner.exocad.com/credits)
+  // cancelSubscription과 동일한 큐(cancelQueue)에 태워 단일 관리자 SSO 세션을
+  // 직렬로 공유한다 — 취소 자동화와 크레딧 배분이 동시에 같은 브라우저를 건드리지 않도록 함.
+  // ============================================================
+  // dryRun=true: 계정/수량/메모 입력까지 수행하고 제출 버튼이 보이는지/활성화됐는지만 확인한 뒤
+  // 클릭하지 않고 종료한다 (실제 배분 없음 — 검증용).
+  async distributeCredits(exocadId: string, amount: number, note: string, headless: boolean = true, dryRun: boolean = false): Promise<CreditDistributeResult> {
+    const op = this.cancelQueue
+      .catch(() => {})
+      .then(() => this._doDistributeCredits(exocadId, amount, note, headless, dryRun));
+    this.cancelQueue = op.catch(() => {});
+    return op;
+  }
+
+  // ============================================================
+  // 브라우저/컨텍스트/로그인 세션 확보 (cancel·크레딧배분 공용)
+  // 기존 세션이 살아있으면 재사용하고, 없으면 새로 생성 후 로그인까지 수행한다.
+  // 새 브라우저를 남발하지 않고 단일 관리자 SSO 세션을 여러 자동화가 공유하기 위함.
+  // ============================================================
+  private async ensureSessionPage(headless: boolean, settings: EffectiveSettings): Promise<Page> {
+    // ─── 브라우저 & 컨텍스트 초기화 ───
+    // 기존 브라우저가 없거나 연결이 끊어진 경우 새로 생성
+    // headless=true: 자동 스케줄러에서 호출 시 백그라운드 실행
+    // headless=false: 수동 실행 시 화면 표시
+    if (!this.browser || !this.browser.isConnected()) {
+      try {
+        this.browser = await launchAutomationBrowser(headless);
+        this.context = await this.browser.newContext();
+        // 네이티브 다이얼로그(alert, confirm) 자동 dismiss
+        // 브라우저가 표시하는 모든 dialog를 즉시 dismiss하여 자동화 흐름을 보호한다.
+        this.context.on('page', (p) => {
+          p.on('dialog', async (dialog) => {
+            logger.info(`[dialog] auto-dismiss: type=${dialog.type()}, msg=${dialog.message().slice(0, 80)}`);
+            await dialog.dismiss().catch(() => { });
+          });
+        });
+        this.isLoggedIn = false;
+      } catch (initErr) {
+        // 컨텍스트 생성 실패 등 초기화 단계 오류 시 브라우저가 누수되지 않도록 즉시 정리
+        if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+        this.context = null;
+        throw initErr;
+      }
+    }
+
+    const page = await this.context!.newPage();
+
+    // ─── 로그인 (세션이 없을 때만) ───
+    // Align Tech SSO 페이지에서 이메일+비밀번호로 로그인
+    // 한번 로그인하면 같은 context 내에서 쿠키가 유지되므로 재로그인 불필요
+    if (!this.isLoggedIn) {
+      await this.login(page, settings);
+    }
+
+    return page;
+  }
+
+  // ============================================================
+  // 세션 만료/무효 감지 시 브라우저 정리 (cancel·크레딧배분 공용)
+  // 명시적으로 로그인 페이지로 리다이렉트된 경우만 세션을 무효화한다.
+  // (단순 원소 미감지·타임아웃 등은 세션 무효가 아니므로 재로그인하지 않음)
+  // ============================================================
+  private async invalidateSessionIfLoggedOut(page: Page | null, context: string): Promise<void> {
+    const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
+    logger.warn(`[${context}] (URL: ${currentUrl})`);
+
+    if (
+      currentUrl.includes('login') ||
+      currentUrl.includes('aligntech.com') ||
+      currentUrl.includes('signin') ||
+      (currentUrl && !currentUrl.includes('exocad.com'))
+    ) {
+      logger.warn(`[${context}] Invalid session detected; setting isLoggedIn=false`);
+      this.isLoggedIn = false;
+      // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
+      if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+      this.context = null;
+    }
+  }
+
   private async _doCancel(serialNumber: string, headless: boolean = true): Promise<CancelResult> {
     const settings = getSettings();
     let page: Page | null = null;
     this.clearIdleCloseTimer();
 
     try {
-      // ─── 브라우저 & 컨텍스트 초기화 ───
-      // 기존 브라우저가 없거나 연결이 끊어진 경우 새로 생성
-      // headless=true: 자동 스케줄러에서 호출 시 백그라운드 실행
-      // headless=false: 수동 실행 시 화면 표시
-      if (!this.browser || !this.browser.isConnected()) {
-        try {
-          this.browser = await launchAutomationBrowser(headless);
-          this.context = await this.browser.newContext();
-          // 네이티브 다이얼로그(alert, confirm) 자동 dismiss
-          // 브라우저가 표시하는 모든 dialog를 즉시 dismiss하여 자동화 흐름을 보호한다.
-          this.context.on('page', (p) => {
-            p.on('dialog', async (dialog) => {
-              logger.info(`[dialog] auto-dismiss: type=${dialog.type()}, msg=${dialog.message().slice(0, 80)}`);
-              await dialog.dismiss().catch(() => { });
-            });
-          });
-          this.isLoggedIn = false;
-        } catch (initErr) {
-          // 컨텍스트 생성 실패 등 초기화 단계 오류 시 브라우저가 누수되지 않도록 즉시 정리
-          if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
-          this.context = null;
-          throw initErr;
-        }
-      }
-
-      page = await this.context!.newPage();
-
-      // ─── 1단계: 로그인 (세션이 없을 때만) ───
-      // Align Tech SSO 페이지에서 이메일+비밀번호로 로그인
-      // 한번 로그인하면 같은 context 내에서 쿠키가 유지되므로 재로그인 불필요
-      if (!this.isLoggedIn) {
-        await this.login(page, settings);
-      }
+      page = await this.ensureSessionPage(headless, settings);
 
       // ─── 2단계: 라이선스 관리 페이지로 이동 ───
       // 로그인 후 이미 target URL에 있으면 goto 생략 (불필요한 재로딩 방지)
@@ -156,26 +208,9 @@ export class CancelService {
 
     } catch (err: unknown) {
       const errorMessage = getErrorMessage(err);
-      // 로그인 세션 만료 또는 페이지 로드 실패 대응
-      const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
       logger.error(`Cancel failed [${serialNumber}]: ${errorMessage}`);
-      logger.warn(`\n (URL: ${currentUrl})`);
-
-      // 명시적으로 로그인 페이지에 있는 경우만 세션 초기화
-      // (Opt out upgrade 타임아웃 등 단순 또는 원소 미감지 오류는 세션 무효가 아님)
-      if (
-        currentUrl.includes('login') ||
-        currentUrl.includes('aligntech.com') ||
-        currentUrl.includes('signin') ||
-        (currentUrl && !currentUrl.includes('exocad.com'))
-      ) {
-        logger.warn('Invalid session detected; setting isLoggedIn=false');
-        this.isLoggedIn = false;
-        // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
-        if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
-        this.context = null;
-      }
-
+      // 로그인 세션 만료 또는 페이지 로드 실패 대응 (명시적으로 로그인 페이지에 있는 경우만 세션 초기화)
+      await this.invalidateSessionIfLoggedOut(page, 'cancel');
       return { serial_number: serialNumber, success: false, error: errorMessage };
     } finally {
       // 페이지만 닫고 context(세션)는 유지 → 다음 시리얼 처리 시 재로그인 불필요
@@ -184,6 +219,167 @@ export class CancelService {
       }
       this.scheduleIdleClose();
     }
+  }
+
+  // ============================================================
+  // 단일 크레딧 배분 처리
+  // 전체 흐름: 로그인(세션 재사용) → credits 페이지 → Distribute credits 클릭
+  //          → 팝업에 계정/수량/메모 입력 → 제출 → 결과 확인
+  // ============================================================
+  private async _doDistributeCredits(
+    exocadId: string,
+    amount: number,
+    note: string,
+    headless: boolean = true,
+    dryRun: boolean = false,
+  ): Promise<CreditDistributeResult> {
+    const settings = getSettings();
+    let page: Page | null = null;
+    this.clearIdleCloseTimer();
+
+    try {
+      page = await this.ensureSessionPage(headless, settings);
+
+      // ─── credits 페이지로 이동 ───
+      const currentUrl = page.url();
+      if (!currentUrl.startsWith(EXOCAD_CREDITS_URL)) {
+        await page.goto(EXOCAD_CREDITS_URL, { waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
+          logger.warn('[distributeCredits] networkidle timeout; continuing with direct element wait');
+        });
+      }
+
+      // ─── "Distribute credits" 버튼(목록 페이지, type="button") 클릭 → 팝업 오픈 ───
+      // 팝업 내부의 제출 버튼도 동일 텍스트("Distribute credits")를 쓰므로 type 속성으로 구분한다.
+      const openButton = page.locator('button[type="button"]:has-text("Distribute credits")').first();
+      await openButton.waitFor({ state: 'visible', timeout: 20000 });
+      await openButton.click();
+
+      // ─── 팝업 필드 대기 + React hydration 여유 ───
+      const accountInput = page.locator('input[name="account"]').first();
+      await accountInput.waitFor({ state: 'visible', timeout: 10000 });
+      await shortPause(page, 500, 'credits modal hydration');
+
+      // ─── 계정(my.exocad ID) / 수량 / 메모 입력 ───
+      await this.fillFieldRobust(page, accountInput, exocadId, 'account');
+      const amountInput = page.locator('input[name="amount"]').first();
+      await this.fillFieldRobust(page, amountInput, String(amount), 'amount');
+      const noteInput = page.locator('textarea[name="note"]').first();
+      await noteInput.fill(note.slice(0, 200));
+
+      // ─── 제출 (팝업 내부, type="submit") ───
+      const submitButton = page.locator('button[type="submit"].bg-primary:has-text("Distribute credits")').first();
+      await submitButton.waitFor({ state: 'visible', timeout: 5000 });
+
+      if (dryRun) {
+        // 실제 배분 없이 폼이 정확히 채워졌고 제출 버튼이 눌릴 준비가 됐는지만 확인.
+        const enabled = await submitButton.isEnabled().catch(() => false);
+        const accountValue = await accountInput.inputValue().catch(() => '');
+        const amountValue = await amountInput.inputValue().catch(() => '');
+        const noteValue = await noteInput.inputValue().catch(() => '');
+        const screenshotPath = await this.captureResultScreenshot(page, exocadId, 'credit-dryrun');
+        logger.info(
+          `[distributeCredits][dry-run] form ready (NOT submitted) — exocadId=${exocadId}, amount=${amount}, ` +
+          `submitEnabled=${enabled}, account="${accountValue}", amount="${amountValue}", note="${noteValue.slice(0, 60)}"`
+        );
+        return {
+          exocad_id: exocadId,
+          success: accountValue === exocadId && amountValue === String(amount) && enabled,
+          error: enabled ? undefined : 'Submit button found but not enabled (dry-run)',
+          screenshot_path: screenshotPath,
+        };
+      }
+
+      await submitButton.click();
+
+      // ─── 결과 확인 ───
+      // 실패 시 우상단에 약 1초간 노출되는 에러 토스트를 best-effort로 픽업(제네릭 셀렉터 폭 대응).
+      // 토스트 감지에 실패하더라도 스크린샷은 항상 남겨 매니저가 수동으로 확인할 수 있게 한다.
+      const toastError = await this.captureErrorToast(page);
+      const screenshotPath = await this.captureResultScreenshot(page, exocadId, 'credit');
+
+      if (toastError) {
+        logger.warn(`[distributeCredits] error toast detected for ${exocadId}: ${toastError}`);
+        return { exocad_id: exocadId, success: false, error: toastError, screenshot_path: screenshotPath };
+      }
+
+      // 토스트가 감지되지 않았어도 팝업이 안 닫혔다면 결과를 신뢰할 수 없음 → 실패로 처리
+      const modalStillOpen = await accountInput.isVisible({ timeout: 2000 }).catch(() => false);
+      if (modalStillOpen) {
+        logger.warn(`[distributeCredits] modal still open after submit with no toast captured (exocadId=${exocadId})`);
+        return {
+          exocad_id: exocadId,
+          success: false,
+          error: 'Distribution result could not be verified (modal did not close after submit)',
+          screenshot_path: screenshotPath,
+        };
+      }
+
+      logger.info(`[distributeCredits] credit distribution succeeded: exocadId=${exocadId}, amount=${amount}`);
+      return { exocad_id: exocadId, success: true, screenshot_path: screenshotPath };
+
+    } catch (err: unknown) {
+      const errorMessage = getErrorMessage(err);
+      logger.error(`[distributeCredits] failed [${exocadId}]: ${errorMessage}`);
+      await this.invalidateSessionIfLoggedOut(page, 'distributeCredits');
+      return { exocad_id: exocadId, success: false, error: errorMessage };
+    } finally {
+      if (page) {
+        await page.close();
+      }
+      this.scheduleIdleClose();
+    }
+  }
+
+  // ============================================================
+  // 입력 필드에 값 채우기 (React controlled input 대응)
+  // fill()이 실패(값 불일치)하면 pressSequentially로 한 번 더 시도한다.
+  // ============================================================
+  private async fillFieldRobust(page: Page, locator: Locator, value: string, label: string): Promise<void> {
+    await locator.click();
+    await locator.fill(value);
+    await shortPause(page, 300, `${label} fill propagation`);
+
+    let current = await locator.inputValue().catch(() => '');
+    if (current !== value) {
+      logger.warn(`[distributeCredits] ${label} fill() mismatch (got: "${current}") -> trying pressSequentially`);
+      await locator.click({ clickCount: 3 });
+      await page.keyboard.press('Delete');
+      await locator.pressSequentially(value, { delay: 60 });
+      await shortPause(page, 300, `${label} fallback propagation`);
+
+      current = await locator.inputValue().catch(() => '');
+      if (current !== value) {
+        throw new Error(`Failed to enter ${label} into credits form (got: "${current}")`);
+      }
+    }
+  }
+
+  // ============================================================
+  // 배분 실패 시 우상단에 짧게(~1초) 노출되는 에러 토스트를 best-effort로 픽업.
+  // 실제 토스트 DOM 구조가 확인되지 않아 제네릭 셀렉터로 폭넓게 탐지한다 — 확보되는 대로 정밀화 필요.
+  // 최대 4초간 200ms 간격으로 폴링하며, 텍스트가 잡히면 즉시 반환한다.
+  // ============================================================
+  private async captureErrorToast(page: Page): Promise<string | null> {
+    const toastSelectors = [
+      '[role="alert"]',
+      '[class*="toast" i]',
+      '[class*="notification" i]',
+      '[class*="snackbar" i]',
+    ];
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      for (const sel of toastSelectors) {
+        const el = page.locator(sel).first();
+        const visible = await el.isVisible({ timeout: 200 }).catch(() => false);
+        if (visible) {
+          const text = (await el.textContent().catch(() => ''))?.trim();
+          if (text) return text;
+        }
+      }
+      await page.waitForTimeout(200);
+    }
+    return null;
   }
 
   private clearIdleCloseTimer(): void {
@@ -682,10 +878,10 @@ export class CancelService {
   // 결과 스크린샷 캡처
   // cancel 완료 후 현재 페이지 상태를 PNG로 저장
   // ============================================================
-  private async captureResultScreenshot(page: Page, serialNumber: string): Promise<string> {
+  private async captureResultScreenshot(page: Page, serialNumber: string, kind: string = 'cancel'): Promise<string> {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const filename = `cancel_${serialNumber}_${timestamp}.png`;
+      const filename = `${kind}_${serialNumber}_${timestamp}.png`;
       const filepath = path.join(getScreenshotDir(), filename);
 
       await page.screenshot({ path: filepath, fullPage: false });

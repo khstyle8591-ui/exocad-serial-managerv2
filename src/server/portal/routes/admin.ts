@@ -12,7 +12,9 @@ import {
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailedByManager,
   markPortalRequestCancelRejected,
+  markPortalRequestCancelRejectedPending,
   markPortalRequestDismissed,
+  countActionablePortalRequests,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
@@ -24,6 +26,8 @@ import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
+import { sendCreditInvoiceMail } from '../../../main/services/credit-request.service';
+import { logger } from '../../../main/utils/logger';
 import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../../shared/types';
 
 const router = Router();
@@ -215,6 +219,12 @@ router.get('/requests', (req: Request, res: Response) => {
   res.json({ requests: getAllPortalRequests(filter) });
 });
 
+// GET /portal/admin/requests/actionable-count — 매니저 조치가 필요한 신청 건수 (사이드바/탭 배지용)
+// :id 라우트보다 먼저 등록해야 Express가 "actionable-count"를 id 파라미터로 잘못 매칭하지 않는다.
+router.get('/requests/actionable-count', (_req: Request, res: Response) => {
+  res.json({ count: countActionablePortalRequests() });
+});
+
 // GET /portal/admin/requests/stream — SSE: 신청이 생성/상태변경될 때마다 알림을 보내
 // 매니저 화면이 폴링 주기(30초)를 기다리지 않고 즉시 다시 조회하도록 한다.
 // :id 라우트보다 먼저 등록해야 Express가 "stream"을 id 파라미터로 잘못 매칭하지 않는다.
@@ -342,6 +352,10 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
         ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
       }),
     });
+  } else if (request.type === 'credit') {
+    // 승인 시점에 지정된 메일 주소로 발주서(청구용) 메일 발송 — 자동배분 토글과 무관하게 항상 발송.
+    // (자동배분 성공 시에도 동일 함수가 자동승인 경로에서 호출됨 — automation.service.ts 참조)
+    await sendCreditInvoiceMail(id, 'manual');
   } else {
     logActivity({
       action: 'system', actor: 'manual', severity: 'info',
@@ -352,7 +366,7 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       }),
     });
   }
-  // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
+  // renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 
   updatePortalRequestStatus(id, 'approved');
   res.json({ ok: true, status: 'approved' });
@@ -442,7 +456,24 @@ router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
       return;
     }
 
-    // 거절 — 취소 요청을 거절하고 원래 신청은 승인 확정(approved)으로 처리.
+    // 거절 — 취소 요청을 거절하고 원래 신청은 계속 진행.
+    // credit은 이 시점에 배분이 아직 안 됐을 수 있으므로(자동배분은 별도 스캔이 처리) 곧바로
+    // 'approved'(=발주서 발송)로 확정하지 않고 'pending'으로 되돌려 배분이 정상적으로 이어지게 한다.
+    // renewal_stop 등 그 외 유형은 기존과 동일하게 'approved'로 확정한다.
+    if (request.type === 'credit') {
+      markPortalRequestCancelRejectedPending(id);
+      logActivity({
+        action: 'system', actor: 'manual', severity: 'info',
+        details: pickLang({
+          ko: `포털 크레딧 신청(#${id}) 취소 요청 거절 — 배분 대기 상태로 복귀`,
+          en: `Portal credit request (#${id}) cancellation rejected by manager — returned to pending for distribution`,
+          ja: `ポータルクレジット申請(#${id})キャンセル要請を却下 — 配分待ちに復帰`,
+        }),
+      });
+      res.json({ ok: true, status: 'pending' });
+      return;
+    }
+
     // note='cancel_rejected'로 구분해 포털/매니저 화면에 별도 표시하고 재취소 신청을 막는다.
     markPortalRequestCancelRejected(id);
     logActivity({

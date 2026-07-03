@@ -654,6 +654,8 @@ export class NotificationService {
 
   async sendCriticalAutomationAlert(input: {
     serial_number: string;
+    // 대상이 시리얼이 아닌 경우(예: 크레딧 배분의 my.exocad ID)의 라벨 오버라이드. 기본값 'Serial'.
+    target_label?: string;
     customer_name?: string;
     action: string | LocalizedText;
     error?: string | LocalizedText;
@@ -674,7 +676,7 @@ export class NotificationService {
       const err = rawErr ? localizeCancelError(rawErr, lang) : '';
       return [
         '*CRITICAL automation alert*',
-        `Serial: ${input.serial_number}`,
+        `${input.target_label || 'Serial'}: ${input.serial_number}`,
         input.customer_name ? `Customer: ${input.customer_name}` : '',
         `Action: ${pick(input.action, lang)}`,
         `Trigger: ${input.trigger_id}`,

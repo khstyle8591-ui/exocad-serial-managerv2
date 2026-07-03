@@ -246,6 +246,7 @@ export const api = {
             const qs = params.toString();
             return preq<T>('GET', `/requests${qs ? `?${qs}` : ''}`);
         },
+        getActionableRequestCount: <T>() => preq<T>('GET', '/requests/actionable-count'),
         decideRequest: (id: number, action: 'approve' | 'reject') =>
             preq('PATCH', `/requests/${id}/decide`, { action }),
         decideCancelRequest: (id: number, action: 'approve' | 'reject') =>

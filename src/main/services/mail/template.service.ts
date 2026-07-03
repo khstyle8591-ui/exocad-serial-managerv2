@@ -216,9 +216,9 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
   },
   {
     code: 'portal_credit_notify_admin',
-    name: 'クレジット申請受付（管理者通知）',
-    subject: '【ポータル】クレジット申請を受け付けました (#{{REQUEST_ID}})',
-    body: `クレジット申請が届きましたのでご確認ください。
+    name: 'クレジット発注書（承認時送付）',
+    subject: '【発注書】クレジット購入のご請求について (#{{REQUEST_ID}})',
+    body: `下記の内容でクレジット申請が承認されましたので、ご請求手続きをお願いいたします。
 
 ■ 申請番号：#{{REQUEST_ID}}
 ■ 顧客名：{{CUSTOMER_NAME}}
@@ -230,9 +230,9 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
 ■ パッケージ：{{PACKAGE_LABEL}}
 ■ 数量：{{PACKAGE_QTY}}
 ■ 金額：{{PACKAGE_PRICE}}
-■ 受付日：{{TODAY}}
+■ 承認日：{{TODAY}}
 
-管理画面の「ポータル」タブから承認処理をお願いいたします。`,
+上記内容にてご請求処理をお願いいたします。`,
     enabled: true,
   },
   {

@@ -3,7 +3,7 @@ import { serialService } from './services/serial.service';
 import { cancelService, cleanOldScreenshots } from './services/cancel.service';
 import { checkInboundNow } from './services/mail/inbound.service';
 import { notificationService, buildScheduleSummary } from './services/notification.service';
-import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow } from './services/automation.service';
+import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow, runCreditAutoDistributionNow } from './services/automation.service';
 import { sendTemplate as sendMailTemplate } from './services/mail/smtp.service';
 import { sendCancelCompleteNotice } from './services/mail/lifecycle-notice.service';
 import { deleteOldActivityLogs } from './services/activity-log.service';
@@ -25,6 +25,7 @@ let monthlyReportTask: cron.ScheduledTask | null = null;
 let dailySummaryTask: cron.ScheduledTask | null = null;
 let retryCancelTask: cron.ScheduledTask | null = null;
 let expiryNoticeTask: cron.ScheduledTask | null = null;
+let creditAutoDistributeTask: cron.ScheduledTask | null = null;
 
 // 하루 동안의 cancel 결과를 모아둠 (앱 재시작 대비 DB 영속)
 interface PersistedCancelResult extends CancelResult { date: string; }
@@ -244,6 +245,18 @@ export function startScheduler(): void {
 
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
+
+  // 6-b. 포털 크레딧 자동배분 — 매 1분마다 스캔(신청 후 5분 유예, 자동배분 토글은 함수 내부에서 확인)
+  creditAutoDistributeTask = cron.schedule('* * * * *', async () => {
+    try {
+      const result = await runCreditAutoDistributionNow();
+      if (result.processed > 0) {
+        logger.info(`[credit-auto-distribute] completed: processed=${result.processed}, success=${result.success}, failed=${result.failed}`);
+      }
+    } catch (err: unknown) {
+      logger.error(`[credit-auto-distribute] error: ${getErrorMessage(err)}`);
+    }
+  }, { timezone: 'Asia/Tokyo' });
 
   // 8. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
@@ -899,5 +912,6 @@ export function stopScheduler(): void {
   if (monthlyReportTask) monthlyReportTask.stop();
   if (dailySummaryTask) dailySummaryTask.stop();
   if (retryCancelTask) retryCancelTask.stop();
+  if (creditAutoDistributeTask) creditAutoDistributeTask.stop();
   logger.info('Scheduler stopped');
 }

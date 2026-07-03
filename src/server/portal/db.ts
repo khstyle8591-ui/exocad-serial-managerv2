@@ -174,6 +174,8 @@ export function listCustomerPortalInfo(): CustomerPortalInfo[] {
 
 export type PortalRequestType = 'credit' | 'renewal_stop' | 'renewal_resume';
 export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled' | 'cancel_requested';
+// 크레딧 자동배분 진행 상태 — credit 신청에만 사용됨. null = 배분 대상 아님/미시작.
+export type CreditAllocStatus = 'scheduled' | 'distributing' | 'distributed' | 'failed';
 
 export interface PortalRequestRow {
   id: number;
@@ -186,6 +188,9 @@ export interface PortalRequestRow {
   note: string;
   created_at: string;
   processed_at: string | null;
+  alloc_status: CreditAllocStatus | null;
+  alloc_error: string | null;
+  alloc_at: string | null;
 }
 
 export function createPortalRequest(params: {
@@ -261,6 +266,19 @@ export function markPortalRequestCancelRejected(id: number): void {
   emitPortalRequestChanged();
 }
 
+// credit 전용: 배분이 아직 완료(auto_status='distributed')되지 않았을 수 있으므로 곧바로
+// 'approved'(=발주서 발송)로 확정하지 않고 'pending'으로 되돌린다. 이렇게 해야 자동배분 스캔이
+// 다시 집어가거나(alloc_status가 아직 NULL인 경우) 매니저가 수동 배분 후 승인할 수 있다.
+// alloc_status/alloc_error는 그대로 유지(배분 실패 이력을 보존).
+export function markPortalRequestCancelRejectedPending(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'pending', note = 'cancel_rejected', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
 // 매니저가 Playwright 취소 실패(cancel failed) 신청을 수동 처리하고 큐에서 닫는 경우 — status는
 // 그대로 두고(고객 화면 의미 유지: approved는 승인됨, rejected는 실패 표시) note만 'dismissed'로
 // 바꿔 매니저 actionable 목록에서 빠지게 한다.
@@ -281,6 +299,47 @@ export function markPortalRequestDuplicate(id: number): void {
       "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = ? WHERE id = ?",
     )
     .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+// ── 크레딧 자동배분 ─────────────────────────────────────────────────────────────
+
+/** 5분 유예기간이 지났고 아직 배분을 시작하지 않은 크레딧 신청 목록 (오래된 순). */
+export function findCreditRequestsReadyForAutoDistribution(cutoffTimestamp: string): PortalRequestRow[] {
+  return getDb()
+    .prepare<[string], PortalRequestRow>(
+      `SELECT * FROM portal_requests
+       WHERE type = 'credit' AND status = 'pending' AND alloc_status IS NULL
+         AND created_at <= ?
+       ORDER BY created_at ASC`,
+    )
+    .all(cutoffTimestamp);
+}
+
+/** 배분 시작을 원자적으로 선점 — 이미 다른 실행이 선점했거나 상태가 바뀌었으면 false. */
+export function claimCreditForDistribution(id: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_status = 'distributing'
+       WHERE id = ? AND type = 'credit' AND status = 'pending' AND alloc_status IS NULL`,
+    )
+    .run(id);
+  const claimed = result.changes > 0;
+  if (claimed) emitPortalRequestChanged();
+  return claimed;
+}
+
+export function markCreditDistributed(id: number): void {
+  getDb()
+    .prepare("UPDATE portal_requests SET alloc_status = 'distributed', alloc_at = ? WHERE id = ?")
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+export function markCreditDistributionFailed(id: number, error: string): void {
+  getDb()
+    .prepare("UPDATE portal_requests SET alloc_status = 'failed', alloc_error = ?, alloc_at = ? WHERE id = ?")
+    .run(error, getNowTimestampString(), id);
   emitPortalRequestChanged();
 }
 
@@ -367,6 +426,20 @@ export function getAllPortalRequests(filter?: {
        ORDER BY pr.created_at DESC`,
     )
     .all(...params);
+}
+
+// 매니저 조치가 필요한 신청 건수 — Requests 탭의 isActionable/cancel_requested 판정과 동일 기준.
+// 사이드바/탭 배지에 사용(별도 "확인함" 추적 없이, 처리하면 자동으로 줄어드는 단순 카운트).
+export function countActionablePortalRequests(): number {
+  const row = getDb()
+    .prepare<[], { n: number }>(
+      `SELECT COUNT(*) AS n FROM portal_requests
+       WHERE status IN ('pending', 'manager_review', 'cancel_requested')
+          OR (status = 'rejected' AND note = 'playwright_failed')
+          OR (status = 'approved' AND note = 'playwright_failed_manual')`,
+    )
+    .get();
+  return row?.n ?? 0;
 }
 
 export function getPortalRequestById(id: number): PortalRequestWithAccount | null {

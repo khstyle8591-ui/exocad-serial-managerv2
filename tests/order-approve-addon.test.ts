@@ -41,7 +41,7 @@ describeSqlite('approvePendingOrder addon handling', () => {
 
     expect(approval).toEqual({
       success: false,
-      error: 'Add-on 대상 시리얼 MISSING-ADDON-SERIAL을 찾을 수 없습니다.',
+      error: 'ERR_ADDON_SERIAL_NOT_FOUND|MISSING-ADDON-SERIAL',
     });
     expect(pending.status).toBe('pending');
     expect(getDb().prepare('SELECT COUNT(*) as count FROM serials').get()).toEqual({ count: 0 });

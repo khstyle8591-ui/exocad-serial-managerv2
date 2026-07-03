@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
+import { usePortalActionableCount } from '../hooks/usePortalActionableCount';
 import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../shared/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -42,6 +43,9 @@ interface AdminRequest {
   account_name: string;
   account_login_id: string;
   account_email: string;
+  alloc_status: 'distributing' | 'distributed' | 'failed' | null;
+  alloc_error: string | null;
+  alloc_at: string | null;
 }
 
 type Tab = 'settings' | 'packages' | 'descriptions' | 'accounts' | 'requests';
@@ -79,6 +83,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function Portal() {
   const { lang } = useLang();
+  const actionableCount = usePortalActionableCount();
   const [tab, setTab] = useState<Tab>('settings');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -239,9 +244,19 @@ export default function Portal() {
               color: tab === tb.id ? 'var(--accent)' : 'var(--text2)',
               fontWeight: tab === tb.id ? 600 : 400, cursor: 'pointer',
               fontSize: 13, fontFamily: 'inherit', marginBottom: -1,
+              display: 'flex', alignItems: 'center', gap: 6,
             }}
           >
             {t(lang, tb.key)}
+            {tb.id === 'requests' && actionableCount > 0 && (
+              <span style={{
+                minWidth: 16, height: 16, padding: '0 4px',
+                borderRadius: 8, background: 'var(--red)', color: '#fff',
+                fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center',
+              }}>
+                {actionableCount > 99 ? '99+' : actionableCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -663,6 +678,31 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                     {r.status === 'cancel_requested' && (
                       <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
                         {t(lang, 'portal_st_cancel_requested_note')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.status === 'pending' && r.note === 'cancel_rejected' && (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                        {t(lang, 'portal_cancel_rejected_pending_note')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'distributing' && (
+                      <div style={{ fontSize: 11, color: 'var(--blue)', marginTop: 2 }}>
+                        {t(lang, 'portal_alloc_distributing')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'distributed' && (
+                      <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
+                        {t(lang, 'portal_alloc_distributed')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'failed' && (
+                      <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
+                        <div style={{ fontWeight: 600 }}>{t(lang, 'portal_alloc_failed')}</div>
+                        {r.alloc_error && (
+                          <div style={{ color: 'var(--text3)', marginTop: 1 }}>
+                            {t(lang, 'portal_alloc_error_label')}{r.alloc_error}
+                          </div>
+                        )}
                       </div>
                     )}
                   </td>
