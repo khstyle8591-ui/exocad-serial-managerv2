@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
+import { sendTemplate } from './mail/smtp.service';
 import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult, LocalizedText } from '../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -21,15 +22,6 @@ function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOve
 function buildSmtpFrom(settings: ReturnType<typeof getSettings>) {
   const name = (settings.smtp_from_name || 'Exocad Manager').trim();
   return settings.smtp_user ? { name, address: settings.smtp_user } : settings.smtp_host;
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 function parseModules(modulesJson: string): string[] {
@@ -719,34 +711,42 @@ export class NotificationService {
     const modules = parseModules(input.serial.modules);
     const moduleText = modules.join(', ') || '-';
     const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-    const isManual = input.source === 'manual';
-    const subject = isManual
-      ? `[Exocad Manager] 更新注文書 (手動) - ${input.serial.serial_number}`
-      : `[Exocad Manager] 自動更新注文書 - ${input.serial.serial_number}`;
-    const html = `
-      <h2>${isManual ? '更新注文書（手動更新）' : '自動更新注文書'}</h2>
-      <p>以下のシリアルが${isManual ? '手動で更新処理されました。' : '自動更新処理されました。'}</p>
-      <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-        <tr><td><strong>シリアル番号</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
-        <tr><td><strong>顧客名</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
-        <tr><td><strong>顧客メール</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
-        <tr><td><strong>顧客住所</strong></td><td>${escapeHtml(input.serial.customer?.address || '')}</td></tr>
-        <tr><td><strong>メイン製品</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
-        <tr><td><strong>モジュール</strong></td><td>${escapeHtml(moduleText)}</td></tr>
-        <tr><td><strong>更新前の有効期限</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
-        <tr><td><strong>更新後の有効期限</strong></td><td>${escapeHtml(input.serial.expiry_date || '')}</td></tr>
-        <tr><td><strong>処理時刻</strong></td><td>${escapeHtml(renewedAt)}</td></tr>
-      </table>
-    `;
-    const recipientEmail = settings.report_email_to || '';
+    const recipientEmail = settings.credit_notification_email || '';
 
-    const success = await this.sendEmail(subject, html);
+    if (!recipientEmail) {
+      return {
+        success: false,
+        subject: '',
+        html_body: '',
+        recipient_email: '',
+        message: 'Credit Notification Email이 설정되어 있지 않습니다.',
+      };
+    }
+
+    const result = await sendTemplate(
+      'renewal_order_notice',
+      recipientEmail,
+      {
+        SERIAL_NUMBER: input.serial.serial_number,
+        CUSTOMER_NAME: input.serial.customer?.name || '',
+        CUSTOMER_EMAIL: input.serial.customer?.email || '',
+        ADDRESS: input.serial.customer?.address || '',
+        MAIN_PRODUCT: input.serial.main_product || '',
+        MODULES: moduleText,
+        PREVIOUS_EXPIRY_DATE: input.previous_expiry_date || '-',
+        EXPIRY_DATE: input.serial.expiry_date || '',
+        PROCESSED_AT: renewedAt,
+        RENEWAL_TYPE: input.source === 'manual' ? '手動' : '自動',
+      },
+      { serial_id: input.serial.id, actor: input.source === 'manual' ? 'manual' : 'auto' },
+    );
+
     return {
-      success,
-      subject,
-      html_body: html,
+      success: result.success,
+      subject: result.subject || '',
+      html_body: result.html || '',
       recipient_email: recipientEmail,
-      message: success ? 'メール送信成功' : 'メール送信失敗',
+      message: result.message,
     };
   }
 

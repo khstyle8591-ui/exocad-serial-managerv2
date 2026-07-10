@@ -43,22 +43,24 @@ export async function sendTemplate(
   to: string,
   vars: TemplateVars,
   options?: { serial_id?: number; actor?: 'manual' | 'auto' | 'email' | 'polling' | 'system' },
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; subject?: string; html?: string }> {
   const template = getTemplate(code);
   if (!template) return { success: false, message: `Template not found: ${code}` };
-  if (!template.enabled) return { success: false, message: `Template is disabled: ${code}` };
-
-  const settings = getSettings();
-  if (!settings.smtp_host || !settings.smtp_user) {
-    return { success: false, message: 'SMTP が設定されていません。' };
-  }
 
   const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
   const fullVars: TemplateVars = { TODAY: today, ...vars };
 
   const subject = renderTemplate(template.subject, fullVars);
   const bodyText = renderTemplate(template.body, fullVars);
-  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;font-size:14px">${bodyText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+  const escapedBody = bodyText.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const htmlBody = `<div style="font-family:sans-serif;font-size:14px">${escapedBody}</div>`;
+
+  if (!template.enabled) return { success: false, message: `Template is disabled: ${code}`, subject, html: htmlBody };
+
+  const settings = getSettings();
+  if (!settings.smtp_host || !settings.smtp_user) {
+    return { success: false, message: 'SMTP が設定されていません。', subject, html: htmlBody };
+  }
 
   try {
     const transporter = buildTransporter(settings);
@@ -83,7 +85,7 @@ export async function sendTemplate(
       severity: 'info',
     });
 
-    return { success: true, message: `メール送信完了 → ${to}` };
+    return { success: true, message: `メール送信完了 → ${to}`, subject, html: htmlBody };
   } catch (err: unknown) {
     const errorMessage = getErrorMessage(err);
     logger.error(`[mail] Failed to send '${code}' to ${to}: ${errorMessage}`);
@@ -98,7 +100,7 @@ export async function sendTemplate(
       }),
       severity: 'error',
     });
-    return { success: false, message: `送信失敗: ${errorMessage}` };
+    return { success: false, message: `送信失敗: ${errorMessage}`, subject, html: htmlBody };
   }
 }
 

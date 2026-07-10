@@ -217,6 +217,25 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
     enabled: true,
   },
   {
+    code: 'renewal_order_notice',
+    name: '更新発注書（内部通知）',
+    subject: '[Exocad Manager] 更新発注書（{{RENEWAL_TYPE}}） - {{SERIAL_NUMBER}}',
+    body: `以下のシリアルが{{RENEWAL_TYPE}}で更新処理されました。
+
+■ シリアル番号：{{SERIAL_NUMBER}}
+■ 顧客名：{{CUSTOMER_NAME}}
+■ 顧客メール：{{CUSTOMER_EMAIL}}
+■ 顧客住所：{{ADDRESS}}
+■ メイン製品：{{MAIN_PRODUCT}}
+■ モジュール：{{MODULES}}
+■ 更新前の有効期限：{{PREVIOUS_EXPIRY_DATE}}
+■ 更新後の有効期限：{{EXPIRY_DATE}}
+■ 処理時刻：{{PROCESSED_AT}}
+
+上記内容にてご請求処理をお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'portal_credit_notify_admin',
     name: 'クレジット発注書（承認時送付）',
     subject: '【発注書】クレジット購入のご請求について (#{{REQUEST_ID}})',
@@ -384,6 +403,8 @@ export function previewTemplate(
     RESET_URL: 'https://example.com/reset?token=sample',
     INCLUDE_QUOTE: '希望する',
     PREVIOUS_EXPIRY_DATE: row.expiry_date || '',
+    PROCESSED_AT: today,
+    RENEWAL_TYPE: '手動',
     MISSING_FIELDS: 'シリアルナンバー',
     RECEIVED_SUBJECT: '（サンプル件名）',
     RESPONSE_ERRORS: '（サンプルエラー内容）',
