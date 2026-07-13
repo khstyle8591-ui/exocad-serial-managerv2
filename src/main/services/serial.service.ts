@@ -1,6 +1,6 @@
 import { getDb } from '../database';
 import { logger } from '../utils/logger';
-import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
+import { getTodayDateString, getNowTimestampString, getDaysAgoDateString } from '../utils/date-utils';
 import { createCustomerSeparate, findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
 import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs, pickLang } from './activity-log.service';
 import type {
@@ -244,10 +244,13 @@ export class SerialService {
   }
 
   /**
-   * 자동 재갱신 대상 — status는 신뢰하지 않고 만료일과 중단 플래그만으로 판단.
-   * (중단 플래그가 없고 만료일이 지났다면 자동 재갱신 대상)
+   * 자동 재갱신 대상 — active 시리얼만 대상으로 함.
+   * 예외: cancelled/expired 상태라도 중단 플래그가 없고 만료일로부터 3일 이내라면 대상에 포함
+   * (syncExpired가 auto-renew cron보다 먼저 돌아 status를 expired로 바꿔버리는 타이밍/다운타임 문제 구제).
+   * broken/not-activated 및 중단 플래그가 있는 시리얼은 상태 불문 항상 제외.
    */
   getAutoRenewCandidates(today = getTodayDateString()): SerialWithCustomer[] {
+    const graceFrom = getDaysAgoDateString(3);
     const rows = getDb()
       .prepare(
         `${SERIAL_WITH_CUSTOMER_SQL}
@@ -255,9 +258,13 @@ export class SerialService {
            AND s.expiry_date != ''
            AND s.expiry_date <= ?
            AND s.renewal_stop_requested = 0
+           AND (
+             s.status = 'active'
+             OR (s.status IN ('cancelled', 'expired') AND s.expiry_date >= ?)
+           )
          ORDER BY s.expiry_date ASC, s.id ASC`
       )
-      .all(today) as SerialRow[];
+      .all(today, graceFrom) as SerialRow[];
     return rows.map(parseSerialRow);
   }
 

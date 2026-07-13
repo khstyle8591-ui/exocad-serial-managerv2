@@ -22,6 +22,15 @@ export function getYesterdayDateString(): string {
 }
 
 /**
+ * Returns the date string N days ago in YYYY-MM-DD format (Asia/Tokyo timezone)
+ */
+export function getDaysAgoDateString(days: number): string {
+  const target = new Date();
+  target.setDate(target.getDate() - days);
+  return getDateString(target);
+}
+
+/**
  * Returns the current timestamp string in YYYY-MM-DD HH:mm:ss format (Asia/Tokyo timezone)
  */
 export function getNowTimestampString(): string {
