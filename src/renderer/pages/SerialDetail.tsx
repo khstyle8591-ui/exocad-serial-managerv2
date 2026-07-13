@@ -147,8 +147,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             danger: !isStop,
             action: async () => {
               setBusy('stop');
-              await api.setStopRequested(serial.id, !isStop);
-              await reload();
+              const r = await api.setStopRequested(serial.id, !isStop);
+              if (r) { setSerial(r); onUpdated(r); }
             },
           })}
         />

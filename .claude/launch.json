@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "Dev Web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:web"],
+      "port": 5173
+    },
+    {
       "name": "TypeScript Watch (Main)",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:main"]
