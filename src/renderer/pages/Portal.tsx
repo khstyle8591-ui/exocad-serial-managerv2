@@ -669,68 +669,70 @@ function AccountDetailModal({ lang, account, onClose, onLinkSerial }: {
           <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 16 }}>
-          <thead>
-            <tr style={{ background: 'var(--bg3)', textAlign: 'left' }}>
-              <th style={cell}>{t(lang, 'portal_acc_detail_field')}</th>
-              <th style={cell}>{t(lang, 'portal_acc_detail_portal_value')}</th>
-              <th style={cell}>{t(lang, 'portal_acc_detail_customer_value')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {fields.map(f => {
-              const portalValue = String(account[f.key] ?? '') || '—';
-              const custValue = f.custKey && primaryCustomer ? (String(primaryCustomer[f.custKey] ?? '') || '—') : '—';
-              const mismatch = f.custKey && primaryCustomer
-                && portalValue.trim().toLowerCase() !== custValue.trim().toLowerCase();
-              return (
-                <tr key={f.key} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ ...cell, color: 'var(--text3)' }}>{f.label}</td>
-                  <td style={{ ...cell, color: mismatch ? 'var(--orange)' : 'var(--text)' }}>{portalValue}</td>
-                  <td style={cell}>{custValue}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-
-        <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>{t(lang, 'portal_acc_detail_linked_serials')}</h4>
-        {account.links.length === 0 && (
-          <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_detail_no_links')}</p>
-        )}
-        {account.links.map(link => (
-          <div key={link.customer_id} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-              {link.customer?.name ?? `#${link.customer_id}`}
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <tbody>
-                {link.serials.map(s => (
-                  <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={cell}>{s.serial_number}</td>
-                    <td style={cell}>{s.main_product}</td>
-                    <td style={cell}>{s.status}</td>
+        <div className="modal-body">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 20 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg3)', textAlign: 'left' }}>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_field')}</th>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_portal_value')}</th>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_customer_value')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map(f => {
+                const portalValue = String(account[f.key] ?? '') || '—';
+                const custValue = f.custKey && primaryCustomer ? (String(primaryCustomer[f.custKey] ?? '') || '—') : '—';
+                const mismatch = f.custKey && primaryCustomer
+                  && portalValue.trim().toLowerCase() !== custValue.trim().toLowerCase();
+                return (
+                  <tr key={f.key} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ ...detailCell, color: 'var(--text3)' }}>{f.label}</td>
+                    <td style={{ ...detailCell, color: mismatch ? 'var(--orange)' : 'var(--text)' }}>{portalValue}</td>
+                    <td style={detailCell}>{custValue}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
+                );
+              })}
+            </tbody>
+          </table>
 
-        <div className="form-group" style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-          <label>{t(lang, 'portal_acc_link_label')}</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={serialInput}
-              onChange={e => setSerialInput(e.target.value)}
-              placeholder="XXXXXXXX-XXXX-XXXXXXXX"
-              style={{ flex: 1 }}
-            />
-            <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={linking || !serialInput.trim()}>
-              {linking ? t(lang, 'saving') : t(lang, 'portal_acc_link_btn')}
-            </button>
+          <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>{t(lang, 'portal_acc_detail_linked_serials')}</h4>
+          {account.links.length === 0 && (
+            <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_detail_no_links')}</p>
+          )}
+          {account.links.map(link => (
+            <div key={link.customer_id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                {link.customer?.name ?? `#${link.customer_id}`}
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {link.serials.map(s => (
+                    <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={detailCell}>{s.serial_number}</td>
+                      <td style={detailCell}>{s.main_product}</td>
+                      <td style={detailCell}>{s.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <label>{t(lang, 'portal_acc_link_label')}</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                value={serialInput}
+                onChange={e => setSerialInput(e.target.value)}
+                placeholder="XXXXXXXX-XXXX-XXXXXXXX"
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={linking || !serialInput.trim()}>
+                {linking ? t(lang, 'saving') : t(lang, 'portal_acc_link_btn')}
+              </button>
+            </div>
+            <p className="form-help">{t(lang, 'portal_acc_link_help')}</p>
           </div>
-          <p className="form-help">{t(lang, 'portal_acc_link_help')}</p>
         </div>
       </div>
     </div>
@@ -918,3 +920,4 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
 }
 
 const cell: React.CSSProperties = { padding: '8px 12px', verticalAlign: 'middle' };
+const detailCell: React.CSSProperties = { ...cell, padding: '10px 12px' };
