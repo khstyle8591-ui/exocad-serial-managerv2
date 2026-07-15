@@ -3,7 +3,7 @@ import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
 import { usePortalActionableCount } from '../hooks/usePortalActionableCount';
-import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../shared/types';
+import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText, Customer, Serial } from '../../shared/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface PortalSettings {
@@ -22,12 +22,26 @@ interface PortalAccount {
   login_id: string;
   email: string;
   phone: string;
+  address: string;
   name: string;
   exocad_id: string;
   language: string;
   status: 'active' | 'disabled';
   created_at: string;
+  last_synced_at?: string | null;
   customer_mismatch?: string | null;
+}
+
+interface AccountLinkDetail {
+  customer_id: number;
+  verified_serial: string;
+  customer: Customer | null;
+  serials: Serial[];
+}
+
+interface AccountDetail extends PortalAccount {
+  requests: AdminRequest[];
+  links: AccountLinkDetail[];
 }
 
 interface AdminRequest {
@@ -91,6 +105,7 @@ export default function Portal() {
   const [settings, setSettings] = useState<PortalSettings | null>(null);
   const [accounts, setAccounts] = useState<PortalAccount[]>([]);
   const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [detailAccount, setDetailAccount] = useState<AccountDetail | null>(null);
   const [reqFilter, setReqFilter] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sseRef = useRef<EventSource | null>(null);
@@ -172,6 +187,23 @@ export default function Portal() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
     }
+  }
+
+  async function openAccountDetail(acc: PortalAccount) {
+    try {
+      const detail = await api.portal.getAccount<AccountDetail>(acc.id);
+      setDetailAccount(detail);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    }
+  }
+
+  async function linkAccountSerial(accountId: number, serial: string) {
+    const result = await api.portal.linkAccountSerial<{ ok: boolean; already_linked?: boolean; main_product?: string }>(accountId, serial);
+    const detail = await api.portal.getAccount<AccountDetail>(accountId);
+    setDetailAccount(detail);
+    loadAccounts();
+    return result;
   }
 
   async function decide(req: AdminRequest, action: 'approve' | 'reject') {
@@ -264,7 +296,23 @@ export default function Portal() {
       {tab === 'settings'     && <SettingsTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'packages'     && <PackagesTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'descriptions' && <DescriptionsTab lang={lang} settings={settings} setSettings={setSettings} />}
-      {tab === 'accounts'     && <AccountsTab lang={lang} accounts={accounts} onToggle={toggleAccount} onSync={syncAccountToCustomer} />}
+      {tab === 'accounts'     && (
+        <AccountsTab
+          lang={lang}
+          accounts={accounts}
+          onToggle={toggleAccount}
+          onSync={syncAccountToCustomer}
+          onDetail={openAccountDetail}
+        />
+      )}
+      {detailAccount && (
+        <AccountDetailModal
+          lang={lang}
+          account={detailAccount}
+          onClose={() => setDetailAccount(null)}
+          onLinkSerial={linkAccountSerial}
+        />
+      )}
       {tab === 'requests'     && (
         <RequestsTab
           lang={lang}
@@ -505,11 +553,12 @@ function DescriptionsTab({ lang, settings, setSettings }: {
 }
 
 // ── Accounts tab ───────────────────────────────────────────────────────────────
-function AccountsTab({ lang, accounts, onToggle, onSync }: {
+function AccountsTab({ lang, accounts, onToggle, onSync, onDetail }: {
   lang: Language;
   accounts: PortalAccount[];
   onToggle: (a: PortalAccount) => void;
   onSync: (a: PortalAccount) => void;
+  onDetail: (a: PortalAccount) => void;
 }) {
   if (accounts.length === 0) {
     return <div className="settings-section"><p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_empty')}</p></div>;
@@ -552,6 +601,9 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
                   </span>
                 </td>
                 <td style={{ ...cell, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => onDetail(a)}>
+                    {t(lang, 'portal_acc_detail')}
+                  </button>
                   {mismatch && (
                     <button className="btn btn-danger btn-sm" onClick={() => onSync(a)}>
                       {t(lang, 'portal_acc_sync')}
@@ -566,6 +618,121 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Account detail modal ─────────────────────────────────────────────────────────
+// 자동 identity 매치 없이 시리얼 단독으로 연결되므로, 가입 시 입력한 정보 전체를
+// 연결된 고객 DB 값과 나란히 보여줘 매니저가 육안으로 대조/검증할 수 있게 한다.
+function AccountDetailModal({ lang, account, onClose, onLinkSerial }: {
+  lang: Language;
+  account: AccountDetail;
+  onClose: () => void;
+  onLinkSerial: (accountId: number, serial: string) => Promise<{ ok: boolean; already_linked?: boolean; main_product?: string }>;
+}) {
+  const [serialInput, setSerialInput] = useState('');
+  const [linking, setLinking] = useState(false);
+
+  async function handleLink() {
+    if (!serialInput.trim()) return;
+    setLinking(true);
+    try {
+      const result = await onLinkSerial(account.id, serialInput.trim());
+      setSerialInput('');
+      alert(result.already_linked
+        ? t(lang, 'portal_acc_link_already')
+        : `${t(lang, 'portal_acc_link_done')}${result.main_product ? ` — ${result.main_product}` : ''}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  const fields: { key: keyof AccountDetail; label: string; custKey?: keyof Customer }[] = [
+    { key: 'login_id', label: t(lang, 'label_portal_login_id') },
+    { key: 'name', label: t(lang, 'portal_req_applicant'), custKey: 'name' },
+    { key: 'email', label: 'Email', custKey: 'email' },
+    { key: 'phone', label: t(lang, 'label_phone'), custKey: 'phone' },
+    { key: 'address', label: t(lang, 'label_address'), custKey: 'address' },
+    { key: 'exocad_id', label: 'My.exocad ID' },
+    { key: 'created_at', label: t(lang, 'portal_acc_created') },
+  ];
+  const primaryCustomer = account.links[0]?.customer ?? null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{t(lang, 'portal_acc_detail')} — {account.login_id}</h3>
+          <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
+        </div>
+
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 16 }}>
+          <thead>
+            <tr style={{ background: 'var(--bg3)', textAlign: 'left' }}>
+              <th style={cell}>{t(lang, 'portal_acc_detail_field')}</th>
+              <th style={cell}>{t(lang, 'portal_acc_detail_portal_value')}</th>
+              <th style={cell}>{t(lang, 'portal_acc_detail_customer_value')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fields.map(f => {
+              const portalValue = String(account[f.key] ?? '') || '—';
+              const custValue = f.custKey && primaryCustomer ? (String(primaryCustomer[f.custKey] ?? '') || '—') : '—';
+              const mismatch = f.custKey && primaryCustomer
+                && portalValue.trim().toLowerCase() !== custValue.trim().toLowerCase();
+              return (
+                <tr key={f.key} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ ...cell, color: 'var(--text3)' }}>{f.label}</td>
+                  <td style={{ ...cell, color: mismatch ? 'var(--orange)' : 'var(--text)' }}>{portalValue}</td>
+                  <td style={cell}>{custValue}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>{t(lang, 'portal_acc_detail_linked_serials')}</h4>
+        {account.links.length === 0 && (
+          <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_detail_no_links')}</p>
+        )}
+        {account.links.map(link => (
+          <div key={link.customer_id} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+              {link.customer?.name ?? `#${link.customer_id}`}
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <tbody>
+                {link.serials.map(s => (
+                  <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={cell}>{s.serial_number}</td>
+                    <td style={cell}>{s.main_product}</td>
+                    <td style={cell}>{s.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+        <div className="form-group" style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <label>{t(lang, 'portal_acc_link_label')}</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={serialInput}
+              onChange={e => setSerialInput(e.target.value)}
+              placeholder="XXXXXXXX-XXXX-XXXXXXXX"
+              style={{ flex: 1 }}
+            />
+            <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={linking || !serialInput.trim()}>
+              {linking ? t(lang, 'saving') : t(lang, 'portal_acc_link_btn')}
+            </button>
+          </div>
+          <p className="form-help">{t(lang, 'portal_acc_link_help')}</p>
+        </div>
+      </div>
     </div>
   );
 }

@@ -344,6 +344,7 @@ export const api = {
         updateAccount: (id: number, data: unknown) => preq('PATCH', `/accounts/${id}`, data),
         setAccountStatus: (id: number, status: string) => preq('PATCH', `/accounts/${id}/status`, { status }),
         syncAccountToCustomer: (id: number) => preq('POST', `/accounts/${id}/sync-to-customer`, {}),
+        linkAccountSerial: <T>(id: number, serial: string) => preq<T>('POST', `/accounts/${id}/link-serial`, { serial }),
         listRequests: <T>(q?: { type?: string; status?: string }) => {
             const params = new URLSearchParams();
             if (q?.type) params.set('type', q.type);

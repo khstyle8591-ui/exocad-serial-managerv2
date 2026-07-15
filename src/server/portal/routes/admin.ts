@@ -15,11 +15,14 @@ import {
   markPortalRequestCancelRejectedPending,
   markPortalRequestDismissed,
   countActionablePortalRequests,
+  getAccountLinks,
+  isSerialLinked,
+  createAccountLink,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
 import { portalRequestEvents } from '../request-events';
-import { updateCustomer } from '../../../main/services/customer.service';
+import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
 import { getDb } from '../../../main/database';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
@@ -130,7 +133,8 @@ router.get('/accounts', (_req: Request, res: Response) => {
   res.json({ accounts: getAllPortalAccounts() });
 });
 
-// GET /portal/admin/accounts/:id
+// GET /portal/admin/accounts/:id — 가입 정보 전체(비밀번호 제외) + 연결된 고객/시리얼 함께 반환
+// (자동 identity 매치 없이 시리얼 단독으로 연결되므로, 매니저가 육안으로 대조할 수 있도록 제공)
 router.get('/accounts/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
@@ -138,7 +142,49 @@ router.get('/accounts/:id', (req: Request, res: Response) => {
   if (!account) { res.status(404).json({ error: 'Not found' }); return; }
   const { password_hash: _, ...safe } = account;
   const requests = getAllPortalRequests().filter(r => r.account_id === id);
-  res.json({ ...safe, requests });
+
+  const links = getAccountLinks(id).map(({ customer_id, verified_serial }) => ({
+    customer_id,
+    verified_serial,
+    customer: getCustomerById(customer_id) ?? null,
+    serials: serialService.list({ customer_id }).items,
+  }));
+
+  res.json({ ...safe, requests, links });
+});
+
+// POST /portal/admin/accounts/:id/link-serial — 관리자 수동 연결.
+// 파트 B에서 자동 identity(email/phone/name) 매치를 제거했으므로, 이 라우트도 동일하게
+// 시리얼 존재 여부만 확인하고 신원 대조 없이 강제 연결한다. 포털이 제한된 인원만 접근
+// 가능하다는 전제하의 결정 — 감사 추적을 위해 activity log를 warn 레벨로 남긴다.
+router.post('/accounts/:id/link-serial', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+  const account = findAccountById(id);
+  if (!account) { res.status(404).json({ error: 'Not found' }); return; }
+
+  const { serial } = req.body as Record<string, string>;
+  if (!serial?.trim()) { res.status(400).json({ error: 'serial_required' }); return; }
+
+  const serialRecord = serialService.getBySerialNumber(serial.trim());
+  if (!serialRecord) { res.status(404).json({ error: 'serial_not_found' }); return; }
+
+  if (isSerialLinked(id, serialRecord.customer_id)) {
+    res.json({ ok: true, already_linked: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
+    return;
+  }
+
+  createAccountLink(id, serialRecord.customer_id, serialRecord.serial_number.toUpperCase());
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'warn',
+    details: pickLang({
+      ko: `관리자가 포털 계정 #${id}(${account.login_id})에 시리얼 ${serialRecord.serial_number}를 수동 연결 — 고객 #${serialRecord.customer_id}, 신원확인 생략`,
+      en: `Manager manually linked serial ${serialRecord.serial_number} to portal account #${id} (${account.login_id}) — customer #${serialRecord.customer_id}, identity check skipped`,
+      ja: `管理者がポータルアカウント #${id}(${account.login_id})にシリアル ${serialRecord.serial_number} を手動連携 — 顧客 #${serialRecord.customer_id}、本人確認省略`,
+    }),
+  });
+
+  res.json({ ok: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
 });
 
 // PATCH /portal/admin/accounts/:id
