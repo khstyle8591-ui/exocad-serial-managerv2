@@ -26,6 +26,7 @@ let dailySummaryTask: cron.ScheduledTask | null = null;
 let retryCancelTask: cron.ScheduledTask | null = null;
 let expiryNoticeTask: cron.ScheduledTask | null = null;
 let creditAutoDistributeTask: cron.ScheduledTask | null = null;
+let dailyCronWatchdogTask: cron.ScheduledTask | null = null;
 
 // 하루 동안의 cancel 결과를 모아둠 (앱 재시작 대비 DB 영속)
 interface PersistedCancelResult extends CancelResult { date: string; }
@@ -243,6 +244,10 @@ export function startScheduler(): void {
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
   limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo' });
 
+  // 6-a. 일일 크론 워치독 — 15분마다 사전취소/Limbo가 오늘 실행됐는지 재확인.
+  // node-cron이 특정 틱에서 콜백을 놓치는 경우(이벤트루프 지연 등) 대비한 세이프티넷.
+  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo' });
+
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
 
@@ -359,6 +364,42 @@ async function runLimboFallbackOnce(): Promise<void> {
     logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
   }
   setJobLastRunDate('limbo_fallback', today);
+}
+
+// 15분마다 실행되는 워치독 — 서버 재시작 없이도 하루 중간에 사전취소/Limbo 크론이
+// 누락됐는지 재확인한다. node-cron의 내부 스케줄러는 이벤트루프가 특정 초에 지연되면
+// (autorecover 옵션 미사용 시) 그 틱을 영구히 스킵하는 한계가 있어, 라이브러리 동작에
+// 의존하지 않는 별도 세이프티넷으로 둔다. runPreExpiryCancelOnce/runLimboFallbackOnce는
+// 이미 "오늘 실행함" 가드가 있어 중복 호출돼도 안전(idempotent)하다.
+async function runDailyCronWatchdog(): Promise<void> {
+  try {
+    const today = getTodayDateString();
+    const settings = getSettings();
+    const cancelTime = settings.auto_cancel_time || '09:00';
+    if (
+      settings.auto_cancel_enabled &&
+      hasScheduledTimePassedToday(cancelTime) &&
+      getJobLastRunDate('pre_expiry_cancel') !== today
+    ) {
+      logger.warn(`[Watchdog] pre-expiry auto-cancel missed today's ${cancelTime} run — executing now`);
+      await runPreExpiryCancelOnce();
+      await sleep(10_000); // Playwright 연속 실행 방지 (e2-micro 부하 고려)
+      await retryFailedCancellations();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    const today = getTodayDateString();
+    if (hasScheduledTimePassedToday('03:00') && getJobLastRunDate('limbo_fallback') !== today) {
+      logger.warn("[Watchdog] limbo fallback missed today's 03:00 run — executing now");
+      await sleep(10_000);
+      await runLimboFallbackOnce();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] limbo fallback error: ${getErrorMessage(err)}`);
+  }
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -913,5 +954,6 @@ export function stopScheduler(): void {
   if (dailySummaryTask) dailySummaryTask.stop();
   if (retryCancelTask) retryCancelTask.stop();
   if (creditAutoDistributeTask) creditAutoDistributeTask.stop();
+  if (dailyCronWatchdogTask) dailyCronWatchdogTask.stop();
   logger.info('Scheduler stopped');
 }

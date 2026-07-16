@@ -828,48 +828,81 @@ export class CancelService {
     logger.info('Confirmation popup click completed');
   }
 
+  // 시리얼이 포함된 행에서 상태 셀 텍스트를 읽는다. 행을 못 찾으면 빈 배열.
+  private async readStatusCells(page: Page, serialNumber: string): Promise<string[]> {
+    return page.evaluate((sn: string) => {
+      const rows = Array.from(document.querySelectorAll('tbody tr, [role="row"]'));
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.textContent?.includes(sn)) {
+          const cells = Array.from(row.querySelectorAll('td, [role="cell"]'));
+          return cells.map((c: Element) => (c as HTMLElement).textContent?.trim()?.toLowerCase() || '');
+        }
+      }
+      return [] as string[];
+    }, serialNumber);
+  }
+
   // ============================================================
   // Cancel 결과 검증
   // 확인 버튼 클릭 후 페이지에서 해당 시리얼이
   // "opted out" 또는 "expired" 상태인지 확인
+  //
+  // 이 사이트는 백그라운드 폴링 때문에 networkidle이 거의 안 걸려 waitForSettledPage
+  // 직후 한 번만 스냅샷을 뜨면 SPA가 아직 리렌더하기 전이라 오탐(false unverified)이
+  // 잦았다. 대신 짧은 간격으로 여러 번 재조회하고, 그래도 안 되면 마지막에 한 번
+  // reload로 클라이언트 캐시를 우회해 서버에서 새로 받아온 상태로 최종 확인한다.
   // ============================================================
   private async verifyCancelResult(page: Page, serialNumber: string): Promise<{ verified: boolean; status: string }> {
+    const successStatuses = ['opted out', 'expired', 'cancelled', 'canceled'];
+    let lastStatusTexts: string[] = [];
+
     try {
-      // cancel 완료 후 페이지 갱신 대기
       await waitForSettledPage(page, 'cancel verification', 10000);
 
-      // 시리얼이 포함된 행에서 상태 텍스트 확인
-      const statusTexts = await page.evaluate((sn: string) => {
-        const rows = Array.from(document.querySelectorAll('tbody tr, [role="row"]'));
-        for (let i = 0; i < rows.length; i++) {
-          const row = rows[i];
-          if (row.textContent?.includes(sn)) {
-            const cells = Array.from(row.querySelectorAll('td, [role="cell"]'));
-            return cells.map((c: Element) => (c as HTMLElement).textContent?.trim()?.toLowerCase() || '');
-          }
+      const POLL_ATTEMPTS = 5;
+      const POLL_INTERVAL_MS = 2000;
+      for (let attempt = 1; attempt <= POLL_ATTEMPTS; attempt++) {
+        const statusTexts = await this.readStatusCells(page, serialNumber);
+        lastStatusTexts = statusTexts;
+
+        const foundStatus = statusTexts.find(t => successStatuses.some(s => t.includes(s)));
+        if (foundStatus) {
+          logger.info(`[verify] ${serialNumber}: status confirmed -> "${foundStatus}" (attempt ${attempt}/${POLL_ATTEMPTS})`);
+          return { verified: true, status: foundStatus };
         }
-        return [] as string[];
-      }, serialNumber);
+        if (statusTexts.length === 0) {
+          logger.info(`[verify] ${serialNumber}: no result row (assuming cancel completed, attempt ${attempt}/${POLL_ATTEMPTS})`);
+          return { verified: true, status: 'row_removed' };
+        }
 
-      const successStatuses = ['opted out', 'expired', 'cancelled', 'canceled'];
-      const foundStatus = statusTexts.find(t => successStatuses.some(s => t.includes(s)));
-
-      if (foundStatus) {
-        logger.info(`[verify] ${serialNumber}: status confirmed -> "${foundStatus}"`);
-        return { verified: true, status: foundStatus };
+        if (attempt < POLL_ATTEMPTS) {
+          await shortPause(page, POLL_INTERVAL_MS, `verify retry ${attempt}/${POLL_ATTEMPTS}`);
+        }
       }
 
-      // 행이 사라졌거나 상태가 변경된 경우도 성공으로 간주
-      if (statusTexts.length === 0) {
-        logger.info(`[verify] ${serialNumber}: no result row (assuming cancel completed)`);
+      // 폴링으로도 확인 안 됨 — 클라이언트 캐시된 상태일 수 있으니 reload로 서버 재조회 후 마지막 시도
+      logger.warn(`[verify] ${serialNumber}: still unconfirmed after polling -> reloading for final check`);
+      await page.reload().catch(() => { });
+      await waitForSettledPage(page, 'cancel verification (post-reload)', 10000);
+      const finalStatusTexts = await this.readStatusCells(page, serialNumber);
+      lastStatusTexts = finalStatusTexts;
+
+      const finalFoundStatus = finalStatusTexts.find(t => successStatuses.some(s => t.includes(s)));
+      if (finalFoundStatus) {
+        logger.info(`[verify] ${serialNumber}: status confirmed after reload -> "${finalFoundStatus}"`);
+        return { verified: true, status: finalFoundStatus };
+      }
+      if (finalStatusTexts.length === 0) {
+        logger.info(`[verify] ${serialNumber}: no result row after reload (assuming cancel completed)`);
         return { verified: true, status: 'row_removed' };
       }
 
-      logger.warn(`[verify] ${serialNumber}: status verification failed; detected cells: ${JSON.stringify(statusTexts)}`);
-      return { verified: false, status: statusTexts.join(' | ') };
+      logger.warn(`[verify] ${serialNumber}: status verification failed; detected cells: ${JSON.stringify(finalStatusTexts)}`);
+      return { verified: false, status: finalStatusTexts.join(' | ') };
     } catch (err: unknown) {
       const errorMessage = getErrorMessage(err);
-      logger.warn(`[verify] ${serialNumber}: error - ${errorMessage}`);
+      logger.warn(`[verify] ${serialNumber}: error - ${errorMessage}; last known cells: ${JSON.stringify(lastStatusTexts)}`);
       return { verified: false, status: `error: ${errorMessage}` };
     }
   }
