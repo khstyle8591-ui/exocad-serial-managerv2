@@ -13,6 +13,11 @@ type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+// CERT_DOMAIN 환경변수 미설정 시 사용하는 폴백 도메인 (Slack 스크린샷/메일 링크용).
+// 2026-06-30 exocadai.geomedi.co.jp 고정도메인 전환 이후 Caddy가 HTTPS를 대신 처리하면서
+// CERT_DOMAIN을 설정할 일이 없어져, 옛 Cloudflare 시절 duckdns 도메인이 계속 남아있었다.
+const FALLBACK_DOMAIN = 'exocadai.geomedi.co.jp';
+
 function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
   return Object.fromEntries(
     Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
@@ -481,9 +486,8 @@ export class NotificationService {
     if (result.screenshot_path) {
       const filename = path.basename(result.screenshot_path);
       // 외부에서 접근 가능한 스크린샷 URL 생성
-      // CERT_DOMAIN 환경변수 없으면 settings의 fallback 도메인을 사용
-      const fallbackDomain = 'geomedi-exocad.duckdns.org';
-      const domain = process.env.CERT_DOMAIN || fallbackDomain;
+      // CERT_DOMAIN 환경변수 없으면 FALLBACK_DOMAIN을 사용
+      const domain = process.env.CERT_DOMAIN || FALLBACK_DOMAIN;
       const screenshotUrl = `https://${domain}/api/logs/screenshot/${encodeURIComponent(filename)}`;
       const msgWithShot = message + '\n' + sf('screenshot', { file: screenshotUrl });
       return this.sendSlack(msgWithShot);
@@ -548,10 +552,9 @@ export class NotificationService {
   // === 관련 메일 수신 알림 (System Log 용도) ===
   async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[], mailId?: number, mailDate?: Date | string): Promise<boolean> {
     const kwsStr = matchedKeywords.join(', ');
-    const fallbackDomain = 'geomedi-exocad.duckdns.org';
-    const domain = process.env.CERT_DOMAIN || fallbackDomain;
+    const domain = process.env.CERT_DOMAIN || FALLBACK_DOMAIN;
     const baseUrl = `https://${domain}`;
-    const link = mailId ? `${baseUrl}/system-logs?mailId=${mailId}` : '(시스템 로그 확인)';
+    const link = mailId ? `${baseUrl}/manage/system-logs?mailId=${mailId}` : '(시스템 로그 확인)';
     
     let timeStr = '(알 수 없음)';
     if (mailDate) {
