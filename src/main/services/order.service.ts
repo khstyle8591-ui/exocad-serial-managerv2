@@ -365,7 +365,16 @@ export async function approvePendingOrder(
       if (pollGroup === 'renewal' && pollExpiry) {
         const newExpiry = new Date(pollExpiry);
         newExpiry.setFullYear(newExpiry.getFullYear() + 1);
-        serialService.renewSerialWithExpiry(serial.id, getDateString(newExpiry), 'manual');
+        const newExpiryStr = getDateString(newExpiry);
+        if (serial.expiry_date && newExpiryStr <= serial.expiry_date) {
+          // 이미 자동/수동 갱신으로 이 목표일까지 반영되어 있음 — 중복 연장 방지, 승인 확정 의미만 반영
+          logger.info(`[approve] renewal skip — already covered: serial=${order.serial_number} target=${newExpiryStr} current=${serial.expiry_date}`);
+          if (serial.status !== 'active' || serial.renewal_stop_requested) {
+            serialService.update(serial.id, { status: 'active', renewal_stop_requested: false });
+          }
+        } else {
+          serialService.renewSerialWithExpiry(serial.id, newExpiryStr, 'manual');
+        }
       } else {
         serialService.renewSerial(serial.id, 'manual');
       }
