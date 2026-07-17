@@ -293,14 +293,20 @@ export class CancelService {
       await submitButton.click();
 
       // ─── 결과 확인 ───
-      // 실패 시 우상단에 약 1초간 노출되는 에러 토스트를 best-effort로 픽업(제네릭 셀렉터 폭 대응).
+      // 우상단에 약 1초간 노출되는 토스트를 best-effort로 픽업(제네릭 셀렉터 폭 대응) —
+      // 성공/실패 토스트 모두 이 셀렉터에 걸리므로 텍스트로 구분한다.
+      // 확인된 성공 토스트 문구: "Credits distributed successfully!"
       // 토스트 감지에 실패하더라도 스크린샷은 항상 남겨 매니저가 수동으로 확인할 수 있게 한다.
-      const toastError = await this.captureErrorToast(page);
+      const toastText = await this.captureErrorToast(page);
       const screenshotPath = await this.captureResultScreenshot(page, exocadId, 'credit');
 
-      if (toastError) {
-        logger.warn(`[distributeCredits] error toast detected for ${exocadId}: ${toastError}`);
-        return { exocad_id: exocadId, success: false, error: toastError, screenshot_path: screenshotPath };
+      if (toastText) {
+        if (/success/i.test(toastText)) {
+          logger.info(`[distributeCredits] success toast detected for ${exocadId}: ${toastText}`);
+          return { exocad_id: exocadId, success: true, screenshot_path: screenshotPath };
+        }
+        logger.warn(`[distributeCredits] error toast detected for ${exocadId}: ${toastText}`);
+        return { exocad_id: exocadId, success: false, error: toastText, screenshot_path: screenshotPath };
       }
 
       // 토스트가 감지되지 않았어도 팝업이 안 닫혔다면 결과를 신뢰할 수 없음 → 실패로 처리
