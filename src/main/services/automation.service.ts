@@ -419,7 +419,11 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
     serial.expiry_date > limitStr &&   // 7일 이내 만료만
     serial.expiry_date <= today &&
     (serial.status === 'active' || serial.status === 'expired') &&
-    !!serial.renewal_stop_requested
+    !!serial.renewal_stop_requested &&
+    // 이미 강제만료 처리해 포기한 건은 재시도하지 않는다(Playwright 폭주 방지).
+    // renewal_stop_requested를 더 이상 해제하지 않으므로(아래 참고), 이 조건이 없으면
+    // 포기한 시리얼이 매일 다시 후보에 잡혀 무한 재시도된다.
+    !serialService.wasLastForcedExpired(serial.id)
   );
 
   const results: CancelResult[] = [];
@@ -484,20 +488,11 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
         triggerId
       );
 
-      // Limbo 재시도 자체가 실패하면 더 이상 재시도하지 않는다 — 최초 실패 시점과 Limbo 실패
-      // 시점에 이미 관리자에게 critical 알림이 발송되었으므로, renewal_stop_requested를 해제해
-      // 다음 날 Limbo 후보에서 제외시킨다(중복 재시도/중복 알림 방지).
-      serialService.setStopRequested(
-        serial.id,
-        false,
-        triggerId,
-        'auto',
-        pickLang({
-          ko: 'Limbo 재시도 실패 — 재시도 중단(이미 관리자 알림 발송됨)',
-          en: 'Limbo retry failed — retries stopped (manager already alerted)',
-          ja: 'Limboリトライ失敗 — リトライ停止(管理者へ通知済み)',
-        }),
-      );
+      // 주의: renewal_stop_requested는 여기서 해제하지 않는다 — 이 플래그는 "자동갱신 금지"의
+      // 유일한 표시이기도 해서, 예전엔 여기서 껐다가 이틀 뒤 auto-renew 크론이 "딱지 없는 만료
+      // 시리얼"로 오인해 그대로 부활시키는 버그가 있었다(2026-07 발견). 재시도 중단은 위
+      // forceExpired 로그(status_forced_expired) 자체가 표식 역할을 하며, 다음 실행 시
+      // wasLastForcedExpired()로 후보에서 제외된다 — 플래그를 안 건드려도 재시도는 멈춘다.
 
       const suppressKey = `alert_suppress:${serial.serial_number}:status_forced_expired`;
       const db = getDb();

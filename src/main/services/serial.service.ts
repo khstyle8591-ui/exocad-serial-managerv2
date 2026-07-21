@@ -248,6 +248,8 @@ export class SerialService {
    * 예외: cancelled/expired 상태라도 중단 플래그가 없고 만료일로부터 3일 이내라면 대상에 포함
    * (syncExpired가 auto-renew cron보다 먼저 돌아 status를 expired로 바꿔버리는 타이밍/다운타임 문제 구제).
    * broken/not-activated 및 중단 플래그가 있는 시리얼은 상태 불문 항상 제외.
+   * 이중 방어: renewal_stop_requested가 어떤 경로로든 0이 되어 있어도, 아직 해소되지 않은
+   * 강제만료(status_forced_expired) 이력이 있는 시리얼은 부활시키지 않는다(wasLastForcedExpired).
    */
   getAutoRenewCandidates(today = getTodayDateString()): SerialWithCustomer[] {
     const graceFrom = getDaysAgoDateString(3);
@@ -265,7 +267,7 @@ export class SerialService {
          ORDER BY s.expiry_date ASC, s.id ASC`
       )
       .all(today, graceFrom) as SerialRow[];
-    return rows.map(parseSerialRow);
+    return rows.map(parseSerialRow).filter(serial => !this.wasLastForcedExpired(serial.id));
   }
 
   getLifecycleNoticeSample(kind: 'stop_request' | 'cancel_complete'): SerialWithCustomer | null {
@@ -795,6 +797,24 @@ export class SerialService {
   /** @deprecated Use hasStopRequested(). Name was misleading — returns true when customer wants to CANCEL. */
   hasPendingRenewal(serialId: number): boolean {
     return this.hasStopRequested(serialId);
+  }
+
+  /**
+   * 이 시리얼의 가장 최근 "라이프사이클 결정" 로그가 status_forced_expired인지 여부.
+   * true면 = 그 이후 renewed/cancelled/activated 등으로 해소되지 않은, 아직 살아있는 강제만료.
+   * limbo 재시도 대상 제외 + 자동갱신 이중 방어(둘 다)에 사용 — renewal_stop_requested 플래그와
+   * 무관하게 동작해, 플래그가 어떤 경로로든 꺼져도 강제만료 처리된 시리얼이 부활하지 않게 한다.
+   */
+  wasLastForcedExpired(serialId: number): boolean {
+    const row = getDb()
+      .prepare(
+        `SELECT action FROM activity_logs
+         WHERE serial_id = ?
+           AND action IN ('status_forced_expired', 'renewed', 'cancelled', 'activated', 'registered')
+         ORDER BY id DESC LIMIT 1`
+      )
+      .get(serialId) as { action: string } | undefined;
+    return row?.action === 'status_forced_expired';
   }
 
   // ── Bulk import ────────────────────────────────────────────────────────────
