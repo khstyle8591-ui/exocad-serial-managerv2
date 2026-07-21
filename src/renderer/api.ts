@@ -29,6 +29,7 @@ import type {
     SerialWithCustomer,
     StatsCountsResult,
     StatsSeries,
+    BulkUpdatePreview,
 } from '../shared/types';
 
 // 서버 전용 응답 모양(main 프로세스에 정의되어 있으나 shared/types.ts에는 없음) — 여기서만 쓰는 최소 형태로 로컬 정의
@@ -185,8 +186,30 @@ export const api = {
         }
     },
     exportSerialsByFilter: async (query: Record<string, unknown>) => {
-        const data = await api.listSerials({ ...query, limit: 10000, offset: 0 });
-        return api.exportSerials(data.items);
+        // 서버에서 필터 전체를 엑셀로 생성 (list API의 500건 캡 우회 — export-filtered는 LIMIT 없음)
+        try {
+            const res = await fetch(`${BASE}/serials/export-filtered`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(query),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || res.statusText);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'serials.xlsx';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : 'Export failed' };
+        }
     },
 
     // 엑셀 템플릿 다운로드
@@ -198,6 +221,18 @@ export const api = {
         fd.append('file', file);
         const res = await fetch(`${BASE}/serials/bulk-import`, { method: 'POST', body: fd });
         if (!res.ok) throw new Error((await res.json()).error);
+        return res.json();
+    },
+
+    // 엑셀 벌크 업데이트 (multipart). mode='preview'=dry-run 리포트, 'apply'=백업 후 실제 반영
+    bulkUpdate: async (file: File, mode: 'preview' | 'apply'): Promise<BulkUpdatePreview> => {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`${BASE}/serials/bulk-update?mode=${mode}`, { method: 'POST', body: fd });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(err.error || res.statusText);
+        }
         return res.json();
     },
 

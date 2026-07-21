@@ -13,6 +13,8 @@ import {
     parseSerialUpdateInput,
 } from '../../shared/serial-contract';
 import { SERVER_ERRORS } from '../../shared/server-errors';
+import type { SerialExportQuery } from '../../shared/types';
+import { previewBulkUpdate, applyBulkUpdate } from '../../main/services/serial-bulk-update.service';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -128,11 +130,58 @@ router.post('/bulk-import', upload.single('file'), async (req: Request, res: Res
     }
 });
 
+// POST /api/serials/bulk-update?mode=preview|apply  (multipart/form-data)
+// 벌크 upsert. mode=preview(기본)는 쓰기 없이 dry-run 리포트만, mode=apply는 백업 후 트랜잭션 반영.
+// apply 시 동일 파일을 재업로드하며, 반영 직전 현재 DB 기준으로 충돌을 재검증한다.
+router.post('/bulk-update', upload.single('file'), async (req: Request, res: Response) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: SERVER_ERRORS.IMPORT_NO_FILE });
+        }
+        const parsed = await excelService.parseBulkUpdateBuffer(req.file.buffer);
+        if (parsed.parseErrors.length > 0) {
+            return res.status(400).json({ error: parsed.parseErrors.join('; ') });
+        }
+        const result = String(req.query.mode) === 'apply'
+            ? await applyBulkUpdate(parsed)
+            : previewBulkUpdate(parsed);
+        res.json(result);
+    } catch (err) {
+        logger.error(`Bulk update error: ${errorMessage(err)}`);
+        res.status(500).json({ error: errorMessage(err) });
+    }
+});
+
 // POST /api/serials/export
 router.post('/export', async (req: Request, res: Response) => {
     try {
         const serials = Array.isArray(req.body?.serials) ? req.body.serials : [];
         const buf = await excelService.exportSerialsBuffer(serials);
+        res.setHeader('Content-Disposition', 'attachment; filename="serials.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buf);
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
+    }
+});
+
+// POST /api/serials/export-filtered
+// 필터 조건에 맞는 시리얼 전체를 서버에서 엑셀로 생성. list API의 500건 캡을 타지 않는다
+// (listForExport는 LIMIT 없이 조회). "시리얼 DB 다운로드"가 이 경로를 사용.
+router.post('/export-filtered', async (req: Request, res: Response) => {
+    try {
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const query = {
+            search: typeof body.search === 'string' ? body.search : undefined,
+            status: typeof body.status === 'string' ? (body.status as SerialExportQuery['status']) : undefined,
+            customer_id: body.customer_id != null ? Number(body.customer_id) : undefined,
+            renewal_stop_requested:
+                typeof body.renewal_stop_requested === 'boolean' ? body.renewal_stop_requested : undefined,
+            expiring_this_month: body.expiring_this_month ? true : undefined,
+        } satisfies SerialExportQuery;
+        const serials = serialService.listForExport(query);
+        // 숨김 id 열 + 스냅샷 시트 포함 (다운로드 = 벌크 업데이트 편집 템플릿)
+        const buf = await excelService.exportBulkUpdateBuffer(serials);
         res.setHeader('Content-Disposition', 'attachment; filename="serials.xlsx"');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.send(buf);

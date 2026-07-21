@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { SerialInput, SerialWithCustomer } from '../../shared/types';
+import type { SerialInput, SerialWithCustomer, ParsedBulkUpdate, ParsedBulkUpdateRow } from '../../shared/types';
 import { getDateString, getTodayDateString } from '../utils/date-utils';
 
 type NormalizedExcelRow = Record<
@@ -59,6 +59,14 @@ const SERIAL_EXCEL_SAMPLE = [
 ];
 
 const SERIAL_EXCEL_WIDTHS = [18, 16, 22, 16, 30, 14, 12, 16, 16, 14, 12, 12, 18, 28, 18, 24];
+
+// ── 벌크 업데이트(upsert) 템플릿 ────────────────────────────────────────────────
+// 다운로드 = 편집 템플릿. 맨 앞 숨김 'id' 열(기존 시리얼의 안정적 키) + 숨김 '__snapshot__' 시트
+// (export 시점 원본값 사본)로, 재업로드 시 "관리자가 실제로 고친 칸"만 반영하도록 한다.
+const BULK_ID_HEADER = 'id';
+const BULK_UPDATE_HEADERS = [BULK_ID_HEADER, ...SERIAL_EXCEL_HEADERS];
+const BULK_UPDATE_WIDTHS = [8, ...SERIAL_EXCEL_WIDTHS];
+const SNAPSHOT_SHEET_NAME = '__snapshot__';
 const VALID_SERIAL_STATUSES = new Set(['active', 'cancelled', 'expired', 'not-activated', 'broken']);
 const SERIAL_STATUS_ALIASES: Record<string, SerialInput['status']> = {
   active: 'active',
@@ -148,6 +156,94 @@ export class ExcelService {
     const wb = this.buildSerialsWorkbook(serials);
     const data = await wb.xlsx.writeBuffer();
     return Buffer.from(data);
+  }
+
+  // ── 벌크 업데이트 템플릿 export / 업로드 파싱 ────────────────────────────────
+  async exportBulkUpdateBuffer(serials: SerialWithCustomer[]): Promise<Buffer> {
+    const wb = this.buildBulkUpdateWorkbook(serials);
+    const data = await wb.xlsx.writeBuffer();
+    return Buffer.from(data);
+  }
+
+  private buildBulkUpdateWorkbook(serials: SerialWithCustomer[]): ExcelJS.Workbook {
+    const wb = new ExcelJS.Workbook();
+    const rows = serials.map(serial => [serial.id, ...this.serialToRow(serial)]);
+
+    const ws = wb.addWorksheet('Serials');
+    ws.columns = BULK_UPDATE_WIDTHS.map(width => ({ width }));
+    ws.addRow(BULK_UPDATE_HEADERS);
+    ws.addRows(rows);
+    ws.getColumn(1).hidden = true;  // id: 내부 키 — 편집 금지
+
+    // 원본 스냅샷 (veryHidden: 일반 편집으로는 안 보임)
+    const snap = wb.addWorksheet(SNAPSHOT_SHEET_NAME, { state: 'veryHidden' });
+    snap.addRow(BULK_UPDATE_HEADERS);
+    snap.addRows(rows);
+
+    return wb;
+  }
+
+  async parseBulkUpdateBuffer(buffer: Buffer): Promise<ParsedBulkUpdate> {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0]);
+    const parseErrors: string[] = [];
+
+    const mainSheet = wb.worksheets.find(w => w.name !== SNAPSHOT_SHEET_NAME);
+    if (!mainSheet) {
+      return { rows: [], snapshot: {}, hasSnapshot: false, parseErrors: ['시트를 찾을 수 없습니다'] };
+    }
+
+    const parseId = (value: unknown): number | null => {
+      if (value === undefined || value === null || value === '') return null;
+      const n = Number(value);
+      return Number.isInteger(n) && n > 0 ? n : null;
+    };
+
+    const rows: ParsedBulkUpdateRow[] = this.sheetToRecords(mainSheet).map(rec => {
+      const { [BULK_ID_HEADER]: idVal, ...rest } = rec.values;
+      return { rowNum: rec.rowNum, id: parseId(idVal), fields: rest };
+    });
+
+    const snapSheet = wb.getWorksheet(SNAPSHOT_SHEET_NAME);
+    const snapshot: Record<number, Record<string, unknown>> = {};
+    const hasSnapshot = !!snapSheet;
+    if (snapSheet) {
+      for (const rec of this.sheetToRecords(snapSheet)) {
+        const sid = parseId(rec.values[BULK_ID_HEADER]);
+        if (sid != null) {
+          const { [BULK_ID_HEADER]: _omit, ...rest } = rec.values;
+          void _omit;
+          snapshot[sid] = rest;
+        }
+      }
+    }
+
+    return { rows, snapshot, hasSnapshot, parseErrors };
+  }
+
+  /** 시트를 header→값 레코드 배열로 (1행=헤더). 완전 빈 행은 제외. */
+  private sheetToRecords(sheet: ExcelJS.Worksheet): Array<{ rowNum: number; values: Record<string, unknown> }> {
+    const headerRow = sheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
+      headers[col] = String(cellValueToPrimitive(cell.value) ?? '').trim();
+    });
+
+    const out: Array<{ rowNum: number; values: Record<string, unknown> }> = [];
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const values: Record<string, unknown> = {};
+      let hasAny = false;
+      for (let col = 1; col < headers.length; col++) {
+        const header = headers[col];
+        if (!header) continue;
+        const value = cellValueToPrimitive(row.getCell(col).value);
+        values[header] = value;
+        if (value !== undefined && value !== null && value !== '') hasAny = true;
+      }
+      if (hasAny) out.push({ rowNum: rowNumber, values });
+    });
+    return out;
   }
 
   async generateTemplateBuffer(): Promise<Buffer> {

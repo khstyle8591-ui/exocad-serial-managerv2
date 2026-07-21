@@ -299,6 +299,50 @@ export interface SerialListResult {
   offset: number;
 }
 
+// ── Bulk update (Excel upsert: 다운로드→편집→업로드) ─────────────────────────
+/** 업로드된 워크북을 파싱한 원본(서버 내부 전용). */
+export interface ParsedBulkUpdateRow {
+  rowNum: number;            // 메인 시트의 엑셀 행 번호
+  id: number | null;         // 숨김 id 열 (기존 시리얼=값 있음, 신규 행=null)
+  fields: Record<string, unknown>;  // header → 셀 원본값 (id 제외)
+}
+export interface ParsedBulkUpdate {
+  rows: ParsedBulkUpdateRow[];
+  snapshot: Record<number, Record<string, unknown>>;  // id → export 시점 원본값 (변경 감지 기준)
+  hasSnapshot: boolean;      // 숨김 스냅샷 시트 존재 여부
+  parseErrors: string[];
+}
+
+export type BulkRowAction = 'insert' | 'update' | 'skip' | 'error';
+export interface BulkFieldChange {
+  field: string;             // 엑셀 header
+  from: string;              // 현재(DB) 값
+  to: string;                // 반영하려는 값
+  status: 'apply' | 'conflict';  // apply=반영, conflict=편집 창 중 시스템도 바꿔서 건너뜀
+}
+export interface BulkRowResult {
+  rowNum: number;
+  serial_number: string;
+  action: BulkRowAction;
+  changes: BulkFieldChange[];
+  error?: string;            // action==='error'일 때 사유
+  warning?: string;          // 스냅샷 없음 등 주의
+}
+export interface BulkUpdatePreview {
+  summary: {
+    insert: number;
+    update: number;
+    skip: number;
+    conflict: number;        // 충돌 칸을 1개 이상 가진 행 수
+    error: number;
+    total: number;
+  };
+  hasSnapshot: boolean;
+  rows: BulkRowResult[];
+  committed: boolean;        // dry-run=false, 실제 반영=true
+  backupPath?: string;       // 반영 시 생성한 백업 파일 경로
+}
+
 export interface SerialVersionSummary {
   version: string;
   total: number;
