@@ -17,7 +17,6 @@ import type { DailyReport, CancelResult, ExpiryNoticeRule, SerialWithCustomer } 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 let mailCheckTasks: cron.ScheduledTask[] = [];
-let dailyCancelTask: cron.ScheduledTask | null = null;
 let preExpiryCancelTask: cron.ScheduledTask | null = null;
 let autoRenewTask: cron.ScheduledTask | null = null;
 let dailyReportTasks: cron.ScheduledTask[] = [];
@@ -178,32 +177,6 @@ export function startScheduler(): void {
 
   // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
   startMailCheck();
-
-   // [제거됨] 2. 매일 자정에 만료된 시리얼 cancel 처리 (새벽 리포트 폭풍의 원인)
-   // 대신 실패 건만 재시도하는 로직이 startPreExpiryTask 내에서 별도로 스케줄링됩니다.
-  /*
-  dailyCancelTask = cron.schedule('0 0 * * *', async () => {
-    const settings = getSettings();
-    if (!settings.auto_cancel_enabled) {
-      logger.info('Expired serial cancel task is disabled (skip)');
-      return;
-    }
-
-    logger.info('Expired serial cancel task started');
-    try {
-      const results = await cancelService.processExpiredSerials();
-      dailyCancelResults.push(...results);
-      logger.info(`Cancel task completed: success=${results.filter(r => r.success).length}, failed=${results.filter(r => !r.success).length}`);
-
-      // cancel 결과를 개별적으로 Slack으로 전송
-      for (const result of results) {
-        await notificationService.sendCancelResultSlack(result).catch(() => { });
-      }
-    } catch (err: unknown) {
-      logger.error(`Cancel task error: ${getErrorMessage(err)}`);
-    }
-  }, { timezone: 'Asia/Tokyo' });
-  */
 
   // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 중단 요청이 있으면)
   startPreExpiryTask();
@@ -946,7 +919,6 @@ export function startDailyReportTasks(): void {
 export function stopScheduler(): void {
   for (const task of mailCheckTasks) task.stop();
   if (limboCronTask) limboCronTask.stop();
-  if (dailyCancelTask) dailyCancelTask.stop();
   if (preExpiryCancelTask) preExpiryCancelTask.stop();
   if (autoRenewTask) autoRenewTask.stop();
   if (expiryNoticeTask) expiryNoticeTask.stop();

@@ -1,11 +1,10 @@
-import nodemailer from 'nodemailer';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
-import { sendTemplate } from './mail/smtp.service';
+import { sendTemplate, buildTransporter as buildMailTransporter, buildFrom as buildMailFrom } from './mail/smtp.service';
 import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult, LocalizedText } from '../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -22,11 +21,6 @@ function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOve
   return Object.fromEntries(
     Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
   ) as SettingsOverride;
-}
-
-function buildSmtpFrom(settings: ReturnType<typeof getSettings>) {
-  const name = (settings.smtp_from_name || 'Exocad Manager').trim();
-  return settings.smtp_user ? { name, address: settings.smtp_user } : settings.smtp_host;
 }
 
 function parseModules(modulesJson: string): string[] {
@@ -90,7 +84,6 @@ const S: Record<SlackLang, Record<string, string>> = {
     confirm_button_missing: '확인 팝업 버튼을 찾을 수 없습니다. 시리얼: {serial}',
     dropdown_button_missing: '드롭다운에서 취소 버튼을 찾을 수 없습니다. 시리얼: {serial}',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 수신 시각: {time}\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
-    scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
   en: {
     sched_mail_check: 'Mail Check',
@@ -140,7 +133,6 @@ const S: Record<SlackLang, Record<string, string>> = {
     confirm_button_missing: 'Could not find the confirmation popup button. Serial: {serial}',
     dropdown_button_missing: 'Could not find the cancel button in the dropdown. Serial: {serial}',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• Received at: {time}\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
-    scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
   ja: {
     sched_mail_check: 'メールチェック',
@@ -190,7 +182,6 @@ const S: Record<SlackLang, Record<string, string>> = {
     confirm_button_missing: '確認ポップアップボタンが見つかりません。シリアル: {serial}',
     dropdown_button_missing: 'ドロップダウンでキャンセルボタンが見つかりません。シリアル: {serial}',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
-    scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
 };
 
@@ -543,12 +534,6 @@ export class NotificationService {
     return this.sendSlack(lines.join('\n'));
   }
   
-  // === 스케줄러 시작 알림 ===
-  async sendSchedulerStartupSlack(details: string): Promise<boolean> {
-    const msg = sf('scheduler_start', { details });
-    return this.sendSlack(msg);
-  }
-
   // === 관련 메일 수신 알림 (System Log 용도) ===
   async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[], mailId?: number, mailDate?: Date | string): Promise<boolean> {
     const kwsStr = matchedKeywords.join(', ');
@@ -580,25 +565,10 @@ export class NotificationService {
     }
 
     try {
-      const port = Number(settings.smtp_port) || 587;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-      // 앱 비밀번호 공백 제거
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: {
-          user: settings.smtp_user,
-          pass: cleanPassword,
-        },
-      });
+      const transporter = buildMailTransporter(settings);
 
       await transporter.sendMail({
-        from: buildSmtpFrom(settings),
+        from: buildMailFrom(settings),
         to: settings.report_email_to,
         subject,
         html: htmlBody,
@@ -621,21 +591,10 @@ export class NotificationService {
     }
 
     try {
-      const port = Number(settings.smtp_port) || 587;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: settings.smtp_user ? { user: settings.smtp_user, pass: cleanPassword } : undefined,
-      });
+      const transporter = buildMailTransporter(settings, { allowNoAuth: true });
 
       await transporter.sendMail({
-        from: buildSmtpFrom(settings),
+        from: buildMailFrom(settings),
         to,
         subject,
         html: htmlBody,
@@ -754,102 +713,6 @@ export class NotificationService {
   }
 
   // === Test Connection (SMTP) ===
-  async testSmtpConnection(settingsOverride?: SettingsOverride): Promise<{ success: boolean; message: string }> {
-    // settingsOverride에 undefined 값이 있으면 DB 저장값을 덮어쓰는 버그 방지
-    // undefined/null 제거 후 병합
-    const settings: EffectiveSettings = { ...getSettings(), ...cleanSettingsOverride(settingsOverride) };
-
-    // 로그: 어떤 값으로 테스트하는지 확인 (비밀번호는 마스킹)
-    logger.info(`SMTP 테스트 - host: ${settings.smtp_host}, port: ${settings.smtp_port}, user: ${settings.smtp_user}, hasPassword: ${!!settings.smtp_password}`);
-
-    if (!settings.smtp_host) {
-      return { success: false, message: 'SMTP 서버 주소를 입력해주세요.' };
-    }
-    if (!settings.smtp_user) {
-      return { success: false, message: 'SMTP 사용자명(이메일)을 입력해주세요.' };
-    }
-    if (!settings.smtp_password) {
-      return { success: false, message: 'SMTP 비밀번호 또는 앱 비밀번호를 입력해주세요.' };
-    }
-    if (!settings.report_email_to) {
-      return { success: false, message: '리포트 수신 이메일을 입력해주세요.' };
-    }
-    const parsedPort = Number(settings.smtp_port);
-    if (!settings.smtp_port || isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
-      return { success: false, message: `SMTP 포트가 올바르지 않습니다: "${settings.smtp_port}" (유효 범위: 1–65535)` };
-    }
-
-    try {
-      logger.info(`SMTP connection test started: ${settings.smtp_host}:${settings.smtp_port}`);
-      const port = parsedPort;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-
-      // 앱 비밀번호 공백 제거 (Google App Password는 'xxxx xxxx xxxx xxxx' 형태로 복붙되는 경우 있음)
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        // Gmail port 587 사용 시 STARTTLS 강제 (requireTLS: true)
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: {
-          user: settings.smtp_user,
-          pass: cleanPassword,
-        },
-        connectionTimeout: 15000,
-      });
-
-      // Verify connection configuration
-      await transporter.verify();
-
-      // Send a test email
-      await transporter.sendMail({
-        from: buildSmtpFrom(settings),
-        to: settings.report_email_to,
-        subject: '[Exocad Manager] SMTP 설정 테스트',
-        text: '이 이메일은 Exocad Manager 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.',
-        html: '<p>이 이메일은 <strong>Exocad Manager</strong> 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.</p>',
-      });
-
-      logger.info('SMTP connection test succeeded and test email sent');
-      return { success: true, message: 'SMTP 연결 성공 및 테스트 메일 발송 완료' };
-    } catch (err: unknown) {
-      const msg = getErrorMessage(err);
-      logger.error(`SMTP connection test error: ${msg}`);
-
-      // Gmail 530 / 535 인증 오류 → App Password 안내
-      if (
-        msg.includes('535') || msg.includes('530') ||
-        msg.includes('Authentication') || msg.includes('Username and Password not accepted')
-      ) {
-        const isGmail = (settings.smtp_host || '').toLowerCase().includes('gmail');
-        if (isGmail) {
-          return {
-            success: false,
-            message:
-              '❌ Gmail 인증 실패 (530/535)\n\n' +
-              '✅ 해결 방법: Gmail 계정의 일반 비밀번호 대신 "앱 비밀번호(App Password)"를 사용해야 합니다.\n\n' +
-              '📌 앱 비밀번호 생성 방법:\n' +
-              '1. Google 계정 → 보안 → 2단계 인증 활성화 필수\n' +
-              '2. 보안 → 앱 비밀번호 → "기타(사용자 지정)" 선택\n' +
-              '3. 생성된 16자리 비밀번호를 SMTP Password에 입력\n\n' +
-              '🔗 https://myaccount.google.com/apppasswords',
-          };
-        }
-        return {
-          success: false,
-          message:
-            `❌ SMTP 인증 실패: ${msg}\n\n` +
-            '비밀번호 또는 계정 설정을 확인하세요. Gmail 사용 시 앱 비밀번호가 필요합니다.',
-        };
-      }
-
-      return { success: false, message: `테스트 실패: ${msg}` };
-    }
-  }
-
   // === Daily Report ===
   async sendDailyReport(report: DailyReport): Promise<void> {
     const slackMsg = this.formatDailyReportSlack(report);

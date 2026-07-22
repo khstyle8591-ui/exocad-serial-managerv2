@@ -17,23 +17,26 @@ function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOve
   ) as SettingsOverride;
 }
 
-function buildTransporter(settings: ReturnType<typeof getSettings>) {
+export function buildTransporter(settings: ReturnType<typeof getSettings>, opts?: { allowNoAuth?: boolean }) {
   const port = Number(settings.smtp_port) || 587;
   const useImplicitSSL = port === 465;
   const isGmail = settings.smtp_host.toLowerCase().includes('gmail');
-  const cleanPassword = settings.smtp_password.replace(/\s+/g, '');
+  const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
+  const auth = opts?.allowNoAuth && !settings.smtp_user
+    ? undefined
+    : { user: settings.smtp_user, pass: cleanPassword };
 
   return nodemailer.createTransport({
     host: settings.smtp_host,
     port,
     secure: useImplicitSSL,
     requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmail),
-    auth: { user: settings.smtp_user, pass: cleanPassword },
+    auth,
     connectionTimeout: 15000,
   });
 }
 
-function buildFrom(settings: ReturnType<typeof getSettings>) {
+export function buildFrom(settings: ReturnType<typeof getSettings>) {
   const name = (settings.smtp_from_name || 'Exocad Manager').trim();
   return settings.smtp_user ? { name, address: settings.smtp_user } : name;
 }

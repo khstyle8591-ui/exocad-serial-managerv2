@@ -751,6 +751,10 @@ export class SerialService {
 
   /** cancelSubscription — backward compat (used by cancel.service.ts callback). */
   cancelSubscription(id: number): SerialWithCustomer | undefined {
+    // 이미 cancelled면 no-op(undefined 반환) — 서로 다른 자동취소 경로(예정취소/failsafe/limbo/포털)가
+    // 같은 시리얼을 겹쳐 처리할 때 완료메일·로그가 중복 발동하는 것을 막는다(멱등).
+    const existing = this.getById(id);
+    if (!existing || existing.status === 'cancelled') return undefined;
     return this.cancelManual(id);
   }
 

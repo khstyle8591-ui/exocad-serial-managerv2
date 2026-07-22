@@ -7,7 +7,7 @@ import { logger } from '../utils/logger';
 import { getDateString, getNowTimestampString, getTodayDateString } from '../utils/date-utils';
 import type { PendingOrder, PollSource, Serial, SerialInput, SerialWithCustomer, PollDryRunResult, PollDryRunSourceResult, PreviewRow, ProductCodeGroup, ProductCodeRule, GroupedOrder } from '../../shared/types';
 import { customerService } from './customer.service';
-import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
+import { launchAutomationBrowser, newAutomationContext, withBrowserSlot } from './playwright-browser';
 import { waitForSettledPage } from './playwright-waits';
 import { pickLang, logActivity } from './activity-log.service';
 import { BUILT_IN_CODES } from '../../shared/constants';
@@ -1213,7 +1213,8 @@ export async function pollNow(sourceId?: string, targetDate?: string): Promise<{
 
   try {
     for (const source of sources) {
-      const { found, errors } = await crawlSource(source, targetDate);
+      // 전역 슬롯으로 직렬화 — cancel·크레딧배분과 chromium 동시 활성화(OOM) 방지
+      const { found, errors } = await withBrowserSlot(() => crawlSource(source, targetDate));
       totalFound += found;
       allErrors.push(...errors);
 
@@ -1343,7 +1344,7 @@ export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<Po
   for (const source of sources) {
     // sourceOverrides 적용 (저장 전 form 값 반영)
     const effectiveSource = sourceOverrides ? { ...source, ...sourceOverrides } : source;
-    const sourceResult = await crawlSourceDryRun(effectiveSource, targetDate);
+    const sourceResult = await withBrowserSlot(() => crawlSourceDryRun(effectiveSource, targetDate));
     dryResult.sources.push(sourceResult);
   }
 

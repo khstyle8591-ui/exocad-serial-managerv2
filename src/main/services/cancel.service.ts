@@ -11,7 +11,7 @@ import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
 import { SCREENSHOT_DIR } from '../utils/paths';
 import type { CancelResult, CancelDryRunResult, CreditDistributeResult } from '../../shared/types';
-import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
+import { launchAutomationBrowser, newAutomationContext, withBrowserSlot } from './playwright-browser';
 import { shortPause, waitForSettledPage } from './playwright-waits';
 
 type EffectiveSettings = ReturnType<typeof getSettings>;
@@ -65,7 +65,7 @@ export class CancelService {
     // 에러가 발생해도 다음 큐 항목이 blocking되지 않도록 .catch(() => {}) 체이닝.
     const op = this.cancelQueue
       .catch(() => {})
-      .then(() => this._doCancel(serialNumber, headless));
+      .then(() => withBrowserSlot(() => this._doCancel(serialNumber, headless)));
     this.cancelQueue = op.catch(() => {});
     return op;
   }
@@ -80,7 +80,7 @@ export class CancelService {
   async distributeCredits(exocadId: string, amount: number, note: string, headless: boolean = true, dryRun: boolean = false): Promise<CreditDistributeResult> {
     const op = this.cancelQueue
       .catch(() => {})
-      .then(() => this._doDistributeCredits(exocadId, amount, note, headless, dryRun));
+      .then(() => withBrowserSlot(() => this._doDistributeCredits(exocadId, amount, note, headless, dryRun)));
     this.cancelQueue = op.catch(() => {});
     return op;
   }
@@ -1067,6 +1067,11 @@ export class CancelService {
   // 각 시리얼에 대해 Playwright로 실제 사이트까지 확인 (confirm 버튼은 누르지 않음)
   // ============================================================
   async processPreExpiryDryRun(): Promise<CancelDryRunResult[]> {
+    // 자체 브라우저(dryBrowser)를 띄우므로 폴링·취소와 동시 활성화되지 않도록 전역 슬롯으로 직렬화
+    return withBrowserSlot(() => this._processPreExpiryDryRunImpl());
+  }
+
+  private async _processPreExpiryDryRunImpl(): Promise<CancelDryRunResult[]> {
     const settings = getSettings();
 
     const daysBefore = settings.auto_cancel_days_before ?? 1;
