@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 14;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 type Migration = {
   version: number;
@@ -517,6 +517,18 @@ function addPortalRequestsAllocColumns(): void {
   logger.info('[DB] Migration complete: portal_requests.alloc_status/alloc_error/alloc_at added');
 }
 
+function addSerialMailToggleColumns(): void {
+  const columns = db.prepare('PRAGMA table_info(serials)').all() as { name: string }[];
+  const existing = new Set(columns.map(c => c.name));
+  if (!existing.has('mail_expiry_notice_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_expiry_notice_enabled INTEGER NOT NULL DEFAULT 1`);
+  if (!existing.has('mail_order_form_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_order_form_enabled INTEGER NOT NULL DEFAULT 1`);
+  if (!existing.has('mail_lifecycle_notice_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_lifecycle_notice_enabled INTEGER NOT NULL DEFAULT 1`);
+  logger.info('[DB] Migration complete: serials mail toggle columns added');
+}
+
 function createCustomerCreditLogsTable(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS customer_credit_logs (
@@ -605,6 +617,11 @@ const migrations: Migration[] = [
     version: 14,
     name: 'portal_requests alloc_status columns',
     run: addPortalRequestsAllocColumns,
+  },
+  {
+    version: 15,
+    name: 'serials per-serial mail toggle columns',
+    run: addSerialMailToggleColumns,
   },
 ];
 
@@ -715,6 +732,12 @@ function createTables(): void {
         CHECK(renewal_stop_requested IN (0,1)),
       stop_requested_at      TEXT,
       activated_at           TEXT,
+      mail_expiry_notice_enabled    INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_expiry_notice_enabled IN (0,1)),
+      mail_order_form_enabled       INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_order_form_enabled IN (0,1)),
+      mail_lifecycle_notice_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_lifecycle_notice_enabled IN (0,1)),
       created_at             TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       updated_at             TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT

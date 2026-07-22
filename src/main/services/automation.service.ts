@@ -301,41 +301,49 @@ export async function runAutoRenewNow(): Promise<{ processed: number; renewed: n
     if (!updated) continue;
 
     renewed.push(updated.serial_number);
-    const notice = await notificationService.sendAutoRenewalOrderNotice({
-      serial: updated,
-      previous_expiry_date: serial.expiry_date,
-    }).catch((err: unknown) => {
-      const message = getErrorMessage(err);
-      logger.error(`[automation] auto renewal order notice error: ${serial.serial_number} - ${message}`);
-      return {
-        success: false,
-        subject: `[Exocad Manager] 자동 갱신 주문서 - ${updated.serial_number}`,
-        html_body: '',
-        recipient_email: '',
-        message,
-      };
-    });
 
-    logAutoRenewalOrderNotice({
-      serial: updated,
-      previous_expiry_date: serial.expiry_date,
-      recipient_email: notice.recipient_email,
-      subject: notice.subject,
-      html_body: notice.html_body,
-      status: notice.success ? 'sent' : 'failed',
-      message: notice.message,
-    });
+    // 내부 주문서 메일 — 시리얼별 토글(mail_order_form_enabled)이 꺼져 있으면 자동 발송 생략
+    if (updated.mail_order_form_enabled) {
+      const notice = await notificationService.sendAutoRenewalOrderNotice({
+        serial: updated,
+        previous_expiry_date: serial.expiry_date,
+      }).catch((err: unknown) => {
+        const message = getErrorMessage(err);
+        logger.error(`[automation] auto renewal order notice error: ${serial.serial_number} - ${message}`);
+        return {
+          success: false,
+          subject: `[Exocad Manager] 자동 갱신 주문서 - ${updated.serial_number}`,
+          html_body: '',
+          recipient_email: '',
+          message,
+        };
+      });
 
-    if (notice.success) {
-      logger.info(`[automation] auto renewal order notice sent: ${updated.serial_number}`);
-    } else {
-      logger.warn(`[automation] auto renewal order notice failed: ${updated.serial_number}`);
+      logAutoRenewalOrderNotice({
+        serial: updated,
+        previous_expiry_date: serial.expiry_date,
+        recipient_email: notice.recipient_email,
+        subject: notice.subject,
+        html_body: notice.html_body,
+        status: notice.success ? 'sent' : 'failed',
+        message: notice.message,
+      });
+
+      if (notice.success) {
+        logger.info(`[automation] auto renewal order notice sent: ${updated.serial_number}`);
+      } else {
+        logger.warn(`[automation] auto renewal order notice failed: ${updated.serial_number}`);
+      }
     }
 
-    // 내부 발주메일과 별개로, 고객에게도 갱신 완료를 안내 (수동 갱신 시 쓰는 기존 템플릿 재사용)
-    await sendManualRenewalConfirmNotice(updated, serial.expiry_date).catch((err: unknown) => {
-      logger.error(`[automation] auto renewal customer notice error: ${serial.serial_number} - ${getErrorMessage(err)}`);
-    });
+    // 내부 발주메일과 별개로 고객에게 보내는 갱신 완료 안내(수동갱신확인 템플릿 재사용).
+    // 여기서는 크론이 자동 발송하므로 라이프사이클 토글로 가드한다. (수동 라우트에서
+    // 관리자가 직접 보내는 동일 메일은 rule A에 따라 토글과 무관하게 발송된다.)
+    if (updated.mail_lifecycle_notice_enabled) {
+      await sendManualRenewalConfirmNotice(updated, serial.expiry_date).catch((err: unknown) => {
+        logger.error(`[automation] auto renewal customer notice error: ${serial.serial_number} - ${getErrorMessage(err)}`);
+      });
+    }
   }
 
   logger.info(`[automation] auto renew run: ${renewed.length} renewed`);

@@ -30,6 +30,7 @@ import type {
     StatsCountsResult,
     StatsSeries,
     BulkUpdatePreview,
+    SerialMailSettings,
 } from '../shared/types';
 
 // 서버 전용 응답 모양(main 프로세스에 정의되어 있으나 shared/types.ts에는 없음) — 여기서만 쓰는 최소 형태로 로컬 정의
@@ -155,6 +156,8 @@ export const api = {
     setStopRequested: (id: number, flag: boolean, triggerId?: string) =>
         post<SerialWithCustomer | undefined>(`/serials/${id}/stop-requested`, { flag, triggerId }),
     cancelSerialDb: (id: number) => post<SerialWithCustomer | undefined>(`/serials/${id}/cancel-db`),
+    updateSerialMailSettings: (id: number, settings: SerialMailSettings) =>
+        post<SerialWithCustomer | undefined>(`/serials/${id}/mail-settings`, settings),
     removeModule: (id: number, name: string) => post<SerialWithCustomer | undefined>(`/serials/${id}/remove-module`, { name }),
     renewSerial: (id: number) => post<SerialWithCustomer | undefined>(`/serials/${id}/renew`),
     sendRenewalPo: (id: number, previousExpiryDate: string | null) =>

@@ -233,6 +233,26 @@ router.post('/:id/stop-requested', async (req: Request, res: Response) => {
     }
 });
 
+// POST /api/serials/:id/mail-settings — 시리얼별 메일 발송 on/off 토글
+router.post('/:id/mail-settings', (req: Request, res: Response) => {
+    try {
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const settings = {
+            mail_expiry_notice_enabled:
+                typeof body.mail_expiry_notice_enabled === 'boolean' ? body.mail_expiry_notice_enabled : undefined,
+            mail_order_form_enabled:
+                typeof body.mail_order_form_enabled === 'boolean' ? body.mail_order_form_enabled : undefined,
+            mail_lifecycle_notice_enabled:
+                typeof body.mail_lifecycle_notice_enabled === 'boolean' ? body.mail_lifecycle_notice_enabled : undefined,
+        };
+        const result = serialService.setMailSettings(Number(req.params.id), settings);
+        if (!result) return res.status(404).json({ error: 'not found' });
+        res.json(result);
+    } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
+    }
+});
+
 // POST /api/serials/:id/cancel-db
 router.post('/:id/cancel-db', (req: Request, res: Response) => {
     try {

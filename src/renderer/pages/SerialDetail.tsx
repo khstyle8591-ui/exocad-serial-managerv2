@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { ActivityLog, SerialMailNoticeLog, SerialWithCustomer } from '../../shared/types';
+import type { ActivityLog, SerialMailNoticeLog, SerialMailSettings, SerialWithCustomer } from '../../shared/types';
 import { useLang } from '../App';
 import { t, actionLabel, actorLabel } from '../i18n';
 import SerialForm from '../components/SerialForm';
@@ -61,6 +61,16 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   };
 
   const ask = (cfg: typeof confirm) => setConfirm(cfg);
+
+  const setMail = async (patch: SerialMailSettings) => {
+    if (!serial) return;
+    try {
+      const r = await api.updateSerialMailSettings(serial.id, patch);
+      if (r) { setSerial(r); onUpdated(r); }
+    } catch (e: any) {
+      alert(e?.message ?? t(lang, 'error_occurred'));
+    }
+  };
 
   if (loading) return <div style={{ padding: 40, color: 'var(--text3)' }}>{t(lang, 'loading')}</div>;
   if (error || !serial) return (
@@ -213,6 +223,16 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
         </div>
       )}
 
+      <Card title={t(lang, 'section_mail_settings')} style={{ marginTop: 16 }}>
+        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text3)' }}>{t(lang, 'mail_settings_hint')}</p>
+        <MailToggle label={t(lang, 'mail_toggle_expiry')} on={serial.mail_expiry_notice_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_expiry_notice_enabled: v })} />
+        <MailToggle label={t(lang, 'mail_toggle_order')} on={serial.mail_order_form_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_order_form_enabled: v })} />
+        <MailToggle label={t(lang, 'mail_toggle_lifecycle')} on={serial.mail_lifecycle_notice_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_lifecycle_notice_enabled: v })} last />
+      </Card>
+
       <Card title={t(lang, 'section_mail_notice_history')} style={{ marginTop: 16 }}>
         {mailLogs.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>{t(lang, 'mail_notice_history_empty')}</p>
@@ -323,6 +343,36 @@ function ActionButton({ label, color, busy, lang, onClick }: {
     }}>
       {busy ? t(lang, 'processing') : label}
     </button>
+  );
+}
+
+function MailToggle({ label, on, lang, onChange, last }: {
+  label: string; on: boolean; lang: import('../i18n').Language; onChange: (v: boolean) => void; last?: boolean;
+}) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '8px 0', borderBottom: last ? 'none' : '1px solid var(--border)',
+    }}>
+      <span style={{ fontSize: 13, color: 'var(--text)' }}>{label}</span>
+      <button
+        onClick={() => onChange(!on)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
+      >
+        <span style={{
+          width: 36, height: 20, borderRadius: 10, display: 'inline-block', position: 'relative',
+          background: on ? 'var(--accent)' : 'var(--border2)', transition: 'background 0.15s',
+        }}>
+          <span style={{
+            position: 'absolute', top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.15s',
+          }} />
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, minWidth: 26, textAlign: 'left', color: on ? 'var(--accent)' : 'var(--text3)' }}>
+          {on ? t(lang, 'mail_toggle_on') : t(lang, 'mail_toggle_off')}
+        </span>
+      </button>
+    </div>
   );
 }
 

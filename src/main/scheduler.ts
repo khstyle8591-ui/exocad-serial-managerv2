@@ -697,6 +697,7 @@ async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Pr
         .filter(s => s.customer.email);
 
       for (const serial of serials) {
+        if (!serial.mail_expiry_notice_enabled) continue;   // 시리얼별 만료안내 토글 (자동 발송 차단)
         const code = serial.renewal_stop_requested ? stopTemplate : rule.renewal_template;
         try {
           const result = await sendMailTemplate(

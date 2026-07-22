@@ -53,6 +53,7 @@ function pickSampleSerial(kind: NoticeKind): SerialWithCustomer | null {
 export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer): Promise<void> {
   const settings = getSettings();
   if (settings.stop_request_notice_enabled === false) return;
+  if (!serial.mail_lifecycle_notice_enabled) return;   // 시리얼별 토글 (자동 발송 차단)
   if (!serial.customer.email) {
     logger.warn(`[mail] stop request notice skipped: no customer email (${serial.serial_number})`);
     return;
@@ -73,6 +74,7 @@ export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer):
 export async function sendCancelCompleteNotice(serial: SerialWithCustomer): Promise<void> {
   const settings = getSettings();
   if (settings.cancel_complete_notice_enabled === false) return;
+  if (!serial.mail_lifecycle_notice_enabled) return;   // 시리얼별 토글 (자동 발송 차단)
   if (!serial.customer.email) {
     logger.warn(`[mail] cancel complete notice skipped: no customer email (${serial.serial_number})`);
     return;

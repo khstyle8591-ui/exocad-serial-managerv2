@@ -76,6 +76,9 @@ export interface Serial {
   renewal_stop_requested: number;   // 0 | 1 (SQLite BOOLEAN)
   stop_requested_at: string | null;
   activated_at: string | null;
+  mail_expiry_notice_enabled: number;    // 0 | 1 — 만료안내 메일 (시리얼별)
+  mail_order_form_enabled: number;       // 0 | 1 — 내부 주문서 메일 (시리얼별)
+  mail_lifecycle_notice_enabled: number; // 0 | 1 — 중단접수·취소완료 등 라이프사이클 안내 (시리얼별)
   created_at: string;
   updated_at: string;
 }
@@ -297,6 +300,13 @@ export interface SerialListResult {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** 시리얼별 메일 발송 on/off (미지정 필드는 변경 없음). */
+export interface SerialMailSettings {
+  mail_expiry_notice_enabled?: boolean;
+  mail_order_form_enabled?: boolean;
+  mail_lifecycle_notice_enabled?: boolean;
 }
 
 // ── Bulk update (Excel upsert: 다운로드→편집→업로드) ─────────────────────────

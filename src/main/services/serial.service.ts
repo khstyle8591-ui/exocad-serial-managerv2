@@ -6,7 +6,7 @@ import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs, pi
 import type {
   Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
   LogFilter, StatsCountsResult, StatsSeries, SerialExportQuery, SerialListQuery, SerialListResult,
-  SerialVersionSummary,
+  SerialVersionSummary, SerialMailSettings,
 } from '../../shared/types';
 import { parseSerialListQuery } from '../../shared/serial-contract';
 
@@ -582,6 +582,35 @@ export class SerialService {
           ja: '更新停止リクエスト解除',
         }));
     }
+    return this.getById(id);
+  }
+
+  /** 시리얼별 메일 발송 on/off 설정. 미지정 필드는 변경하지 않음. */
+  setMailSettings(id: number, settings: SerialMailSettings): SerialWithCustomer | undefined {
+    const db = getDb();
+    const existing = this.getById(id);
+    if (!existing) return undefined;
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (settings.mail_expiry_notice_enabled !== undefined) {
+      fields.push('mail_expiry_notice_enabled = ?');
+      values.push(settings.mail_expiry_notice_enabled ? 1 : 0);
+    }
+    if (settings.mail_order_form_enabled !== undefined) {
+      fields.push('mail_order_form_enabled = ?');
+      values.push(settings.mail_order_form_enabled ? 1 : 0);
+    }
+    if (settings.mail_lifecycle_notice_enabled !== undefined) {
+      fields.push('mail_lifecycle_notice_enabled = ?');
+      values.push(settings.mail_lifecycle_notice_enabled ? 1 : 0);
+    }
+    if (fields.length === 0) return existing;
+
+    fields.push('updated_at = ?');
+    values.push(getNowTimestampString());
+    values.push(id);
+    db.prepare(`UPDATE serials SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return this.getById(id);
   }
 
