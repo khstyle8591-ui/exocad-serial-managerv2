@@ -6,6 +6,7 @@ import { excelService } from '../../main/services/excel.service';
 import { sendStopRequestReceivedNotice, sendManualRenewalConfirmNotice } from '../../main/services/mail/lifecycle-notice.service';
 import { sendManualRenewalPo } from '../../main/services/automation.service';
 import { listSerialMailNoticeLogs } from '../../main/services/serial-mail-notice-log.service';
+import { listLogs } from '../../main/services/activity-log.service';
 import {
     parseAddOnInput,
     parseSerialInput,
@@ -87,6 +88,13 @@ router.get('/:id/mail-notice-logs', (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid serial id' });
     res.json(listSerialMailNoticeLogs(id));
+});
+
+// GET /api/serials/:id/activity-logs — 시리얼별 전체 활동 이력(자동·수동·시스템), 최신순
+router.get('/:id/activity-logs', (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid serial id' });
+    res.json(listLogs({ serial_id: id }));
 });
 
 // GET /api/serials/:id

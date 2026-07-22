@@ -1006,6 +1006,13 @@ export const translations = {
     mail_notice_history_empty: '최근 1년 내 자동 발송 이력이 없습니다.',
     mail_notice_status_sent: '성공',
     mail_notice_status_failed: '실패',
+    section_activity_history: '활동 이력',
+    activity_history_empty: '활동 이력이 없습니다.',
+    log_actor_manual: '수동',
+    log_actor_auto: '자동',
+    log_actor_email: '메일',
+    log_actor_polling: '폴링',
+    log_actor_system: '시스템',
     renewal_po_confirm_title: '갱신 발주서 발송',
     renewal_po_confirm_message: '이 시리얼에 대한 갱신 발주서를 발송하시겠습니까?',
     renewal_po_confirm_approve: '승인',
@@ -2018,6 +2025,13 @@ export const translations = {
     serial_delete_msg: 'Delete {sn}. This action cannot be undone.',
     section_mail_notice_history: 'Mail Notice History',
     mail_notice_history_empty: 'No automatic mail notice history in the last year.',
+    section_activity_history: 'Activity History',
+    activity_history_empty: 'No activity history.',
+    log_actor_manual: 'Manual',
+    log_actor_auto: 'Auto',
+    log_actor_email: 'Email',
+    log_actor_polling: 'Polling',
+    log_actor_system: 'System',
     mail_notice_status_sent: 'Sent',
     mail_notice_status_failed: 'Failed',
     renewal_po_confirm_title: 'Send Renewal Purchase Order',
@@ -3034,6 +3048,13 @@ export const translations = {
     mail_notice_history_empty: '直近1年の自動送信履歴はありません。',
     mail_notice_status_sent: '成功',
     mail_notice_status_failed: '失敗',
+    section_activity_history: '活動履歴',
+    activity_history_empty: '活動履歴がありません。',
+    log_actor_manual: '手動',
+    log_actor_auto: '自動',
+    log_actor_email: 'メール',
+    log_actor_polling: 'ポーリング',
+    log_actor_system: 'システム',
     renewal_po_confirm_title: '更新注文書の発送',
     renewal_po_confirm_message: 'このシリアルの更新注文書を発送しますか？',
     renewal_po_confirm_approve: '承認',
@@ -3075,4 +3096,18 @@ const ACTION_LABEL_KEYS: Record<string, TranslationKey> = {
 export function actionLabel(lang: Language, action: string): string {
   const key = ACTION_LABEL_KEYS[action];
   return key ? t(lang, key) : action;
+}
+
+// ActivityLog['actor'] → 다국어 라벨.
+const ACTOR_LABEL_KEYS: Record<string, TranslationKey> = {
+  manual: 'log_actor_manual',
+  auto: 'log_actor_auto',
+  email: 'log_actor_email',
+  polling: 'log_actor_polling',
+  system: 'log_actor_system',
+};
+
+export function actorLabel(lang: Language, actor: string): string {
+  const key = ACTOR_LABEL_KEYS[actor];
+  return key ? t(lang, key) : actor;
 }

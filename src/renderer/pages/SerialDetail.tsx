@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import type { SerialMailNoticeLog, SerialWithCustomer } from '../../shared/types';
+import type { ActivityLog, SerialMailNoticeLog, SerialWithCustomer } from '../../shared/types';
 import { useLang } from '../App';
-import { t } from '../i18n';
+import { t, actionLabel, actorLabel } from '../i18n';
 import SerialForm from '../components/SerialForm';
 import ConfirmModal from '../components/ConfirmModal';
 import ModuleListEditor from '../components/ModuleListEditor';
@@ -21,6 +21,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [mailLogs, setMailLogs] = useState<SerialMailNoticeLog[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [showHistory, setShowHistory] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [confirm, setConfirm] = useState<{
     title: string; message: string; label: string; danger?: boolean; action: () => Promise<void>;
@@ -33,6 +35,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
       setSerial(s);
       const logs = await api.listSerialMailNoticeLogs(serialId) as SerialMailNoticeLog[];
       setMailLogs(logs);
+      const acts = await api.listSerialActivityLogs(serialId) as ActivityLog[];
+      setActivityLogs(acts);
     } catch (e: any) {
       setError(e?.message ?? t(lang, 'load_failed'));
     }
@@ -246,6 +250,29 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
         )}
       </Card>
 
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg2)', marginTop: 16 }}>
+        <button
+          onClick={() => setShowHistory(v => !v)}
+          style={{
+            width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: 16, background: 'transparent', border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          <span>{t(lang, 'section_activity_history')} ({activityLogs.length})</span>
+          <span style={{ fontSize: 11 }}>{showHistory ? '▼' : '▶'}</span>
+        </button>
+        {showHistory && (
+          <div style={{ padding: '0 16px 12px', maxHeight: 380, overflow: 'auto' }}>
+            {activityLogs.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>{t(lang, 'activity_history_empty')}</p>
+            ) : (
+              activityLogs.map(log => <ActivityRow key={log.id} log={log} lang={lang} />)
+            )}
+          </div>
+        )}
+      </div>
+
       {showEdit && (
         <SerialForm
           mode="edit"
@@ -296,6 +323,55 @@ function ActionButton({ label, color, busy, lang, onClick }: {
     }}>
       {busy ? t(lang, 'processing') : label}
     </button>
+  );
+}
+
+function formatDiff(diffJson: string): string {
+  try {
+    const d = JSON.parse(diffJson) as Record<string, unknown>;
+    const parts = Object.entries(d).map(([field, val]) =>
+      Array.isArray(val)
+        ? `${field}: ${val[0] ?? '∅'} → ${val[1] ?? '∅'}`
+        : `${field}: ${JSON.stringify(val)}`
+    );
+    return parts.join(', ');
+  } catch {
+    return '';
+  }
+}
+
+const ACTOR_COLOR: Record<string, string> = {
+  manual: 'var(--accent)',
+  auto: 'var(--blue)',
+  email: 'var(--text3)',
+  polling: '#fbbf24',
+  system: '#a78bfa',
+};
+
+function ActivityRow({ log, lang }: { log: ActivityLog; lang: import('../i18n').Language }) {
+  const sevColor = (log.severity === 'critical' || log.severity === 'error')
+    ? 'var(--red)'
+    : log.severity === 'warn' ? '#fbbf24' : 'var(--text)';
+  const diffText = formatDiff(log.diff);
+  const actorColor = ACTOR_COLOR[log.actor] ?? 'var(--text3)';
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '124px 52px minmax(0, 1fr)', gap: 10,
+      alignItems: 'start', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 12,
+    }}>
+      <span style={{ color: 'var(--text2)', fontFamily: "'JetBrains Mono', monospace" }}>{log.created_at.slice(0, 16)}</span>
+      <span style={{
+        justifySelf: 'start', padding: '1px 7px', borderRadius: 8, fontSize: 10, fontWeight: 600,
+        background: `${actorColor}1f`, color: actorColor, whiteSpace: 'nowrap',
+      }}>
+        {actorLabel(lang, log.actor)}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <span style={{ fontWeight: 600, color: sevColor }}>{actionLabel(lang, log.action)}</span>
+        {log.details && <span style={{ color: 'var(--text2)' }}> — {log.details}</span>}
+        {diffText && <div style={{ color: 'var(--text3)', marginTop: 2, overflowWrap: 'anywhere' }}>{diffText}</div>}
+      </div>
+    </div>
   );
 }
 

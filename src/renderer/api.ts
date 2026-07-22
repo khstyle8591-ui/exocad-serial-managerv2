@@ -144,6 +144,7 @@ export const api = {
     getSerialVersionSummary: () => get<SerialVersionSummary[]>('/serials/version-summary'),
     getSerial: (id: number) => get<SerialWithCustomer>(`/serials/${id}`),
     listSerialMailNoticeLogs: (id: number) => get<SerialMailNoticeLog[]>(`/serials/${id}/mail-notice-logs`),
+    listSerialActivityLogs: (id: number) => get<ActivityLog[]>(`/serials/${id}/activity-logs`),
     searchSerials: (q: string) => get<SerialWithCustomer[]>(`/serials/search?q=${encodeURIComponent(q)}`),
     getStats: () => get<StatsCountsResult & { notActivated: number }>('/serials/stats'),
     createSerial: (data: unknown) => post<SerialWithCustomer>('/serials', data),
