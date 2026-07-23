@@ -685,7 +685,9 @@ export class SerialService {
         .get(id, today);
       if (alreadyRenewed) {
         logger.info(`[renew] skip — 오늘 이미 갱신됨: serial_id=${id}`);
-        db.exec('COMMIT');
+        // better-sqlite3의 transaction() 래퍼가 커밋/RELEASE를 자동 처리한다.
+        // 여기서 수동 COMMIT을 부르면 중첩(SAVEPOINT) 시 바깥 트랜잭션이 커밋돼
+        // "no such savepoint" 에러가 난다. 그냥 return하면 no-op으로 정상 커밋된다.
         return existing;
       }
 
