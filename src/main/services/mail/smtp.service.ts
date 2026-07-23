@@ -76,7 +76,7 @@ export async function sendTemplate(
     });
 
     logger.info(`[mail] Sent template '${code}' to ${to}`);
-    await logActivity({
+    logActivity({
       serial_id: options?.serial_id ?? null,
       action: 'mail_sent',
       actor: options?.actor ?? 'manual',
@@ -92,7 +92,7 @@ export async function sendTemplate(
   } catch (err: unknown) {
     const errorMessage = getErrorMessage(err);
     logger.error(`[mail] Failed to send '${code}' to ${to}: ${errorMessage}`);
-    await logActivity({
+    logActivity({
       serial_id: options?.serial_id ?? null,
       action: 'mail_failed',
       actor: options?.actor ?? 'manual',
