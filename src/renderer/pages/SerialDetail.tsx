@@ -84,7 +84,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const isStop = serial.renewal_stop_requested === 1;
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 800 }}>
+    <div style={{ padding: '24px 28px', maxWidth: 800, height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <button onClick={onBack} style={backBtn}>{t(lang, 'btn_back')}</button>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
