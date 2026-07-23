@@ -175,7 +175,7 @@ export function listCustomerPortalInfo(): CustomerPortalInfo[] {
 export type PortalRequestType = 'credit' | 'renewal_stop' | 'renewal_resume';
 export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled' | 'cancel_requested';
 // 크레딧 자동배분 진행 상태 — credit 신청에만 사용됨. null = 배분 대상 아님/미시작.
-export type CreditAllocStatus = 'scheduled' | 'distributing' | 'distributed' | 'failed';
+export type CreditAllocStatus = 'scheduled' | 'distributing' | 'distributed' | 'failed' | 'manual_hold';
 
 export interface PortalRequestRow {
   id: number;
@@ -318,15 +318,51 @@ export function findCreditRequestsReadyForAutoDistribution(cutoffTimestamp: stri
 
 /** 배분 시작을 원자적으로 선점 — 이미 다른 실행이 선점했거나 상태가 바뀌었으면 false. */
 export function claimCreditForDistribution(id: number): boolean {
+  // alloc_at에 claim(배분 시작) 시각을 기록한다 — 프로세스가 배분 도중 죽어 'distributing'에
+  // 멈춘 건을 워치독(findStaleDistributingCredits)이 경과시간으로 식별할 수 있게 하기 위함.
+  // 완료/실패 시 markCreditDistributed/Failed가 alloc_at을 최종 시각으로 덮어쓴다.
   const result = getDb()
     .prepare(
-      `UPDATE portal_requests SET alloc_status = 'distributing'
+      `UPDATE portal_requests SET alloc_status = 'distributing', alloc_at = ?
        WHERE id = ? AND type = 'credit' AND status = 'pending' AND alloc_status IS NULL`,
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
   const claimed = result.changes > 0;
   if (claimed) emitPortalRequestChanged();
   return claimed;
+}
+
+/**
+ * claim(배분 시작) 후 cutoff 이상 'distributing'에 멈춰 있는 크레딧 신청 — 프로세스 종료/OOM 등으로
+ * 좌초된 건. 정상 흐름의 예외는 호출부 try/catch가 잡지만, 프로세스 킬 시엔 그 catch도 못 돌므로
+ * 이 목록을 별도로 조회해 정리한다. (alloc_at IS NULL: 이 변경 이전에 좌초된 레거시 건도 포함)
+ */
+export function findStaleDistributingCredits(cutoffTimestamp: string): PortalRequestRow[] {
+  return getDb()
+    .prepare<[string], PortalRequestRow>(
+      `SELECT * FROM portal_requests
+       WHERE type = 'credit' AND status = 'pending' AND alloc_status = 'distributing'
+         AND (alloc_at IS NULL OR alloc_at <= ?)`,
+    )
+    .all(cutoffTimestamp);
+}
+
+/**
+ * 매니저가 수동 처리로 전환 — 자동배분 큐에서 원자적으로 빼낸다.
+ * claimCreditForDistribution과 동일한 조건(pending & alloc_status IS NULL)으로 선점하므로,
+ * 자동배분 크론이 이미 배분을 시작(distributing)했다면 false를 반환한다(한쪽만 이긴다 → 이중 발급 방지).
+ * findCreditRequestsReadyForAutoDistribution은 alloc_status IS NULL만 조회하므로 hold된 건은 자동 제외된다.
+ */
+export function holdCreditForManual(id: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_status = 'manual_hold'
+       WHERE id = ? AND type = 'credit' AND status = 'pending' AND alloc_status IS NULL`,
+    )
+    .run(id);
+  const held = result.changes > 0;
+  if (held) emitPortalRequestChanged();
+  return held;
 }
 
 export function markCreditDistributed(id: number): void {

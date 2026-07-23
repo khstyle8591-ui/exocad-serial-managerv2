@@ -57,7 +57,7 @@ interface AdminRequest {
   account_name: string;
   account_login_id: string;
   account_email: string;
-  alloc_status: 'distributing' | 'distributed' | 'failed' | null;
+  alloc_status: 'distributing' | 'distributed' | 'failed' | 'manual_hold' | null;
   alloc_error: string | null;
   alloc_at: string | null;
 }
@@ -238,6 +238,22 @@ export default function Portal() {
     }
   }
 
+  async function holdManual(req: AdminRequest) {
+    if (!window.confirm(t(lang, 'portal_confirm_manual_hold'))) return;
+    try {
+      await api.portal.holdRequestManual(req.id);
+      loadRequests();
+    } catch (err) {
+      // 서버는 코드 토큰을 반환 — 프론트에서 번역한다.
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('ERR_CREDIT_HOLD_ALREADY_STARTED')) {
+        alert(t(lang, 'portal_manual_hold_already_started'));
+      } else {
+        alert(msg || 'error');
+      }
+    }
+  }
+
   if (loading || !settings) return <div className="page-wrapper">{t(lang, 'loading')}</div>;
 
   const showSaveBtn = tab === 'settings' || tab === 'packages' || tab === 'descriptions';
@@ -322,6 +338,7 @@ export default function Portal() {
           onDecide={decide}
           onDecideCancel={decideCancel}
           onDismiss={dismiss}
+          onHoldManual={holdManual}
           creditPackages={settings.credit_packages ?? []}
         />
       )}
@@ -740,7 +757,7 @@ function AccountDetailModal({ lang, account, onClose, onLinkSerial }: {
 }
 
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, onDismiss, creditPackages }: {
+function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, onDismiss, onHoldManual, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
@@ -748,6 +765,7 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
   onDecideCancel: (r: AdminRequest, action: 'approve' | 'reject') => void;
   onDismiss: (r: AdminRequest) => void;
+  onHoldManual: (r: AdminRequest) => void;
   creditPackages: CreditPackage[];
 }) {
   const FILTERS: { id: string; key: TranslationKey }[] = [
@@ -874,6 +892,11 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                         )}
                       </div>
                     )}
+                    {r.type === 'credit' && r.status === 'pending' && r.alloc_status === 'manual_hold' && (
+                      <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2, fontWeight: 600 }}>
+                        {t(lang, 'portal_alloc_manual_hold')}
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...cell, fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
                     {r.created_at.slice(0, 16).replace('T', ' ')}
@@ -900,6 +923,13 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                           onClick={() => onDecide(r, 'reject')}>
                           {t(lang, 'portal_req_reject')}
                         </button>
+                        {r.type === 'credit' && r.status === 'pending' && r.alloc_status == null && (
+                          <button className="btn btn-sm btn-secondary"
+                            title={t(lang, 'portal_req_manual_hold_help')}
+                            onClick={() => onHoldManual(r)}>
+                            {t(lang, 'portal_req_manual_hold')}
+                          </button>
+                        )}
                         {isCancelFailed(r) && (
                           <button className="btn btn-sm btn-secondary"
                             onClick={() => onDismiss(r)}>

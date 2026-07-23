@@ -398,6 +398,8 @@ export const api = {
             preq('PATCH', `/requests/${id}/decide-cancel`, { action }),
         dismissRequest: (id: number) =>
             preq('PATCH', `/requests/${id}/dismiss`),
+        holdRequestManual: (id: number) =>
+            preq('PATCH', `/requests/${id}/manual-hold`),
     },
 };
 

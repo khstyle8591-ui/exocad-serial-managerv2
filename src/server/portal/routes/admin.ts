@@ -14,6 +14,7 @@ import {
   markPortalRequestCancelRejected,
   markPortalRequestCancelRejectedPending,
   markPortalRequestDismissed,
+  holdCreditForManual,
   countActionablePortalRequests,
   getAccountLinks,
   isSerialLinked,
@@ -446,6 +447,34 @@ router.patch('/requests/:id/dismiss', (req: Request, res: Response) => {
     }),
   });
   res.json({ ok: true, status: 'dismissed' });
+});
+
+// PATCH /portal/admin/requests/:id/manual-hold — 크레딧 신청을 자동배분 큐에서 빼내 매니저가
+// 수동으로 발급/승인하도록 전환한다(이중 발급 방지). 원자적 선점이라 자동배분 크론이 이미
+// 배분을 시작한 뒤라면 409로 실패한다.
+router.patch('/requests/:id/manual-hold', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+  const request = getPortalRequestById(id);
+  if (!request) { res.status(404).json({ error: 'Not found' }); return; }
+  if (request.type !== 'credit') { res.status(409).json({ error: 'ERR_CREDIT_HOLD_NOT_CREDIT' }); return; }
+
+  // 원자적 hold — pending & alloc_status IS NULL일 때만 성공. 자동배분이 이미 시작됐으면 false.
+  if (!holdCreditForManual(id)) {
+    res.status(409).json({ error: 'ERR_CREDIT_HOLD_ALREADY_STARTED' });
+    return;
+  }
+
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'info',
+    details: pickLang({
+      ko: `포털 크레딧 신청(#${id}) 수동 처리로 전환 — 자동배분 큐에서 제외(이중 발급 방지)`,
+      en: `Portal credit request (#${id}) switched to manual handling — excluded from auto-distribution queue`,
+      ja: `ポータルクレジット申請(#${id})を手動処理に切替 — 自動配分キューから除外(二重発行防止)`,
+    }),
+  });
+  res.json({ ok: true, alloc_status: 'manual_hold' });
 });
 
 // PATCH /portal/admin/requests/:id/decide-cancel — 고객의 취소 요청(cancel_requested)을 승인/거절

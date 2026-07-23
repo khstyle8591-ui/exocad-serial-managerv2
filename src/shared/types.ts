@@ -531,6 +531,10 @@ export interface CancelResult {
 export interface CreditDistributeResult {
   exocad_id: string;
   success: boolean;
+  // 성공 신호(성공 토스트)로 확인된 성공이면 true. 토스트를 못 잡았지만 modal이 닫혀
+  // 성공으로 추정한 경우 false — 호출부는 이 경우 자동승인/발주서를 보류하고 사람 확인을 받는다.
+  // (undefined = 하위호환: verified로 간주)
+  verified?: boolean;
   error?: string;
   screenshot_path?: string;
 }

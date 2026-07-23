@@ -2,6 +2,7 @@ import { t, type TranslationKey, type Language } from '../i18n';
 
 const CODE_TO_KEY: Record<string, TranslationKey> = {
   ERR_ORDER_NOT_FOUND:           'err_order_not_found',
+  ERR_ORDER_ALREADY_PROCESSED:   'err_order_already_processed',
   ERR_SERIAL_NOT_FOUND:          'err_serial_not_found',
   ERR_ADDON_SERIAL_NOT_FOUND:    'err_addon_serial_not_found',
   ERR_SERIAL_NOT_IN_DB:          'err_serial_not_in_db',

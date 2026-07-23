@@ -303,7 +303,7 @@ export class CancelService {
       if (toastText) {
         if (/success/i.test(toastText)) {
           logger.info(`[distributeCredits] success toast detected for ${exocadId}: ${toastText}`);
-          return { exocad_id: exocadId, success: true, screenshot_path: screenshotPath };
+          return { exocad_id: exocadId, success: true, verified: true, screenshot_path: screenshotPath };
         }
         logger.warn(`[distributeCredits] error toast detected for ${exocadId}: ${toastText}`);
         return { exocad_id: exocadId, success: false, error: toastText, screenshot_path: screenshotPath };
@@ -321,8 +321,11 @@ export class CancelService {
         };
       }
 
-      logger.info(`[distributeCredits] credit distribution succeeded: exocadId=${exocadId}, amount=${amount}`);
-      return { exocad_id: exocadId, success: true, screenshot_path: screenshotPath };
+      // 성공 토스트를 못 잡았고 modal은 닫힘 — 배분됐을 가능성이 높지만 확신할 수 없다(verified=false).
+      // 돈성 작업이라 이 "추정 성공"을 확정 성공과 구분해, 호출부가 자동승인/발주서를 보류하고
+      // 사람 확인을 받도록 한다(false-success로 굳는 것 방지).
+      logger.warn(`[distributeCredits] no toast captured but modal closed — assuming distributed but UNVERIFIED (exocadId=${exocadId}, amount=${amount})`);
+      return { exocad_id: exocadId, success: true, verified: false, screenshot_path: screenshotPath };
 
     } catch (err: unknown) {
       const errorMessage = getErrorMessage(err);

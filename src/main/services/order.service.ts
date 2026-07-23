@@ -207,6 +207,9 @@ export async function approvePendingOrder(
   const db = getDb();
   const order = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
   if (!order) return { success: false, error: SERVER_ERRORS.ORDER_NOT_FOUND };
+  // 멱등성 가드: 이미 처리(approved/rejected)된 주문의 재승인 차단.
+  // 더블클릭·중복 탭 승인 시 승인 로직이 두 번 실행되어 메모 중복/재갱신되는 것을 방지한다.
+  if (order.status !== 'pending') return { success: false, error: SERVER_ERRORS.ORDER_ALREADY_PROCESSED };
 
   try {
     return db.transaction(() => {
