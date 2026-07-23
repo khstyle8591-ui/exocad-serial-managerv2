@@ -8,7 +8,7 @@
 | 리뷰 방식 | 정적 리뷰 (코드 정독 + 타입체크 + 데드코드 스캔). **런타임 실행 없음.** |
 | 리뷰 범위 | 부작용·실패경로·동시성이 몰린 7개 리스크 핫스팟 |
 
-> **🔧 진행 상태 (2026-07-23 업데이트):** **F-1 ✅ / F-2 ✅ / F-3 ✅ / F-4 ✅** (각 항목 상세의 "✅ 처리 결과" 참고). 남은 항목: F-5·F-6·F-7. 모든 수정은 타입체크 양쪽 0 에러 통과, 브랜치 `feature/credit-system`.
+> **🔧 진행 상태 (2026-07-23 업데이트):** **F-1 ✅ / F-2 ✅ / F-3 ✅ / F-4 ✅ / F-5 ✅ / F-6 ✅** (각 항목 상세의 "✅ 처리 결과" 참고). 남은 항목: **F-7**(ESLint 최소 구성 도입 예정 + 데드코드는 `no-unused-vars`로 자동 정리 pass). 모든 수정은 타입체크 통과, 브랜치 `feature/credit-system`.
 
 > **이 문서를 받는 개발자에게:** 각 항목은 `파일:라인`, 증상, 재현 시나리오, 수정 방향, 예상 공수(S/M/L)를 포함합니다. 우선순위는 [실행 순서](#7-권장-실행-순서)를 참고하세요. **"의도 확인 필요"** 표시가 있는 항목은 코드를 고치기 전에 기획자와 의도부터 합의해야 합니다.
 
@@ -54,9 +54,9 @@
 | F-2 | ✅ 완료 | 🟠 MED | 수동 크레딧 승인이 실제 크레딧을 지급하지 않음 (**의도 확정** — 이중발급 방지 가드로 대응) | `admin.ts:401` | S~M |
 | F-3 | ✅ 완료 | 🟠 MED | 주문 승인에 중복 처리 가드 없음 | `order.service.ts:208` | S |
 | F-4 | ✅ 완료 | 🟡 MED | 크레딧 배분 결과 토스트 놓치면 성공으로 간주 (false-success) | `cancel.service.ts:324` | M |
-| F-5 | ⬜ 대기 | 🟡 LOW-MED | failsafe 취소 실패 알림 비대칭 (인바운드 vs 포털) | `automation.service.ts:185` | S |
-| F-6 | ⬜ 대기 | 🟡 LOW | message-id 없는 메일은 중복 제거 안 됨 (`keep_copy=true`일 때) | `inbound.service.ts:281` | S |
-| F-7 | ⬜ 대기 | 🟡 LOW | 정적 린트 계층 부재 + 데드코드 6개 | 전역 | M |
+| F-5 | ✅ 완료 | 🟡 LOW-MED | failsafe 취소 실패 알림 비대칭 (인바운드 vs 포털) | `automation.service.ts:185` | S |
+| F-6 | ✅ 완료 | 🟡 LOW | message-id 없는 메일은 중복 제거 안 됨 (`keep_copy=true`일 때) | `inbound.service.ts:281` | S |
+| F-7 | 🔄 진행 | 🟡 LOW | 정적 린트 계층 부재 + 데드코드 (ts-prune 오탐 2건 확인 — 아래 참고) | 전역 | M |
 
 ---
 
@@ -141,6 +141,7 @@
 - **증상:** failsafe 취소가 실패할 때, **인바운드 메일 발** 경로는 활동 로그만 남기고(크리티컬 Slack 알림 없음), **포털 발** 경로는 `sendCriticalAutomationAlert`까지 보낸다. 또한 인바운드 경로는 취소 시도 **전에** 메일을 `processed=1`로 마킹(`:152`)해 재선정에서 제외.
 - **완화 요인:** 인바운드 경로도 stop 플래그를 세우므로(`:151`), limbo 폴백이 D0~D+7 윈도우에서 재시도+알림으로 결국 포착함. 즉 **완전 무음이 아니라 지연·불일치**.
 - **수정 방향:** 인바운드 failsafe 실패 분기에도 포털 경로와 동일하게 `sendCriticalAutomationAlert` 추가해 알림 정책 통일. (공수 S)
+- **✅ 처리 결과 (2026-07-23):** 인바운드 failsafe의 **미검증·실패 두 분기 모두**에 `sendCriticalAutomationAlert` 추가(포털 경로와 동일 정책). 인바운드는 취소 전 `processed=1`로 재선정 안 되므로 알림 스팸 없이 1회만 발송.
 
 ---
 
@@ -150,14 +151,16 @@
 - **증상:** `if (!messageId) return false` — Message-ID 헤더가 없는 메일은 중복으로 인식되지 않음. `pop3_keep_copy=true`(서버에서 메일 미삭제)이면 이런 메일이 매 크론 틱마다 재처리되어 `inbound_mails` 중복 행 + 자동응답 중복 발송 가능.
 - **완화 요인:** 실무 메일은 대부분 Message-ID를 가지며, `keep_copy=false`이면 처리 후 DELE되어 재출현 없음. 발생 조건이 좁음.
 - **수정 방향:** message_id가 null일 때 대체 dedup 키(from+subject+date+본문 해시) 사용, 또는 분류된 메일은 `keep_copy`와 무관하게 처리 후 DELE. (공수 S)
+- **✅ 처리 결과 (2026-07-23):** `parseEmail`에서 Message-ID 헤더도 없고 호출부 fallback도 없을 때(주로 IMAP 경로) **내용 해시**(`sha1(from|date|subject|body[:1000])`)로 안정적 합성 dedup 키를 생성 → `isDuplicate` + `message_id` UNIQUE 인덱스가 정상 작동. POP3는 기존 `pop3-${uid}` fallback 유지.
 
 ---
 
 ### F-7. 정적 린트 계층 부재 + 데드코드
 - **심각도:** 🟡 LOW (위생)
 - **위치:** 전역
-- **증상:** ESLint 설정·lint npm 스크립트가 전혀 없음 → 타입 외 코드 규칙을 기계가 강제하지 못함(일관성이 사람 리뷰에만 의존). 교차검증으로 확인된 실제 데드코드 export 6개: `CODE_TO_PRODUCT_NAME`(`shared/constants.ts:65`), `parseSerialExportQuery`(`shared/serial-contract.ts:186`), `OrderApproveInput`(`shared/types.ts:404`), `ExcelSerialRow`(`:427`), `RenewalDryRunResult`(`:577`) 등.
-- **수정 방향:** ESLint + typescript-eslint 도입, `npm run lint` 스크립트 추가, CI/pre-commit 연동. 데드코드 6개 제거. (공수 M, 셋업 위주)
+- **증상:** ESLint 설정·lint npm 스크립트가 전혀 없음 → 타입 외 코드 규칙을 기계가 강제하지 못함(일관성이 사람 리뷰에만 의존).
+- **⚠️ 데드코드 재검증 결과 (2026-07-23):** ts-prune 목록을 실제 참조로 재확인한 결과 **2건은 오탐**이었음 — `OrderApproveInput`(4곳 사용), `RenewalDryRunResult`(11곳 사용)은 **살아있음, 삭제 금지**. 실제 미사용 확인: `parseSerialExportQuery`, `ExcelSerialRow`, `ServerErrorCode`, `CODE_TO_PRODUCT_NAME`. 단 `CODE_TO_PRODUCT_NAME`은 40여 개 제품코드→제품명 매핑 **큐레이팅 데이터**라 기계적 삭제 대상이 아님(보존 판단). **교훈: ts-prune 목록을 그대로 지우면 안 됨 — 반드시 참조 재확인.**
+- **수정 방향:** ESLint + typescript-eslint **최소 구성**(버그 검출 룰 위주: `no-floating-promises`·`no-unused-vars`·`no-misused-promises` 등, 스타일 룰 배제, 비차단) 도입 + `npm run lint` 스크립트. 데드코드는 `no-unused-vars`로 자동 검출해 별도 정리 pass에서 🟢(기계적)·🟡(동작변경) 분류 후 처리. (공수 M, 셋업 위주)
 
 ---
 
@@ -178,8 +181,9 @@
 - ~~**F-3**~~ → ✅ 완료
 - ~~**F-1**~~ → ✅ 완료
 - ~~**F-4**~~ → ✅ 완료 (verified 플래그 + 미확인 시 자동승인 보류)
-- **F-5** (공수 S) — 알림 통일. **← 다음**
-- **F-6, F-7** (공수 S~M) — 위생, 시간 날 때.
+- ~~**F-5**~~ → ✅ 완료 (인바운드 failsafe 알림 통일)
+- ~~**F-6**~~ → ✅ 완료 (합성 dedup 키)
+- **F-7** (공수 M) — ESLint 최소 구성 도입 + 데드코드 자동 정리 pass. **← 진행 중**
 
 > **참고:** 본 리뷰는 정적 분석입니다. F-1·F-4 수정 후에는 **기능 축 검증**(실제 배분/취소를 dry-run 또는 스테이징에서 실행)을 별도로 수행할 것을 권장합니다. 완료된 F-1(좌초 복구)·F-2(manual-hold)는 백그라운드 로직이라 화면에 안 보이며, 실동작은 런타임 재현 테스트가 필요합니다.
 

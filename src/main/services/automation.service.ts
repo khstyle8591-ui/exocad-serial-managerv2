@@ -188,6 +188,18 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
           }),
           triggerId, 'error',
         );
+        // 포털 failsafe 경로와 동일하게 크리티컬 알림 발송(정책 통일) — 활동 로그만으론 놓치기 쉬움.
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: { ko: '인바운드 중단요청 만료근접 자동취소', en: 'Inbound stop-request near-expiry auto-cancel', ja: 'インバウンド停止依頼 失効間際自動キャンセル' },
+          details: {
+            ko: `미처리 중단요청(인바운드메일ID=${serial.inbound_mail_id})의 만료근접 자동취소가 미검증 상태입니다(상태=${result.verified_status || 'unknown'}). partner에서 실제 취소 여부를 확인해주세요.`,
+            en: `Unprocessed stop-request (inbound_mail_id=${serial.inbound_mail_id}) near-expiry auto-cancel is UNVERIFIED (status=${result.verified_status || 'unknown'}). Verify the actual cancellation on partner.`,
+            ja: `未処理の停止依頼(インバウンドメールID=${serial.inbound_mail_id})の失効間際自動キャンセルが未確認です(状態=${result.verified_status || 'unknown'})。partnerで実際のキャンセルを確認してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch(() => {});
       } else {
         const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.error
           ? localizeCancelError(result.error, lang)
@@ -201,6 +213,19 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
           }),
           triggerId, 'error',
         );
+        // 포털 failsafe 경로와 동일하게 크리티컬 알림 발송(정책 통일).
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: { ko: '인바운드 중단요청 만료근접 자동취소', en: 'Inbound stop-request near-expiry auto-cancel', ja: 'インバウンド停止依頼 失効間際自動キャンセル' },
+          error: result.error,
+          details: {
+            ko: `미처리 중단요청(인바운드메일ID=${serial.inbound_mail_id})의 만료근접 자동취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+            en: `Unprocessed stop-request (inbound_mail_id=${serial.inbound_mail_id}) near-expiry auto-cancel failed. Verify the serial number and reprocess manually if needed.`,
+            ja: `未処理の停止依頼(インバウンドメールID=${serial.inbound_mail_id})の失効間際自動キャンセルが失敗しました。シリアル番号を確認し、必要に応じて手動で再処理してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch(() => {});
       }
 
       await sleep(2000);
