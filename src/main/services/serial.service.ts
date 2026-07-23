@@ -4,7 +4,7 @@ import { getTodayDateString, getNowTimestampString, getDaysAgoDateString } from 
 import { createCustomerSeparate, findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
 import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs, pickLang } from './activity-log.service';
 import type {
-  Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
+  SerialWithCustomer, SerialInput, AddOn, ActivityLog,
   LogFilter, StatsCountsResult, StatsSeries, SerialExportQuery, SerialListQuery, SerialListResult,
   SerialVersionSummary, SerialMailSettings,
 } from '../../shared/types';

@@ -109,7 +109,7 @@ export function detectLegacy(): LegacyDetectResult {
       serial_count: countRow.cnt,
       last_modified: stat.mtime.toISOString(),
     };
-  } catch (e) {
+  } catch {
     return { available: false, path: p, serial_count: 0, last_modified: null };
   }
 }

@@ -75,7 +75,7 @@ export default function SystemLogs() {
         try {
             const body = await api.getCapturedMail(id);
             setMailBody(body);
-        } catch (err) {
+        } catch {
             setMailBody(t(lang, 'system_mail_load_fail'));
         }
     };

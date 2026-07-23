@@ -1078,7 +1078,6 @@ export class CancelService {
     const settings = getSettings();
 
     const daysBefore = settings.auto_cancel_days_before ?? 1;
-    const today = getTodayDateString();
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
     const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });

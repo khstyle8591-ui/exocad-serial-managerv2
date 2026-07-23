@@ -133,8 +133,6 @@ export default function Dashboard() {
     );
   }
 
-  const total = stats.total || 1; // avoid division by zero for bar widths
-
   const statusBreakdown = [
     { key: 'active',        label: t(lang, 'dash_stat_active'),    count: stats.active,          color: 'var(--green)' },
     { key: 'cancelled',     label: t(lang, 'dash_stat_cancelled'),  count: stats.cancelled,       color: 'var(--red)' },

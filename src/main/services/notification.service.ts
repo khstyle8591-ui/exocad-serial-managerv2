@@ -1,6 +1,5 @@
 import https from 'https';
 import http from 'http';
-import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
@@ -16,12 +15,6 @@ const getErrorMessage = (error: unknown) => error instanceof Error ? error.messa
 // 2026-06-30 exocadai.geomedi.co.jp 고정도메인 전환 이후 Caddy가 HTTPS를 대신 처리하면서
 // CERT_DOMAIN을 설정할 일이 없어져, 옛 Cloudflare 시절 duckdns 도메인이 계속 남아있었다.
 const FALLBACK_DOMAIN = 'exocadai.geomedi.co.jp';
-
-function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
-  return Object.fromEntries(
-    Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
-  ) as SettingsOverride;
-}
 
 function parseModules(modulesJson: string): string[] {
   try {

@@ -6,7 +6,6 @@ import {
   deleteTemplate,
   previewTemplate,
 } from '../../main/services/mail/template.service';
-import { sendTemplate, sendTestDryRun } from '../../main/services/mail/smtp.service';
 
 const router = Router();
 

@@ -31,7 +31,6 @@ import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
 import { sendCreditInvoiceMail } from '../../../main/services/credit-request.service';
-import { logger } from '../../../main/utils/logger';
 import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../../shared/types';
 
 const router = Router();
