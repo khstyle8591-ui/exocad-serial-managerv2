@@ -31,6 +31,14 @@ let dailyCronWatchdogTask: cron.ScheduledTask | null = null;
 interface PersistedCancelResult extends CancelResult { date: string; }
 let limboCronTask: cron.ScheduledTask | null = null;
 let dailyCancelResults: PersistedCancelResult[] = [];
+
+// 인메모리 실행 락 — 예약 크론과 15분 워치독이 같은 분에 동시 발화하면(auto_cancel_time이
+// :00/:15/:30/:45 경계일 때) 일일 가드(getJobLastRunDate 체크~setJobLastRunDate 세팅 사이의
+// 긴 await 갭)가 원자적이지 않아 둘 다 통과, 사전취소/Limbo가 이중 실행되어 같은 시리얼을
+// 두 번 취소 시도한다(두 번째는 이미 취소돼 실패 → false critical alert). PM2 단일 프로세스
+// 기준으로 이 플래그가 동시 진입을 막는다(크래시 시 재시도는 워치독이 그대로 담당).
+let preExpiryCancelRunning = false;
+let limboFallbackRunning = false;
 // lastReportSentDate를 메모리에만 두면 앱 재시작 시 초기화되어 중복 리포트 발송.
 // DB settings에 영속화하여 재시작 후에도 중복 방지.
 function getLastReportSentDate(): string {
@@ -324,6 +332,11 @@ async function runLimboFallbackOnce(): Promise<void> {
     logger.info('[Limbo] already ran today, skip');
     return;
   }
+  if (limboFallbackRunning) {
+    logger.warn('[Limbo] already running — skipping concurrent invocation');
+    return;
+  }
+  limboFallbackRunning = true;
 
   logger.info('[Limbo] fallback started');
   try {
@@ -335,8 +348,10 @@ async function runLimboFallbackOnce(): Promise<void> {
     }
   } catch (err: unknown) {
     logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
+  } finally {
+    setJobLastRunDate('limbo_fallback', today);
+    limboFallbackRunning = false;
   }
-  setJobLastRunDate('limbo_fallback', today);
 }
 
 // 15분마다 실행되는 워치독 — 서버 재시작 없이도 하루 중간에 사전취소/Limbo 크론이
@@ -417,6 +432,11 @@ async function runPreExpiryCancelOnce(): Promise<void> {
     logger.info('[PreExpiryCancel] already ran today, skip');
     return;
   }
+  if (preExpiryCancelRunning) {
+    logger.warn('[PreExpiryCancel] already running — skipping concurrent invocation');
+    return;
+  }
+  preExpiryCancelRunning = true;
 
   logger.info('Pre-expiry auto-cancel check started');
   try {
@@ -446,8 +466,10 @@ async function runPreExpiryCancelOnce(): Promise<void> {
     }
   } catch (err: unknown) {
     logger.error(`Pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  } finally {
+    setJobLastRunDate('pre_expiry_cancel', today);
+    preExpiryCancelRunning = false;
   }
-  setJobLastRunDate('pre_expiry_cancel', today);
 }
 
 /**
