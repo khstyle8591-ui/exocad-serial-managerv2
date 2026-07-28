@@ -468,6 +468,12 @@ export interface ExpiryNoticeRule {
   renewal_template: string;
 }
 
+export interface ExpiryNoticeStopRule {
+  id: string;
+  days_before: number;
+  stop_template: string;
+}
+
 // ── Poll Types ────────────────────────────────────────────────────────────────
 
 export interface PollSource {
@@ -694,6 +700,7 @@ export interface AppSettings {
   expiry_notice_days: number[];
   expiry_notice_renewal_template: string;
   expiry_notice_stop_template: string;
+  expiry_notice_stop_rules: ExpiryNoticeStopRule[];
   stop_request_notice_enabled: boolean;
   stop_request_notice_template: string;
   cancel_complete_notice_enabled: boolean;

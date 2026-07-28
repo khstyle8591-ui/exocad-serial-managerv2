@@ -14,7 +14,7 @@ import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
 import { api } from '../client';
-import type { AppSettings, CancelDryRunResult, ExpiryNoticeRule, MailConnectionResult, MailTemplate, PollSource, ProductCodeRule } from '../../shared/types';
+import type { AppSettings, CancelDryRunResult, ExpiryNoticeRule, ExpiryNoticeStopRule, MailConnectionResult, MailTemplate, PollSource, ProductCodeRule } from '../../shared/types';
 import type { SettingsRenewalDryRunResult } from './settings/settingsTypes';
 
 
@@ -42,6 +42,30 @@ function normalizeExpiryRules(settings: Partial<AppSettings>): ExpiryNoticeRule[
     .map((day: unknown) => Number(day))
     .filter((day: number) => Number.isInteger(day) && day >= 0 && day <= 365)
     .map((day: number) => ({ id: genId(), days_before: day, renewal_template: fallbackTemplate }));
+}
+
+type RawExpiryNoticeStopRule = Partial<ExpiryNoticeStopRule> & {
+  id?: unknown;
+  days_before?: unknown;
+  stop_template?: unknown;
+};
+
+function normalizeExpiryStopRules(settings: Partial<AppSettings>): ExpiryNoticeStopRule[] {
+  const rawRules = Array.isArray(settings.expiry_notice_stop_rules) ? settings.expiry_notice_stop_rules : [];
+  const fallbackTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
+  const rules = rawRules
+    .map((rule: RawExpiryNoticeStopRule) => ({
+      id: String(rule.id || genId()),
+      days_before: Number(rule.days_before),
+      stop_template: String(rule.stop_template || fallbackTemplate),
+    }))
+    .filter((rule: ExpiryNoticeStopRule) => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
+
+  if (rules.length > 0) return rules;
+
+  // Fallback: seed from renewal days × single stop template so the editor never shows an empty list.
+  return normalizeExpiryRules(settings)
+    .map(rule => ({ id: genId(), days_before: rule.days_before, stop_template: fallbackTemplate }));
 }
 
 function normalizeKeywordList(value: unknown): string[] {
@@ -115,10 +139,10 @@ export default function Settings() {
   const [expiryDryRunEmails, setExpiryDryRunEmails] = useState<Record<string, string>>({});
   const [expiryDryRunResults, setExpiryDryRunResults] = useState<Record<string, string>>({});
   const [expiryDryRunning, setExpiryDryRunning] = useState<Record<string, boolean>>({});
-  const [stopDryRunDays, setStopDryRunDays] = useState(30);
-  const [stopDryRunEmail, setStopDryRunEmail] = useState('');
-  const [stopDryRunResult, setStopDryRunResult] = useState<string | null>(null);
-  const [stopDryRunning, setStopDryRunning] = useState(false);
+  const [expiryNoticeStopRules, setExpiryNoticeStopRules] = useState<ExpiryNoticeStopRule[]>([]);
+  const [stopRuleDryRunEmails, setStopRuleDryRunEmails] = useState<Record<string, string>>({});
+  const [stopRuleDryRunResults, setStopRuleDryRunResults] = useState<Record<string, string>>({});
+  const [stopRuleDryRunning, setStopRuleDryRunning] = useState<Record<string, boolean>>({});
   const [lifecycleDryRunEmails, setLifecycleDryRunEmails] = useState<Record<string, string>>({});
   const [lifecycleDryRunResults, setLifecycleDryRunResults] = useState<Record<string, string>>({});
   const [lifecycleDryRunning, setLifecycleDryRunning] = useState<Record<string, boolean>>({});
@@ -177,7 +201,7 @@ export default function Settings() {
       setStopRequestNoticeEnabled(data.stop_request_notice_enabled ?? true);
       setCancelCompleteNoticeEnabled(data.cancel_complete_notice_enabled ?? true);
       setExpiryNoticeRules(loadedRules);
-      setStopDryRunDays(loadedRules[0]?.days_before ?? 30);
+      setExpiryNoticeStopRules(normalizeExpiryStopRules(data));
       setMailTemplates(templates || []);
       setPop3Tls(data.pop3_tls ?? true);
       setPop3KeepCopy(data.pop3_keep_copy ?? false);
@@ -216,6 +240,13 @@ export default function Settings() {
           renewal_template: rule.renewal_template || 'renewal_reminder',
         }))
         .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
+      const cleanedStopRules = expiryNoticeStopRules
+        .map(rule => ({
+          id: rule.id || genId(),
+          days_before: Number(rule.days_before),
+          stop_template: rule.stop_template || 'stop_expiry_reminder',
+        }))
+        .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365);
       const finalSettings: Record<string, unknown> = {
         ...formVals.current,
         mail_protocol: protocol,
@@ -243,6 +274,8 @@ export default function Settings() {
         expiry_notice_rules: cleanedExpiryRules,
         expiry_notice_days: cleanedExpiryRules.map(rule => rule.days_before),
         expiry_notice_renewal_template: cleanedExpiryRules[0]?.renewal_template || 'renewal_reminder',
+        expiry_notice_stop_rules: cleanedStopRules,
+        expiry_notice_stop_template: cleanedStopRules[0]?.stop_template || 'stop_expiry_reminder',
       };
       // Clean up temp keys
       delete finalSettings.renewal_keywords_raw;
@@ -573,15 +606,15 @@ export default function Settings() {
           expiryDryRunning,
           setExpiryDryRunning,
         }}
-        stopDryRun={{
-          stopDryRunDays,
-          setStopDryRunDays,
-          stopDryRunEmail,
-          setStopDryRunEmail,
-          stopDryRunResult,
-          setStopDryRunResult,
-          stopDryRunning,
-          setStopDryRunning,
+        expiryStopNotice={{
+          expiryNoticeStopRules,
+          setExpiryNoticeStopRules,
+          stopRuleDryRunEmails,
+          setStopRuleDryRunEmails,
+          stopRuleDryRunResults,
+          setStopRuleDryRunResults,
+          stopRuleDryRunning,
+          setStopRuleDryRunning,
         }}
         lifecycleNotice={{
           stopRequestNoticeEnabled,

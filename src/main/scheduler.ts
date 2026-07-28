@@ -12,7 +12,7 @@ import { getSettings } from './settings';
 import { getDb } from './database';
 import { logger } from './utils/logger';
 import { getDateString, getTodayDateString, getYesterdayDateString } from './utils/date-utils';
-import type { DailyReport, CancelResult, ExpiryNoticeRule, SerialWithCustomer } from '../shared/types';
+import type { DailyReport, CancelResult, ExpiryNoticeRule, ExpiryNoticeStopRule, SerialWithCustomer } from '../shared/types';
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -621,6 +621,28 @@ function normalizeExpiryNoticeRules(settings: ReturnType<typeof getSettings>): E
     .map(day => ({ id: `d${day}`, days_before: day, renewal_template: fallbackTemplate }));
 }
 
+// 갱신 중단(renewal_stop_requested=1) 시리얼 전용 만료 예고 룰. 정상 룰과 독립적으로 관리된다.
+function normalizeExpiryNoticeStopRules(settings: ReturnType<typeof getSettings>): ExpiryNoticeStopRule[] {
+  const fallbackTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
+  const rawRules = Array.isArray(settings.expiry_notice_stop_rules) ? settings.expiry_notice_stop_rules : [];
+  const fromRules = rawRules
+    .map((rule: Partial<ExpiryNoticeStopRule>) => ({
+      id: String(rule.id || `s${rule.days_before ?? ''}`),
+      days_before: Number(rule.days_before),
+      stop_template: String(rule.stop_template || fallbackTemplate),
+    }))
+    .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365 && !!rule.stop_template);
+
+  if (fromRules.length > 0) {
+    return Array.from(new Map(fromRules.map(rule => [rule.id, rule])).values())
+      .sort((a, b) => b.days_before - a.days_before);
+  }
+
+  // 안전망: stop 룰이 비어 있으면 정상 룰의 발송일 × 단일 stop 템플릿으로 대체 (조용한 발송 중단 방지).
+  return normalizeExpiryNoticeRules(settings)
+    .map(rule => ({ id: `s${rule.days_before}`, days_before: rule.days_before, stop_template: fallbackTemplate }));
+}
+
 function buildExpiryNoticeVars(serial: SerialWithCustomer | null, today: string): Record<string, string> {
   if (!serial) {
     return {
@@ -649,6 +671,52 @@ function buildExpiryNoticeVars(serial: SerialWithCustomer | null, today: string)
     DEALER: serial.customer.dealer,
     SALES_MANAGER: serial.customer.sales_manager,
   };
+}
+
+// 만료 예고 메일 1건 발송 + 로깅 (정상/중단 공용).
+async function sendOneExpiryNotice(
+  serial: SerialWithCustomer,
+  code: string,
+  daysBefore: number,
+  kind: 'expiry_renewal' | 'expiry_stop',
+  todayStr: string,
+): Promise<void> {
+  try {
+    const result = await sendMailTemplate(
+      code,
+      serial.customer.email,
+      buildExpiryNoticeVars(serial, todayStr),
+      { serial_id: serial.id, actor: 'auto' }
+    );
+    logSerialMailNotice({
+      serial_id: serial.id,
+      serial_number: serial.serial_number,
+      template_code: code,
+      notice_kind: kind,
+      days_before: daysBefore,
+      recipient_email: serial.customer.email,
+      status: result.success ? 'sent' : 'failed',
+      message: result.message,
+    });
+    if (result.success) {
+      logger.info(`[ExpiryNotice] D-${daysBefore} ${kind} sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
+    } else {
+      logger.error(`[ExpiryNotice] D-${daysBefore} ${kind} failed: ${serial.serial_number} - ${result.message}`);
+    }
+  } catch (err: unknown) {
+    const message = getErrorMessage(err);
+    logSerialMailNotice({
+      serial_id: serial.id,
+      serial_number: serial.serial_number,
+      template_code: code,
+      notice_kind: kind,
+      days_before: daysBefore,
+      recipient_email: serial.customer.email,
+      status: 'failed',
+      message,
+    });
+    logger.error(`[ExpiryNotice] ${kind} failed: ${serial.serial_number} - ${message}`);
+  }
 }
 
 // 만료 예고 메일 스케줄 시작 (설정된 시각/템플릿 기반)
@@ -680,67 +748,30 @@ async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Pr
   logger.info('[ExpiryNotice] expiry notice email started');
   {
     const now = new Date();
-    const rules = normalizeExpiryNoticeRules(settings);
-    const stopTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
+    const renewalRules = normalizeExpiryNoticeRules(settings);
+    const stopRules = normalizeExpiryNoticeStopRules(settings);
     const tokyoDateStr = (daysAhead: number): string =>
       new Date(now.getTime() + daysAhead * 86400000)
         .toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const todayStr = tokyoDateStr(0);
 
-    for (const rule of rules) {
+    // 1) 정상 갱신 안내 — 중단 요청이 없는 시리얼만.
+    for (const rule of renewalRules) {
       const targetDate = tokyoDateStr(rule.days_before);
       const serials = serialService.getExpiringSerialsOnDate(targetDate)
-        .filter(s => s.customer.email);
-
+        .filter(s => s.customer.email && !s.renewal_stop_requested && s.mail_expiry_notice_enabled);
       for (const serial of serials) {
-        if (!serial.mail_expiry_notice_enabled) continue;   // 시리얼별 만료안내 토글 (자동 발송 차단)
-        const code = serial.renewal_stop_requested ? stopTemplate : rule.renewal_template;
-        try {
-          const result = await sendMailTemplate(
-            code,
-            serial.customer.email,
-            buildExpiryNoticeVars(serial, tokyoDateStr(0)),
-            { serial_id: serial.id, actor: 'auto' }
-          );
+        await sendOneExpiryNotice(serial, rule.renewal_template, rule.days_before, 'expiry_renewal', todayStr);
+      }
+    }
 
-          if (result.success) {
-            logSerialMailNotice({
-              serial_id: serial.id,
-              serial_number: serial.serial_number,
-              template_code: code,
-              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-              days_before: rule.days_before,
-              recipient_email: serial.customer.email,
-              status: 'sent',
-              message: result.message,
-            });
-            logger.info(`[ExpiryNotice] D-${rule.days_before} email sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
-          } else {
-            logSerialMailNotice({
-              serial_id: serial.id,
-              serial_number: serial.serial_number,
-              template_code: code,
-              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-              days_before: rule.days_before,
-              recipient_email: serial.customer.email,
-              status: 'failed',
-              message: result.message,
-            });
-            logger.error(`[ExpiryNotice] D-${rule.days_before} send failed: ${serial.serial_number} - ${result.message}`);
-          }
-        } catch (err: unknown) {
-          const message = getErrorMessage(err);
-          logSerialMailNotice({
-            serial_id: serial.id,
-            serial_number: serial.serial_number,
-            template_code: code,
-            notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-            days_before: rule.days_before,
-            recipient_email: serial.customer.email,
-            status: 'failed',
-            message,
-          });
-          logger.error(`[ExpiryNotice] send failed: ${serial.serial_number} - ${message}`);
-        }
+    // 2) 중단 안내 — 중단 요청된 시리얼만 (독립 발송일/템플릿). 위 루프와 필터가 상호배타라 이중발송 없음.
+    for (const rule of stopRules) {
+      const targetDate = tokyoDateStr(rule.days_before);
+      const serials = serialService.getExpiringSerialsOnDate(targetDate)
+        .filter(s => s.customer.email && s.renewal_stop_requested && s.mail_expiry_notice_enabled);
+      for (const serial of serials) {
+        await sendOneExpiryNotice(serial, rule.stop_template, rule.days_before, 'expiry_stop', todayStr);
       }
     }
   }

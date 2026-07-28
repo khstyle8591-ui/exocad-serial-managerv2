@@ -88,6 +88,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   expiry_notice_days: [90, 30, 10],
   expiry_notice_renewal_template: 'renewal_reminder',
   expiry_notice_stop_template: 'stop_expiry_reminder',
+  expiry_notice_stop_rules: [
+    { id: 's90', days_before: 90, stop_template: 'stop_expiry_reminder' },
+    { id: 's30', days_before: 30, stop_template: 'stop_expiry_reminder' },
+    { id: 's10', days_before: 10, stop_template: 'stop_expiry_reminder' },
+  ],
   stop_request_notice_enabled: true,
   stop_request_notice_template: 'stop_request_received',
   cancel_complete_notice_enabled: true,
@@ -304,6 +309,17 @@ export function getSettings(forceRefresh = false): AppSettings {
       .map((day: unknown) => Number(day))
       .filter((day: number) => Number.isInteger(day) && day >= 0 && day <= 365)
       .map((day: number) => ({ id: `d${day}`, days_before: day, renewal_template: template }));
+  }
+
+  // Migration: seed stop rules from the (now-populated) renewal days × the legacy single stop
+  // template, so upgraded installs keep sending stop notices on exactly the same schedule.
+  const hasStopRuleRows = rows.some(row => row.key === 'expiry_notice_stop_rules');
+  if (!hasStopRuleRows) {
+    const stopTemplate = loadedSettings.expiry_notice_stop_template || 'stop_expiry_reminder';
+    const days = (loadedSettings.expiry_notice_rules || []).map(rule => Number(rule.days_before));
+    loadedSettings.expiry_notice_stop_rules = Array.from(new Set(days))
+      .filter(day => Number.isInteger(day) && day >= 0 && day <= 365)
+      .map(day => ({ id: `s${day}`, days_before: day, stop_template: stopTemplate }));
   }
 
   cachedSettings = resolveSecretsFromEnv(loadedSettings);
