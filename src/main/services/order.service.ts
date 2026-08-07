@@ -319,10 +319,18 @@ export async function approvePendingOrder(
     if (order.order_type === 'new' || pollGroup === 'main') {
       const existing = serialService.getBySerialNumber(order.serial_number);
       if (existing) {
-        // 이미 존재 → 갱신 처리 (flag_duplicate가 설정된 경우). 호출자에게 was_renewed로 알림
-        was_renewed = true;
-        serialService.renewSerial(existing.id, 'manual');
+        // 이미 존재 → active면 갱신(연장), non-active면 상태 반영 + 만료일 clear
         const customerUpdates: Partial<SerialInput> = {};
+        if (targetStatus === 'active') {
+          // 갱신 처리 (flag_duplicate가 설정된 경우). 호출자에게 was_renewed로 알림
+          was_renewed = true;
+          serialService.renewSerial(existing.id, 'manual');
+          if (order.expiry_date) customerUpdates.expiry_date = order.expiry_date;
+        } else {
+          // not-active 승인: 만료일 연장 없이 상태만 반영하고 expiry clear
+          customerUpdates.status = targetStatus;
+          customerUpdates.expiry_date = '';
+        }
         if (order.customer_name) customerUpdates.customer_name = order.customer_name;
         if (order.customer_email) customerUpdates.customer_email = order.customer_email;
         if (order.customer_phone) customerUpdates.customer_phone = order.customer_phone;
@@ -336,7 +344,6 @@ export async function approvePendingOrder(
         if (modules.length > 0) customerUpdates.modules = modules;
         if (order.notes) customerUpdates.notes = order.notes;
         if (order.purchase_date) customerUpdates.purchase_date = order.purchase_date;
-        if (order.expiry_date) customerUpdates.expiry_date = order.expiry_date;
         if (Object.keys(customerUpdates).length > 0) {
           serialService.update(existing.id, customerUpdates);
         }
@@ -364,22 +371,27 @@ export async function approvePendingOrder(
     } else if (order.order_type === 'renewal') {
       const serial = serialService.getBySerialNumber(order.serial_number);
       if (!serial) return { success: false, error: serverError('SERIAL_NOT_FOUND', order.serial_number) };
-      const pollExpiry = normalizeDate(order.expiry_date);
-      if (pollGroup === 'renewal' && pollExpiry) {
-        const newExpiry = new Date(pollExpiry);
-        newExpiry.setFullYear(newExpiry.getFullYear() + 1);
-        const newExpiryStr = getDateString(newExpiry);
-        if (serial.expiry_date && newExpiryStr <= serial.expiry_date) {
-          // 이미 자동/수동 갱신으로 이 목표일까지 반영되어 있음 — 중복 연장 방지, 승인 확정 의미만 반영
-          logger.info(`[approve] renewal skip — already covered: serial=${order.serial_number} target=${newExpiryStr} current=${serial.expiry_date}`);
-          if (serial.status !== 'active' || serial.renewal_stop_requested) {
-            serialService.update(serial.id, { status: 'active', renewal_stop_requested: false });
+      if (targetStatus !== 'active') {
+        // not-active 승인: 연장 없이 상태만 반영하고 expiry clear
+        serialService.update(serial.id, { status: targetStatus, expiry_date: '' });
+      } else {
+        const pollExpiry = normalizeDate(order.expiry_date);
+        if (pollGroup === 'renewal' && pollExpiry) {
+          const newExpiry = new Date(pollExpiry);
+          newExpiry.setFullYear(newExpiry.getFullYear() + 1);
+          const newExpiryStr = getDateString(newExpiry);
+          if (serial.expiry_date && newExpiryStr <= serial.expiry_date) {
+            // 이미 자동/수동 갱신으로 이 목표일까지 반영되어 있음 — 중복 연장 방지, 승인 확정 의미만 반영
+            logger.info(`[approve] renewal skip — already covered: serial=${order.serial_number} target=${newExpiryStr} current=${serial.expiry_date}`);
+            if (serial.status !== 'active' || serial.renewal_stop_requested) {
+              serialService.update(serial.id, { status: 'active', renewal_stop_requested: false });
+            }
+          } else {
+            serialService.renewSerialWithExpiry(serial.id, newExpiryStr, 'manual');
           }
         } else {
-          serialService.renewSerialWithExpiry(serial.id, newExpiryStr, 'manual');
+          serialService.renewSerial(serial.id, 'manual');
         }
-      } else {
-        serialService.renewSerial(serial.id, 'manual');
       }
       const renewalMemo = getOrderProductMemo(order, today);
       if (renewalMemo) {
@@ -1164,8 +1176,8 @@ export function resolveApprovedExpiryDate(
   targetStatus: Serial['status'],
   activeFallbackDate = new Date(),
 ): string | null {
+  if (targetStatus !== 'active') return null;   // not-active → expiry clear (연장 없음)
   if (polledExpiryDate) return polledExpiryDate;
-  if (targetStatus !== 'active') return null;
   return getDateString(activeFallbackDate);
 }
 
