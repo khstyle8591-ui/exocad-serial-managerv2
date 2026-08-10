@@ -508,11 +508,43 @@ export class CancelService {
   }
 
   // ============================================================
-  // 시리얼 넘버 검색
+  // 시리얼 넘버 검색 (재시도 래퍼)
+  // 로그인 직후 React SPA가 아직 리렌더 중이면 search-input이 잠깐 등장했다
+  // 사라져(detach) 입력 단계가 일시적으로 실패할 수 있다(간헐적 flaky 실패).
+  // 이런 경우 페이지를 다시 로드해 SPA를 처음부터 마운트한 뒤 재시도한다.
+  // 세션 쿠키는 컨텍스트에 유지되므로 재로딩해도 재로그인은 발생하지 않는다.
+  // ============================================================
+  private async searchSerial(page: Page, serialNumber: string): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    const settings = getSettings();
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await this._searchSerialOnce(page, serialNumber);
+        return;
+      } catch (err: unknown) {
+        lastErr = err;
+        // 로그인 세션 만료는 재로딩으로 해결되지 않으므로(재로그인 필요) 즉시 전파
+        if (err instanceof Error && err.message.includes('로그인 세션')) throw err;
+        if (attempt >= MAX_ATTEMPTS) break;
+
+        logger.warn(`[searchSerial] attempt ${attempt}/${MAX_ATTEMPTS} failed (${getErrorMessage(err)}) -> reloading page and retrying`);
+        // 라이선스 관리 페이지를 다시 로드해 SPA를 처음부터 마운트
+        await page.goto(settings.exocad_site_url, { waitUntil: 'domcontentloaded' }).catch(() => { });
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => { });
+        await shortPause(page, 1500, `searchSerial retry ${attempt} settle`);
+      }
+    }
+    throw lastErr;
+  }
+
+  // ============================================================
+  // 시리얼 넘버 검색 (1회 시도)
   // 위치: 라이선스 관리 페이지 왼쪽 상단의 search 필드
   // 동작: 시리얼 넘버 입력 → Enter
   // ============================================================
-  private async searchSerial(page: Page, serialNumber: string): Promise<void> {
+  private async _searchSerialOnce(page: Page, serialNumber: string): Promise<void> {
     logger.info(`Serial search started: ${serialNumber}`);
 
     // ── Step 1: search-input이 DOM에 등장할 때까지 대기 ─────────────────────
