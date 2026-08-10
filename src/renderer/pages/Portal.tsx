@@ -107,6 +107,16 @@ export default function Portal() {
   const [requests, setRequests] = useState<AdminRequest[]>([]);
   const [detailAccount, setDetailAccount] = useState<AccountDetail | null>(null);
   const [reqFilter, setReqFilter] = useState<string>('');
+  // 승인/거절 등 처리 중인 요청 id — 해당 행 버튼을 비활성화하고 "처리 중…" 표시
+  const [busyId, setBusyId] = useState<number | null>(null);
+  // 간단한 토스트(성공/경고) — 별도 인프라가 없어 자체 구현
+  const [toast, setToast] = useState<{ msg: string; kind: 'success' | 'warn' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string, kind: 'success' | 'warn' = 'success') => {
+    setToast({ msg, kind });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sseRef = useRef<EventSource | null>(null);
 
@@ -209,40 +219,62 @@ export default function Portal() {
   async function decide(req: AdminRequest, action: 'approve' | 'reject') {
     const confirmKey = action === 'approve' ? 'portal_confirm_approve' : 'portal_confirm_reject';
     if (!window.confirm(t(lang, confirmKey))) return;
+    setBusyId(req.id);
     try {
-      await api.portal.decideRequest(req.id, action);
+      // approve의 경우 서버가 Playwright 취소까지 동기 실행 후 status를 돌려준다.
+      // status='playwright_failed'이면 승인은 됐지만 자동 취소가 실패한 것 → 경고 토스트.
+      const res = await api.portal.decideRequest(req.id, action) as { status?: string };
       loadRequests();
+      if (action === 'reject') {
+        showToast(t(lang, 'portal_toast_rejected'));
+      } else if (res?.status === 'playwright_failed') {
+        showToast(t(lang, 'portal_toast_cancel_failed'), 'warn');
+      } else {
+        showToast(t(lang, 'portal_toast_approved'));
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function decideCancel(req: AdminRequest, action: 'approve' | 'reject') {
     const confirmKey = action === 'approve' ? 'portal_confirm_cancel_approve' : 'portal_confirm_cancel_reject';
     if (!window.confirm(t(lang, confirmKey))) return;
+    setBusyId(req.id);
     try {
       await api.portal.decideCancelRequest(req.id, action);
       loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function dismiss(req: AdminRequest) {
     if (!window.confirm(t(lang, 'portal_confirm_dismiss'))) return;
+    setBusyId(req.id);
     try {
       await api.portal.dismissRequest(req.id);
       loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function holdManual(req: AdminRequest) {
     if (!window.confirm(t(lang, 'portal_confirm_manual_hold'))) return;
+    setBusyId(req.id);
     try {
       await api.portal.holdRequestManual(req.id);
       loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
     } catch (err) {
       // 서버는 코드 토큰을 반환 — 프론트에서 번역한다.
       const msg = err instanceof Error ? err.message : '';
@@ -251,6 +283,8 @@ export default function Portal() {
       } else {
         alert(msg || 'error');
       }
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -334,6 +368,7 @@ export default function Portal() {
           lang={lang}
           requests={requests}
           filter={reqFilter}
+          busyId={busyId}
           onFilter={f => { setReqFilter(f); loadRequests(f); }}
           onDecide={decide}
           onDecideCancel={decideCancel}
@@ -341,6 +376,17 @@ export default function Portal() {
           onHoldManual={holdManual}
           creditPackages={settings.credit_packages ?? []}
         />
+      )}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: toast.kind === 'warn' ? 'var(--red)' : 'var(--green)',
+          color: toast.kind === 'warn' ? '#fff' : '#0d0f12',
+          padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.35)', zIndex: 1000, maxWidth: '80vw',
+        }}>
+          {toast.msg}
+        </div>
       )}
     </div>
   );
@@ -757,10 +803,11 @@ function AccountDetailModal({ lang, account, onClose, onLinkSerial }: {
 }
 
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, onDismiss, onHoldManual, creditPackages }: {
+function RequestsTab({ lang, requests, filter, busyId, onFilter, onDecide, onDecideCancel, onDismiss, onHoldManual, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
+  busyId: number | null;
   onFilter: (f: string) => void;
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
   onDecideCancel: (r: AdminRequest, action: 'approve' | 'reject') => void;
@@ -902,29 +949,31 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                     {r.created_at.slice(0, 16).replace('T', ' ')}
                   </td>
                   <td style={cell}>
-                    {r.status === 'cancel_requested' ? (
+                    {(() => { const busy = busyId === r.id; return (
+                    r.status === 'cancel_requested' ? (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--red)', color: '#fff' }}
-                          onClick={() => onDecideCancel(r, 'approve')}>
-                          {t(lang, 'portal_req_cancel_approve')}
+                          disabled={busy} onClick={() => onDecideCancel(r, 'approve')}>
+                          {busy ? t(lang, 'portal_processing') : t(lang, 'portal_req_cancel_approve')}
                         </button>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
-                          onClick={() => onDecideCancel(r, 'reject')}>
+                          disabled={busy} onClick={() => onDecideCancel(r, 'reject')}>
                           {t(lang, 'portal_req_cancel_reject')}
                         </button>
                       </div>
                     ) : isActionable(r) && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
-                          onClick={() => onDecide(r, 'approve')}>
-                          {t(lang, 'portal_req_approve')}
+                          disabled={busy} onClick={() => onDecide(r, 'approve')}>
+                          {busy ? t(lang, 'portal_processing') : t(lang, 'portal_req_approve')}
                         </button>
                         <button className="btn btn-sm" style={{ background: 'var(--red)', color: '#fff' }}
-                          onClick={() => onDecide(r, 'reject')}>
+                          disabled={busy} onClick={() => onDecide(r, 'reject')}>
                           {t(lang, 'portal_req_reject')}
                         </button>
                         {r.type === 'credit' && r.status === 'pending' && r.alloc_status == null && (
                           <button className="btn btn-sm btn-secondary"
+                            disabled={busy}
                             title={t(lang, 'portal_req_manual_hold_help')}
                             onClick={() => onHoldManual(r)}>
                             {t(lang, 'portal_req_manual_hold')}
@@ -932,12 +981,13 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                         )}
                         {isCancelFailed(r) && (
                           <button className="btn btn-sm btn-secondary"
-                            onClick={() => onDismiss(r)}>
+                            disabled={busy} onClick={() => onDismiss(r)}>
                             {t(lang, 'portal_req_dismiss')}
                           </button>
                         )}
                       </div>
-                    )}
+                    )
+                    ); })()}
                   </td>
                 </tr>
               ))}
