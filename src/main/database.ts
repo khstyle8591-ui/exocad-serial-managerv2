@@ -930,6 +930,32 @@ function createTables(): void {
       ON customer_credit_logs(customer_id, created_at DESC);
 
     -- =========================================================
+    -- sent_mails  (unified outbound mail log — all sent emails)
+    -- 템플릿 메일(sendTemplate)과 시스템 메일(리포트/치명적 알림)을 한 곳에 기록.
+    -- 신규 발송분부터 쌓인다(과거 데이터 마이그레이션 없음).
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS sent_mails (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_code TEXT NOT NULL DEFAULT '',
+      to_addr       TEXT NOT NULL DEFAULT '',
+      subject       TEXT NOT NULL DEFAULT '',
+      body_html     TEXT NOT NULL DEFAULT '',
+      reason        TEXT NOT NULL DEFAULT '',
+      actor         TEXT NOT NULL DEFAULT 'system',
+      serial_id     INTEGER,
+      status        TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      error         TEXT NOT NULL DEFAULT '',
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_created
+      ON sent_mails(created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_template
+      ON sent_mails(template_code);
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_status
+      ON sent_mails(status);
+
+    -- =========================================================
     -- settings  (UNCHANGED)
     -- =========================================================
     CREATE TABLE IF NOT EXISTS settings (

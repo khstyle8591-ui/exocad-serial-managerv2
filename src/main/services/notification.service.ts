@@ -4,6 +4,7 @@ import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import { sendTemplate, buildTransporter as buildMailTransporter, buildFrom as buildMailFrom } from './mail/smtp.service';
+import { recordSentMail } from './sent-mail-log.service';
 import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult, LocalizedText } from '../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -550,32 +551,36 @@ export class NotificationService {
   }
 
   // === Email ===
-  async sendEmail(subject: string, htmlBody: string): Promise<boolean> {
+  async sendEmail(subject: string, htmlBody: string, reason: string = 'report'): Promise<boolean> {
     const settings = getSettings();
     if (!settings.smtp_host || !settings.report_email_to) {
       logger.warn('SMTP settings or recipient email are not configured');
       return false;
     }
 
+    const to = settings.report_email_to;
     try {
       const transporter = buildMailTransporter(settings);
 
       await transporter.sendMail({
         from: buildMailFrom(settings),
-        to: settings.report_email_to,
+        to,
         subject,
         html: htmlBody,
       });
 
       logger.info(`Email sent: ${subject}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'sent' });
       return true;
     } catch (err: unknown) {
-      logger.error(`Email send failed: ${getErrorMessage(err)}`);
+      const errorMessage = getErrorMessage(err);
+      logger.error(`Email send failed: ${errorMessage}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'failed', error: errorMessage });
       return false;
     }
   }
 
-  private async sendEmailTo(recipients: string[], subject: string, htmlBody: string): Promise<boolean> {
+  private async sendEmailTo(recipients: string[], subject: string, htmlBody: string, reason: string = 'critical_alert'): Promise<boolean> {
     const settings = getSettings();
     const to = recipients.filter(Boolean).join(',');
     if (!settings.smtp_host || !to) {
@@ -592,10 +597,32 @@ export class NotificationService {
         subject,
         html: htmlBody,
       });
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'sent' });
       return true;
     } catch (err: unknown) {
-      logger.error(`Emergency email send failed: ${getErrorMessage(err)}`);
+      const errorMessage = getErrorMessage(err);
+      logger.error(`Emergency email send failed: ${errorMessage}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'failed', error: errorMessage });
       return false;
+    }
+  }
+
+  // 시스템 메일(리포트/알림)을 발송 로그에 기록. template_code는 '(system)'으로 구분.
+  // 기록 실패가 발송 흐름을 깨지 않도록 예외를 삼킨다.
+  private recordSystemMail(input: { to: string; subject: string; htmlBody: string; reason: string; status: 'sent' | 'failed'; error?: string }): void {
+    try {
+      recordSentMail({
+        template_code: '(system)',
+        to: input.to,
+        subject: input.subject,
+        body_html: input.htmlBody,
+        reason: input.reason,
+        actor: 'system',
+        status: input.status,
+        error: input.error,
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSystemMail failed: ${getErrorMessage(logErr)}`);
     }
   }
 
@@ -650,7 +677,7 @@ export class NotificationService {
       const subject = `[Exocad Manager][CRITICAL] ${pick(input.action, appLang)} - ${input.serial_number}`;
       const emailText = buildText(appLang);
       const html = emailText.split('\n').map(line => `<div>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
-      tasks.push(this.sendEmailTo(recipients, subject, html));
+      tasks.push(this.sendEmailTo(recipients, subject, html, 'critical_alert'));
     }
 
     await Promise.all(tasks);
@@ -713,7 +740,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 日次レポート - ${report.date}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 日次レポート - ${report.date}`, emailHtml, 'daily_report'),
     ]);
   }
 
@@ -776,7 +803,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 失効予定レポート - ${report.target_month}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 失効予定レポート - ${report.target_month}`, emailHtml, 'expiry_report'),
     ]);
   }
 

@@ -31,7 +31,11 @@ import type {
     StatsSeries,
     BulkUpdatePreview,
     SerialMailSettings,
+    SentMail,
+    SentMailFilter,
 } from '../shared/types';
+
+type SentMailListItem = Omit<SentMail, 'body_html'>;
 
 // 서버 전용 응답 모양(main 프로세스에 정의되어 있으나 shared/types.ts에는 없음) — 여기서만 쓰는 최소 형태로 로컬 정의
 interface TestResult {
@@ -351,6 +355,19 @@ export const api = {
     getCapturedMail: (id: number) => fetch(`${BASE}/logs/mail/${id}`).then(r => r.text()),
     listAutoRenewalOrderNotices: (limit = 100) => get<AutoRenewalOrderNoticeLog[]>(`/logs/auto-renewal-order-notices?limit=${limit}`),
     getAutoRenewalOrderNotice: (id: number) => get<AutoRenewalOrderNoticeLog>(`/logs/auto-renewal-order-notices/${id}`),
+    listSentMails: (filter: SentMailFilter = {}) => {
+        const p = new URLSearchParams();
+        if (filter.template_code) p.set('template_code', filter.template_code);
+        if (filter.status) p.set('status', filter.status);
+        if (filter.date_from) p.set('date_from', filter.date_from);
+        if (filter.date_to) p.set('date_to', filter.date_to);
+        if (filter.q) p.set('q', filter.q);
+        if (filter.limit != null) p.set('limit', String(filter.limit));
+        if (filter.offset != null) p.set('offset', String(filter.offset));
+        const qs = p.toString();
+        return get<SentMailListItem[]>(`/logs/sent-mails${qs ? `?${qs}` : ''}`);
+    },
+    getSentMail: (id: number) => get<SentMail>(`/logs/sent-mails/${id}`),
     resolveAdminReview: (id: number) => post<{ success: boolean }>(`/logs/admin-review/${id}/resolve`, {}),
     listLogs: (filter?: unknown) => post('/logs/list', filter),
     onLogsPush: (callback: (payload: { id: number }) => void): () => void => {

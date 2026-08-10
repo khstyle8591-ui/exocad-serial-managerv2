@@ -9,6 +9,8 @@ import {
     getAutoRenewalOrderNoticeLog,
     listAutoRenewalOrderNoticeLogs,
 } from '../../main/services/auto-renewal-order-notice-log.service';
+import { listSentMails, getSentMail } from '../../main/services/sent-mail-log.service';
+import type { SentMailFilter } from '../../shared/types';
 
 const router = Router();
 
@@ -82,6 +84,37 @@ router.get('/mail/:id', (req: Request, res: Response) => {
         res.send(row.body);
     } catch (err: unknown) {
         res.status(500).send(errorMessage(err));
+    }
+});
+
+// GET /api/logs/sent-mails — 발송(outbound) 메일 목록(본문 제외). 필터: template_code, status, date_from/to, q(수신자검색)
+router.get('/sent-mails', (req: Request, res: Response) => {
+    try {
+        const filter: SentMailFilter = {
+            template_code: (req.query.template_code as string) || undefined,
+            status: (req.query.status as SentMailFilter['status']) || undefined,
+            date_from: (req.query.date_from as string) || undefined,
+            date_to: (req.query.date_to as string) || undefined,
+            q: (req.query.q as string) || undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            offset: req.query.offset ? Number(req.query.offset) : undefined,
+        };
+        res.json(listSentMails(filter));
+    } catch (err: unknown) {
+        res.status(500).json({ error: errorMessage(err) });
+    }
+});
+
+// GET /api/logs/sent-mails/:id — 발송 메일 단건(본문 포함) 미리보기
+router.get('/sent-mails/:id', (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid sent-mail id' });
+        const item = getSentMail(id);
+        if (!item) return res.status(404).json({ error: 'not found' });
+        res.json(item);
+    } catch (err: unknown) {
+        res.status(500).json({ error: errorMessage(err) });
     }
 });
 

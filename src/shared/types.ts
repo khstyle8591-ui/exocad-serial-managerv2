@@ -139,6 +139,31 @@ export interface AutoRenewalOrderNoticeLog {
   created_at: string;
 }
 
+// 발송(outbound) 메일 통합 로그. 템플릿 메일과 시스템 메일(리포트/알림) 모두 여기에 기록.
+export interface SentMail {
+  id: number;
+  template_code: string;
+  to_addr: string;
+  subject: string;
+  body_html: string;
+  reason: string;
+  actor: string;
+  serial_id: number | null;
+  status: 'sent' | 'failed';
+  error: string;
+  created_at: string;
+}
+
+export interface SentMailFilter {
+  template_code?: string;
+  status?: 'sent' | 'failed';
+  date_from?: string;
+  date_to?: string;
+  q?: string;          // 수신자 주소 부분검색
+  limit?: number;
+  offset?: number;
+}
+
 // ── Mail ──────────────────────────────────────────────────────────────────────
 
 export interface MailTemplate {

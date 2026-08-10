@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { getTemplate } from './template.service';
 import { renderTemplate, type TemplateVars } from './renderer';
 import { logActivity, pickLang } from '../activity-log.service';
+import { recordSentMail } from '../sent-mail-log.service';
 import type { AppSettings } from '../../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -45,7 +46,7 @@ export async function sendTemplate(
   code: string,
   to: string,
   vars: TemplateVars,
-  options?: { serial_id?: number; actor?: 'manual' | 'auto' | 'email' | 'polling' | 'system' },
+  options?: { serial_id?: number; actor?: 'manual' | 'auto' | 'email' | 'polling' | 'system'; reason?: string },
 ): Promise<{ success: boolean; message: string; subject?: string; html?: string }> {
   const template = getTemplate(code);
   if (!template) return { success: false, message: `Template not found: ${code}` };
@@ -87,6 +88,21 @@ export async function sendTemplate(
       }),
       severity: 'info',
     });
+    // 발송 로그 기록(실패해도 발송 흐름을 깨지 않도록 예외 삼킴)
+    try {
+      recordSentMail({
+        template_code: code,
+        to,
+        subject,
+        body_html: htmlBody,
+        reason: options?.reason || code,
+        actor: options?.actor ?? 'manual',
+        serial_id: options?.serial_id ?? null,
+        status: 'sent',
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSentMail failed (sent): ${getErrorMessage(logErr)}`);
+    }
 
     return { success: true, message: `メール送信完了 → ${to}`, subject, html: htmlBody };
   } catch (err: unknown) {
@@ -103,6 +119,21 @@ export async function sendTemplate(
       }),
       severity: 'error',
     });
+    try {
+      recordSentMail({
+        template_code: code,
+        to,
+        subject,
+        body_html: htmlBody,
+        reason: options?.reason || code,
+        actor: options?.actor ?? 'manual',
+        serial_id: options?.serial_id ?? null,
+        status: 'failed',
+        error: errorMessage,
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSentMail failed (failed): ${getErrorMessage(logErr)}`);
+    }
     return { success: false, message: `送信失敗: ${errorMessage}`, subject, html: htmlBody };
   }
 }

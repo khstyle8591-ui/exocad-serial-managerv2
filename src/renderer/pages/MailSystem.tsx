@@ -2,10 +2,20 @@ import React, { useState, useEffect, useCallback } from 'react';
 import TemplateEditor from '../components/TemplateEditor';
 import { useLang } from '../App';
 import { t, type TranslationKey } from '../i18n';
-import type { AppSettings, InboundDryRunResult, InboundMail, MailConnectionResult, MailTemplate, MailTemplateUpsert } from '../../shared/types';
+import type { AppSettings, InboundDryRunResult, InboundMail, MailConnectionResult, MailTemplate, MailTemplateUpsert, SentMail } from '../../shared/types';
 import { api } from '../client';
 
-type Tab = 'templates' | 'inbound' | 'smtp';
+type Tab = 'templates' | 'inbound' | 'smtp' | 'sent';
+type SentMailListItem = Omit<SentMail, 'body_html'>;
+type SentStatusFilter = 'all' | 'sent' | 'failed';
+
+// 시스템 메일 사유 → i18n 키(템플릿 메일은 사유가 곧 템플릿 코드라 raw 표시)
+const SENT_REASON_I18N: Record<string, TranslationKey> = {
+  daily_report: 'mail_sent_reason_daily_report',
+  expiry_report: 'mail_sent_reason_expiry_report',
+  critical_alert: 'mail_sent_reason_critical_alert',
+  report: 'mail_sent_reason_report',
+};
 type MailClassification = InboundMail['classification'];
 type InboundFilter = MailClassification | 'all';
 type EditorTarget = MailTemplate | 'new' | undefined;
@@ -86,12 +96,38 @@ export default function MailSystem() {
   const [dryRunResult, setDryRunResult] = useState<GenericResult | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
+  // Sent (발송 이력) 탭
+  const [sentMails, setSentMails] = useState<SentMailListItem[]>([]);
+  const [sentLoading, setSentLoading] = useState(false);
+  const [sentStatusFilter, setSentStatusFilter] = useState<SentStatusFilter>('all');
+  const [sentQuery, setSentQuery] = useState('');
+  const [selectedSentMail, setSelectedSentMail] = useState<SentMail | null>(null);
+  const [sentDetailLoading, setSentDetailLoading] = useState(false);
+
   const classifBadge = (c: MailClassification) => {
     const style = CLASSIF_STYLE[c] ?? CLASSIF_STYLE.unclassified;
     const i18nKey = CLASSIF_I18N_KEY[c] ?? 'mail_classif_unclassified';
     return (
       <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: style.bg, color: style.color }}>
         {t(lang, i18nKey)}
+      </span>
+    );
+  };
+
+  const reasonLabel = (reason: string) => {
+    const key = SENT_REASON_I18N[reason];
+    return key ? t(lang, key) : (reason || '—');
+  };
+
+  const sentStatusBadge = (status: SentMail['status']) => {
+    const ok = status === 'sent';
+    return (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+        background: ok ? 'rgba(34,197,94,0.14)' : 'rgba(220,38,38,0.15)',
+        color: ok ? '#22c55e' : '#fc8181',
+      }}>
+        {t(lang, ok ? 'mail_sent_status_sent' : 'mail_sent_status_failed')}
       </span>
     );
   };
@@ -132,10 +168,36 @@ export default function MailSystem() {
     }
   }, [inboundSettings]);
 
+  const loadSentMails = useCallback(async (statusFilter?: SentStatusFilter, query?: string) => {
+    setSentLoading(true);
+    try {
+      const st = statusFilter ?? sentStatusFilter;
+      const q = query ?? sentQuery;
+      const list = await api.listSentMails({
+        status: st === 'all' ? undefined : st,
+        q: q.trim() || undefined,
+        limit: 200,
+      });
+      setSentMails(list);
+    } finally {
+      setSentLoading(false);
+    }
+  }, [sentStatusFilter, sentQuery]);
+
+  const openSentMail = useCallback(async (id: number) => {
+    setSentDetailLoading(true);
+    try {
+      setSelectedSentMail(await api.getSentMail(id));
+    } finally {
+      setSentDetailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (tab === 'smtp') loadSettings();
     if (tab === 'inbound') { loadInboundMails(); loadInboundSettings(); }
-  }, [tab, loadSettings, loadInboundMails, loadInboundSettings]);
+    if (tab === 'sent') loadSentMails();
+  }, [tab, loadSettings, loadInboundMails, loadInboundSettings, loadSentMails]);
 
   const handleSave = async (input: MailTemplateUpsert) => {
     await api.upsertMailTemplate(input);
@@ -310,6 +372,7 @@ export default function MailSystem() {
       }}>
         {tabBtn('templates', 'mail_tab_templates')}
         {tabBtn('inbound', 'mail_tab_inbound')}
+        {tabBtn('sent', 'mail_tab_sent')}
         {tabBtn('smtp', 'mail_tab_smtp')}
       </div>
 
@@ -674,6 +737,116 @@ export default function MailSystem() {
           onSave={handleSave}
           onClose={() => setEditorTarget(undefined)}
         />
+      )}
+
+      {/* Sent (발송 이력) tab */}
+      {tab === 'sent' && (
+        <div style={{ background: 'var(--bg2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            {(['all', 'sent', 'failed'] as const).map(s => (
+              <button key={s} onClick={() => { setSentStatusFilter(s); loadSentMails(s, sentQuery); }}
+                style={{
+                  padding: '5px 12px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
+                  background: sentStatusFilter === s ? 'var(--accent)' : 'var(--bg3)',
+                  color: sentStatusFilter === s ? '#0d1117' : 'var(--text3)', fontWeight: 600,
+                }}>
+                {t(lang, s === 'all' ? 'mail_sent_filter_all' : s === 'sent' ? 'mail_sent_status_sent' : 'mail_sent_status_failed')}
+              </button>
+            ))}
+            <input value={sentQuery} onChange={e => setSentQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') loadSentMails(sentStatusFilter, sentQuery); }}
+              placeholder={t(lang, 'mail_sent_search_placeholder')}
+              style={{ flex: 1, minWidth: 180, padding: '6px 10px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)' }} />
+            <button onClick={() => loadSentMails(sentStatusFilter, sentQuery)}
+              style={{ padding: '6px 14px', fontSize: 12, borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#0d1117', cursor: 'pointer', fontWeight: 600 }}>
+              {t(lang, 'search')}
+            </button>
+          </div>
+
+          {sentLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'loading')}</div>
+          ) : sentMails.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'mail_sent_empty')}</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg3)' }}>
+                  {(['mail_sent_col_time', 'mail_sent_col_status', 'mail_sent_col_template', 'mail_sent_col_to', 'mail_sent_col_reason'] as const).map(h => (
+                    <th key={h} style={{ padding: '9px 16px', fontSize: 11, fontWeight: 700, color: 'var(--text3)', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>{t(lang, h)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sentMails.map((m, i) => (
+                  <tr key={m.id} onClick={() => openSentMail(m.id)}
+                    style={{ background: i % 2 === 0 ? 'var(--bg2)' : 'var(--bg3)', cursor: 'pointer' }}>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.created_at?.slice(0, 16).replace('T', ' ')}</td>
+                    <td style={{ padding: '10px 16px' }}>{sentStatusBadge(m.status)}</td>
+                    <td style={{ padding: '10px 16px' }}><code style={{ fontSize: 11, background: 'var(--bg4)', padding: '2px 6px', borderRadius: 4, color: 'var(--text)' }}>{m.template_code || '—'}</code></td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)' }}>{m.to_addr || '—'}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text3)' }}>{reasonLabel(m.reason)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Sent-mail detail modal */}
+      {selectedSentMail && (
+        <div
+          onClick={() => setSelectedSentMail(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(820px, 94vw)', maxHeight: '86vh', overflow: 'hidden', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 24px 80px rgba(0,0,0,0.45)', display: 'flex', flexDirection: 'column' }}
+          >
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                  {sentStatusBadge(selectedSentMail.status)}
+                  <span style={{ color: 'var(--text3)', fontSize: 12 }}>{selectedSentMail.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedSentMail.subject || t(lang, 'mail_no_subject')}
+                </div>
+              </div>
+              <button onClick={() => setSelectedSentMail(null)} style={{ border: '1px solid var(--border2)', background: 'var(--bg3)', color: 'var(--text)', borderRadius: 6, padding: '5px 10px', cursor: 'pointer' }}>
+                {t(lang, 'close')}
+              </button>
+            </div>
+
+            <div style={{ padding: '14px 18px', overflow: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '7px 12px', fontSize: 13, marginBottom: 14 }}>
+                <span style={{ color: 'var(--text3)' }}>To</span>
+                <span style={{ color: 'var(--text)' }}>{selectedSentMail.to_addr || '—'}</span>
+                <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_sent_col_template')}</span>
+                <span><code style={{ fontSize: 12, background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4, color: 'var(--text)' }}>{selectedSentMail.template_code || '—'}</code></span>
+                <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_sent_col_reason')}</span>
+                <span style={{ color: 'var(--text)' }}>{reasonLabel(selectedSentMail.reason)}</span>
+                {selectedSentMail.status === 'failed' && selectedSentMail.error && (
+                  <>
+                    <span style={{ color: 'var(--text3)' }}>{t(lang, 'mail_sent_col_error')}</span>
+                    <span style={{ color: '#fc8181' }}>{selectedSentMail.error}</span>
+                  </>
+                )}
+              </div>
+
+              <div
+                style={{ padding: 14, fontSize: 13, lineHeight: 1.6, color: 'var(--text)', background: '#ffffff', border: '1px solid var(--border)', borderRadius: 7, overflow: 'auto' }}
+                dangerouslySetInnerHTML={{ __html: selectedSentMail.body_html || '' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sentDetailLoading && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', color: '#fff', fontSize: 13 }}>
+          {t(lang, 'loading')}
+        </div>
       )}
 
       {selectedMail && (
