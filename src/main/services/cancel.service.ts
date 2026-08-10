@@ -56,6 +56,10 @@ export class CancelService {
   // 큐는 앞선 작업 완료 후 순서대로 실행하여 false-positive Slack 알림 방지.
   private cancelQueue: Promise<unknown> = Promise.resolve();
 
+  // 취소가 이미 완료된 것으로 간주하는 상태 셀 텍스트(소문자).
+  // 사전 가드(이미 취소된 시리얼 조기 종료)와 사후 검증(verifyCancelResult)에서 공용으로 사용.
+  private static readonly SUCCESS_STATUSES = ['opted out', 'expired', 'cancelled', 'canceled'];
+
   // ============================================================
   // 단일 시리얼 cancel 처리
   // 전체 흐름: 로그인 → 라이선스 관리 페이지 → 검색 → 옵션 → cancel → 확인
@@ -183,6 +187,26 @@ export class CancelService {
       // ─── 4단계: 제품명 읽기 (cancel 버튼 결정용) ───
       const productName = await this.getProductNameFromRow(page, serialNumber);
       logger.info(`Product name detected: "${productName}"`);
+
+      // ─── 4.5단계: 이미 취소(opt-out/expired)된 시리얼 조기 종료 가드 ───
+      // 대상 행의 상태 셀이 이미 성공 상태이면 취소 자동화를 건너뛰고 성공으로 처리한다.
+      // 이미 opt-out된 시리얼은 드롭다운에 취소 항목("Opt out upgrade" 등)이 없어
+      // 이전에는 clickCancelInDropdown이 10초 타임아웃 후 "Cancel failed"로 처리됐다.
+      const preStatusCells = await this.readStatusCells(page, serialNumber);
+      const alreadyCancelled = preStatusCells.find(
+        t => CancelService.SUCCESS_STATUSES.some(s => t.includes(s))
+      );
+      if (alreadyCancelled) {
+        logger.info(`[guard] ${serialNumber}: already in terminal status "${alreadyCancelled}" — skipping cancel automation, treating as success`);
+        const screenshotPath = await this.captureResultScreenshot(page, serialNumber);
+        return {
+          serial_number: serialNumber,
+          success: true,
+          verified: true,
+          verified_status: `already_${alreadyCancelled}`,
+          screenshot_path: screenshotPath,
+        };
+      }
 
       // ─── 5단계: 옵션 버튼(⋮) 클릭 → 드롭다운 열기 ───
       await this.clickOptionButton(page, serialNumber, settings);
@@ -863,7 +887,7 @@ export class CancelService {
   // reload로 클라이언트 캐시를 우회해 서버에서 새로 받아온 상태로 최종 확인한다.
   // ============================================================
   private async verifyCancelResult(page: Page, serialNumber: string): Promise<{ verified: boolean; status: string }> {
-    const successStatuses = ['opted out', 'expired', 'cancelled', 'canceled'];
+    const successStatuses = CancelService.SUCCESS_STATUSES;
     let lastStatusTexts: string[] = [];
 
     try {
