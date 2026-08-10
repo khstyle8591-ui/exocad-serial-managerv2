@@ -223,10 +223,19 @@ export function createPortalRequest(params: {
   return result.lastInsertRowid as number;
 }
 
-export function updatePortalRequestStatus(id: number, status: PortalRequestStatus): void {
+// clearNote=true이면 note 컬럼을 NULL로 초기화한다. 재시도로 성공한 승인에서
+// 이전 실패로 박힌 note('playwright_failed_manual')를 지우지 않으면 isRetryable이
+// 계속 true로 남아 UI가 성공 후에도 "취소 실패/재시도" 상태로 고정되는 문제 방지.
+export function updatePortalRequestStatus(
+  id: number,
+  status: PortalRequestStatus,
+  clearNote: boolean = false,
+): void {
   getDb()
     .prepare(
-      'UPDATE portal_requests SET status = ?, processed_at = ? WHERE id = ?',
+      clearNote
+        ? 'UPDATE portal_requests SET status = ?, note = NULL, processed_at = ? WHERE id = ?'
+        : 'UPDATE portal_requests SET status = ?, processed_at = ? WHERE id = ?',
     )
     .run(status, getNowTimestampString(), id);
   emitPortalRequestChanged();

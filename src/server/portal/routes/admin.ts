@@ -414,7 +414,9 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
   }
   // renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 
-  updatePortalRequestStatus(id, 'approved');
+  // clearNote=true: 이전 시도가 실패해 note='playwright_failed_manual'로 남아 있던 경우
+  // 재승인이 성공하면 note를 지워 UI의 "취소 실패/재시도" 상태에서 벗어나게 한다.
+  updatePortalRequestStatus(id, 'approved', true);
   res.json({ ok: true, status: 'approved' });
 });
 
