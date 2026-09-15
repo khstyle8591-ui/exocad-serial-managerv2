@@ -13,6 +13,7 @@ import {
   markCreditDistributionFailed,
   getPortalRequestById,
   updatePortalRequestStatus,
+  findAccountById,
 } from '../../server/portal/db';
 import { sendCreditInvoiceMail } from './credit-request.service';
 import { logger } from '../utils/logger';
@@ -626,7 +627,9 @@ export async function runCreditAutoDistributionNow(): Promise<{ processed: numbe
     }
 
     const triggerId = `credit-auto-distribute:${req.id}`;
-    const note = `${getNowTimestampString()} autodistribution qty:${pkg.quantity}`;
+    const account = findAccountById(req.account_id);
+    const nameLabel = account?.name?.trim() || `#${req.id}`;
+    const note = `name:${nameLabel} ${getNowTimestampString()} autodistribution qty:${pkg.quantity}`;
     logger.info(`[credit-auto-distribute] distributing: request #${req.id}, exocadId=${req.exocad_id}, qty=${pkg.quantity}`);
 
     // distributed=true로 표시되기 전에 예외가 나면(finally의 page.close() throw 등) 아래 catch가
