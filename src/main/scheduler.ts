@@ -4,7 +4,7 @@ import { cancelService, cleanOldScreenshots } from './services/cancel.service';
 import { checkInboundNow } from './services/mail/inbound.service';
 import { notificationService, buildScheduleSummary } from './services/notification.service';
 import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow, runCreditAutoDistributionNow } from './services/automation.service';
-import { sendTemplate as sendMailTemplate } from './services/mail/smtp.service';
+import { sendTemplate as sendMailTemplate, buildRecipients } from './services/mail/smtp.service';
 import { sendCancelCompleteNotice } from './services/mail/lifecycle-notice.service';
 import { deleteOldActivityLogs } from './services/activity-log.service';
 import { deleteExpiredSerialMailNoticeLogs, logSerialMailNotice } from './services/serial-mail-notice-log.service';
@@ -681,10 +681,11 @@ async function sendOneExpiryNotice(
   kind: 'expiry_renewal' | 'expiry_stop',
   todayStr: string,
 ): Promise<void> {
+  const recipients = buildRecipients(serial.customer.email, serial.customer.email_2);
   try {
     const result = await sendMailTemplate(
       code,
-      serial.customer.email,
+      recipients,
       buildExpiryNoticeVars(serial, todayStr),
       { serial_id: serial.id, actor: 'auto' }
     );
@@ -694,12 +695,12 @@ async function sendOneExpiryNotice(
       template_code: code,
       notice_kind: kind,
       days_before: daysBefore,
-      recipient_email: serial.customer.email,
+      recipient_email: recipients,
       status: result.success ? 'sent' : 'failed',
       message: result.message,
     });
     if (result.success) {
-      logger.info(`[ExpiryNotice] D-${daysBefore} ${kind} sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
+      logger.info(`[ExpiryNotice] D-${daysBefore} ${kind} sent: ${serial.serial_number} -> ${recipients} (${code})`);
     } else {
       logger.error(`[ExpiryNotice] D-${daysBefore} ${kind} failed: ${serial.serial_number} - ${result.message}`);
     }
@@ -711,7 +712,7 @@ async function sendOneExpiryNotice(
       template_code: code,
       notice_kind: kind,
       days_before: daysBefore,
-      recipient_email: serial.customer.email,
+      recipient_email: recipients,
       status: 'failed',
       message,
     });
@@ -879,7 +880,16 @@ async function catchUpDailyReports(): Promise<void> {
 // 서버 시작 시 1회 — VM 점검 등으로 다운된 동안 오늘 스케줄을 놓친 작업을 순차적으로 보정.
 // 자연히 따라잡는 작업(autoRenew/limbo/정리작업)은 대상에서 제외 — 정확한 날짜를 조회해
 // 그날을 놓치면 영구 손실되는 작업(만료예고메일/사전취소)과 전일자 리포트만 다룬다.
+//
+// 운영(production) 전용 안전장치다. dev DB는 항상 "오늘 기준 뒤처진" 스냅샷이므로 이 게이트가
+// 없으면 로컬 dev 서버를 켤 때마다 실제 고객 메일 발송·실제 exocad.com 구독취소(Playwright)가
+// 재실행될 수 있다 (2026-09-16 로컬 실행에서 일일리포트 재발송이 실제로 발생한 사고 재발 방지).
 async function runStartupCatchup(): Promise<void> {
+  if (process.env.NODE_ENV !== 'production') {
+    logger.info('[Catchup] skipped — not running in production (NODE_ENV != production)');
+    return;
+  }
+
   try {
     logger.info('[Catchup] running inbound mail check on startup');
     await checkInboundNow();
