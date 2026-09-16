@@ -7,6 +7,7 @@ export interface Customer {
   id: number;
   name: string;
   email: string;
+  email_2: string;
   phone: string;
   address: string;
   dealer: string;
@@ -30,6 +31,7 @@ export interface CustomerCreditLog {
 export interface CustomerInput {
   name: string;
   email?: string;
+  email_2?: string;
   phone?: string;
   address?: string;
   dealer?: string;

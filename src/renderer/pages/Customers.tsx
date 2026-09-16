@@ -8,6 +8,7 @@ import { translateServerError } from '../utils/serverError';
 const EMPTY_CUSTOMER: CustomerInput = {
   name: '',
   email: '',
+  email_2: '',
   phone: '',
   address: '',
   dealer: '',
@@ -88,6 +89,7 @@ export default function Customers() {
     setForm({
       name: customer.name ?? '',
       email: customer.email ?? '',
+      email_2: customer.email_2 ?? '',
       phone: customer.phone ?? '',
       address: customer.address ?? '',
       dealer: customer.dealer ?? '',
@@ -148,6 +150,7 @@ export default function Customers() {
       const input = {
         name: form.name.trim(),
         email: form.email?.trim() ?? '',
+        email_2: form.email_2?.trim() ?? '',
         phone: form.phone?.trim() ?? '',
         address: form.address?.trim() ?? '',
         dealer: form.dealer?.trim() ?? '',
@@ -170,7 +173,7 @@ export default function Customers() {
       setEditingCustomer(null);
       setForm(EMPTY_CUSTOMER);
     } catch (err: any) {
-      setFormError(err?.message ?? t(lang, 'save_fail'));
+      setFormError(err?.message ? translateServerError(err.message, lang) : t(lang, 'save_fail'));
     } finally {
       setSaving(false);
     }
@@ -383,6 +386,10 @@ export default function Customers() {
               <div>
                 <label style={labelStyle}>{t(lang, 'label_email')}</label>
                 <input value={form.email ?? ''} onChange={e => setField('email', e.target.value)} style={inputStyle} placeholder="example@email.com" />
+              </div>
+              <div>
+                <label style={labelStyle}>{t(lang, 'label_email2')}</label>
+                <input value={form.email_2 ?? ''} onChange={e => setField('email_2', e.target.value)} style={inputStyle} placeholder="example2@email.com" />
               </div>
               <div>
                 <label style={labelStyle}>{t(lang, 'label_phone')}</label>

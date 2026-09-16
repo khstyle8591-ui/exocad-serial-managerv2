@@ -10,6 +10,8 @@ export const SERVER_ERRORS = {
   SERIAL_ALREADY_EXISTS:      'ERR_SERIAL_ALREADY_EXISTS',
   IMPORT_NO_FILE:             'ERR_IMPORT_NO_FILE',
   IMPORT_NO_DATA:             'ERR_IMPORT_NO_DATA',
+  EMAIL2_INVALID:             'ERR_EMAIL2_INVALID',
+  EMAIL2_DUPLICATE:           'ERR_EMAIL2_DUPLICATE',
 } as const;
 
 export type ServerErrorCode = (typeof SERVER_ERRORS)[keyof typeof SERVER_ERRORS];

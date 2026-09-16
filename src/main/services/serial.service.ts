@@ -19,7 +19,7 @@ const getErrorMessage = (error: unknown) => error instanceof Error ? error.messa
 const SERIAL_WITH_CUSTOMER_SQL = `
   SELECT s.*,
     json_object(
-      'id', c.id, 'name', c.name, 'email', c.email, 'phone', c.phone,
+      'id', c.id, 'name', c.name, 'email', c.email, 'email_2', c.email_2, 'phone', c.phone,
       'address', c.address, 'dealer', c.dealer, 'sales_manager', c.sales_manager,
       'notes', c.notes, 'created_at', c.created_at, 'updated_at', c.updated_at
     ) AS customer_json

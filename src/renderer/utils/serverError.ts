@@ -12,6 +12,8 @@ const CODE_TO_KEY: Record<string, TranslationKey> = {
   ERR_SERIAL_ALREADY_EXISTS:     'err_serial_already_exists',
   ERR_IMPORT_NO_FILE:            'err_import_no_file',
   ERR_IMPORT_NO_DATA:            'err_import_no_data',
+  ERR_EMAIL2_INVALID:            'err_email2_invalid',
+  ERR_EMAIL2_DUPLICATE:          'err_email2_duplicate',
 };
 
 /**

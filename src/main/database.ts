@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 15;
+export const CURRENT_SCHEMA_VERSION = 16;
 
 type Migration = {
   version: number;
@@ -317,6 +317,7 @@ function createPortalTables(): void {
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       login_id       TEXT    NOT NULL UNIQUE,
       email          TEXT    NOT NULL DEFAULT '',
+      email_2        TEXT    NOT NULL DEFAULT '',
       phone          TEXT    NOT NULL DEFAULT '',
       address        TEXT    NOT NULL DEFAULT '',
       name           TEXT    NOT NULL DEFAULT '',
@@ -517,6 +518,18 @@ function addPortalRequestsAllocColumns(): void {
   logger.info('[DB] Migration complete: portal_requests.alloc_status/alloc_error/alloc_at added');
 }
 
+function addEmail2Columns(): void {
+  const customerColumns = db.prepare('PRAGMA table_info(customers)').all() as { name: string }[];
+  if (!customerColumns.some(c => c.name === 'email_2')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN email_2 TEXT NOT NULL DEFAULT ''`);
+  }
+  const accountColumns = db.prepare('PRAGMA table_info(portal_accounts)').all() as { name: string }[];
+  if (!accountColumns.some(c => c.name === 'email_2')) {
+    db.exec(`ALTER TABLE portal_accounts ADD COLUMN email_2 TEXT NOT NULL DEFAULT ''`);
+  }
+  logger.info('[DB] Migration complete: customers.email_2 / portal_accounts.email_2 added');
+}
+
 function addSerialMailToggleColumns(): void {
   const columns = db.prepare('PRAGMA table_info(serials)').all() as { name: string }[];
   const existing = new Set(columns.map(c => c.name));
@@ -623,6 +636,11 @@ const migrations: Migration[] = [
     name: 'serials per-serial mail toggle columns',
     run: addSerialMailToggleColumns,
   },
+  {
+    version: 16,
+    name: 'customers/portal_accounts email_2 columns',
+    run: addEmail2Columns,
+  },
 ];
 
 function runMigrations(): void {
@@ -697,6 +715,7 @@ function createTables(): void {
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       name          TEXT NOT NULL,
       email         TEXT NOT NULL DEFAULT '',
+      email_2       TEXT NOT NULL DEFAULT '',
       phone         TEXT NOT NULL DEFAULT '',
       address       TEXT NOT NULL DEFAULT '',
       dealer        TEXT NOT NULL DEFAULT '',

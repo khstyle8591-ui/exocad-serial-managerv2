@@ -7,6 +7,7 @@ export interface PortalAccount {
   id: number;
   login_id: string;
   email: string;
+  email_2: string;
   phone: string;
   address: string;
   name: string;
@@ -430,9 +431,9 @@ export function setCustomerMismatch(id: number, data: Record<string, [string, st
 
 export function updatePortalAccountFields(
   id: number,
-  fields: Partial<Pick<PortalAccount, 'name' | 'email' | 'phone' | 'address' | 'exocad_id' | 'language'>>,
+  fields: Partial<Pick<PortalAccount, 'name' | 'email' | 'email_2' | 'phone' | 'address' | 'exocad_id' | 'language'>>,
 ): void {
-  const allowed = ['name', 'email', 'phone', 'address', 'exocad_id', 'language'] as const;
+  const allowed = ['name', 'email', 'email_2', 'phone', 'address', 'exocad_id', 'language'] as const;
   const updates = allowed.filter(k => k in fields);
   if (updates.length === 0) return;
   const set = updates.map(k => `${k} = ?`).join(', ');

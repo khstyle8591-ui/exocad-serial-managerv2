@@ -16,7 +16,7 @@ export default function ProfilePage() {
   const [pwSuccess, setPwSuccess] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
 
-  const [editForm, setEditForm] = useState({ email: '', phone: '', address: '', exocad_id: '' });
+  const [editForm, setEditForm] = useState({ email: '', email_2: '', phone: '', address: '', exocad_id: '' });
   const [editing, setEditing] = useState(false);
   const [editError, setEditError]     = useState('');
   const [editSuccess, setEditSuccess] = useState('');
@@ -36,6 +36,7 @@ export default function ProfilePage() {
     if (!account) return;
     setEditForm({
       email: account.email || '',
+      email_2: account.email_2 || '',
       phone: account.phone || '',
       address: account.address || '',
       exocad_id: account.exocad_id || '',
@@ -54,7 +55,7 @@ export default function ProfilePage() {
       setEditSuccess(t(lang, 'profile_updated'));
       setEditing(false);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : t(lang, 'error_generic'));
+      setEditError(t(lang, err instanceof Error ? err.message as Parameters<typeof t>[1] : 'error_generic'));
     } finally {
       setEditLoading(false);
     }
@@ -101,6 +102,7 @@ export default function ProfilePage() {
                 [t(lang, 'login_id'),       account.login_id],
                 [t(lang, 'name'),           account.name],
                 [t(lang, 'email'),          account.email],
+                [t(lang, 'email2_label'),   account.email_2 || '—'],
                 [t(lang, 'phone_label'),    account.phone || '—'],
                 [t(lang, 'address_label'),  account.address || '—'],
                 [t(lang, 'exocad_id_label'), account.exocad_id || '—'],
@@ -125,6 +127,10 @@ export default function ProfilePage() {
             <div className="form-group">
               <label>{t(lang, 'email')}</label>
               <input type="email" value={editForm.email} onChange={setEdit('email')} required />
+            </div>
+            <div className="form-group">
+              <label>{t(lang, 'email2_label')}</label>
+              <input type="email" value={editForm.email_2} onChange={setEdit('email_2')} />
             </div>
             <div className="form-group">
               <label>{t(lang, 'phone_label')}</label>

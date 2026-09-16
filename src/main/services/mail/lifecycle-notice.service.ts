@@ -1,7 +1,7 @@
 import { getSettings } from '../../settings';
 import { serialService } from '../serial.service';
 import { logger } from '../../utils/logger';
-import { sendTemplate } from './smtp.service';
+import { sendTemplate, buildRecipients } from './smtp.service';
 import type { SerialWithCustomer } from '../../../shared/types';
 
 type NoticeKind = 'stop_request' | 'cancel_complete';
@@ -62,7 +62,7 @@ export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer):
   const template = settings.stop_request_notice_template || 'stop_request_received';
   const result = await sendTemplate(
     template,
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial),
     { serial_id: serial.id, actor: 'auto' }
   );
@@ -83,7 +83,7 @@ export async function sendCancelCompleteNotice(serial: SerialWithCustomer): Prom
   const template = settings.cancel_complete_notice_template || 'cancel_confirmation';
   const result = await sendTemplate(
     template,
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial),
     { serial_id: serial.id, actor: 'auto' }
   );
@@ -103,7 +103,7 @@ export async function sendManualRenewalConfirmNotice(
 
   const result = await sendTemplate(
     'manual_renewal_confirm',
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial, { PREVIOUS_EXPIRY_DATE: previousExpiryDate ?? '' }),
     { serial_id: serial.id, actor: 'manual' }
   );

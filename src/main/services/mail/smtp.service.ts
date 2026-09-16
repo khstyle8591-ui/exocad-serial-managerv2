@@ -12,6 +12,11 @@ type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+/** 1번/2번 이메일을 받는사람(To)에 나란히 합친다 (nodemailer는 콤마구분 다중 To를 지원). */
+export function buildRecipients(primary: string, secondary?: string | null): string {
+  return [primary, secondary].map(e => (e ?? '').trim()).filter(Boolean).join(', ');
+}
+
 function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
   return Object.fromEntries(
     Object.entries(settingsOverride ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),

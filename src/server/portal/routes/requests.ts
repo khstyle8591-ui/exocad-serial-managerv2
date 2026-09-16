@@ -13,7 +13,7 @@ import {
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-notice.service';
-import { sendTemplate } from '../../../main/services/mail/smtp.service';
+import { sendTemplate, buildRecipients } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
@@ -92,7 +92,7 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
 
   // 고객 신청 확인 메일
   if (account.email) {
-    await sendTemplate('portal_credit_confirm', account.email, {
+    await sendTemplate('portal_credit_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       REQUEST_ID: String(requestId),
       EXOCAD_ID: exocad_id.trim(),
@@ -222,7 +222,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
 
   const account = findAccountById(accountId);
   if (account?.email) {
-    await sendTemplate('portal_renewal_stop_confirm', account.email, {
+    await sendTemplate('portal_renewal_stop_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),
@@ -302,7 +302,7 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
 
   const account = findAccountById(accountId);
   if (account?.email) {
-    await sendTemplate('portal_renewal_resume_confirm', account.email, {
+    await sendTemplate('portal_renewal_resume_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),

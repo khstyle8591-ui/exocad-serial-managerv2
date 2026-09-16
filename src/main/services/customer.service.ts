@@ -2,6 +2,7 @@ import { getDb } from '../database';
 import { getNowTimestampString } from '../utils/date-utils';
 import type { Customer, CustomerCreditLog, CustomerInput, CustomerSerialSummary, MergeCandidate } from '../../shared/types';
 import { serverError } from '../../shared/server-errors';
+import { checkSecondaryEmail } from '../../shared/email-utils';
 
 function normalizeCustomerText(value: unknown): string {
   return String(value ?? '')
@@ -15,12 +16,21 @@ function normalizeCustomerInput(input: CustomerInput): CustomerInput {
     ...input,
     name: normalizeCustomerText(input.name) || '(unknown)',
     email: normalizeCustomerText(input.email),
+    email_2: normalizeCustomerText(input.email_2),
     phone: normalizeCustomerText(input.phone),
     address: normalizeCustomerText(input.address),
     dealer: normalizeCustomerText(input.dealer),
     sales_manager: normalizeCustomerText(input.sales_manager),
     notes: input.notes ?? '',
   };
+}
+
+/** email_2 형식 오류 또는 email과 중복이면 예외를 던진다 (호출부가 400으로 변환). */
+function assertEmail2Valid(email2: string, primaryEmail: string): void {
+  const check = checkSecondaryEmail(email2, primaryEmail);
+  if (!check.ok) {
+    throw new Error(serverError(check.reason === 'invalid' ? 'EMAIL2_INVALID' : 'EMAIL2_DUPLICATE'));
+  }
 }
 
 function getNormalizedCustomerName(customer: Pick<Customer, 'name'>): string {
@@ -45,6 +55,7 @@ export function createCustomer(input: CustomerInput): Customer {
   const db = getDb();
   const now = getNowTimestampString();
   const clean = normalizeCustomerInput(input);
+  assertEmail2Valid(clean.email_2 ?? '', clean.email ?? '');
   const existingByName = (db
     .prepare('SELECT * FROM customers ORDER BY id ASC')
     .all() as Customer[])
@@ -53,12 +64,13 @@ export function createCustomer(input: CustomerInput): Customer {
 
   const result = db
     .prepare(
-      `INSERT INTO customers (name, email, phone, address, dealer, sales_manager, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO customers (name, email, email_2, phone, address, dealer, sales_manager, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       clean.name,
       clean.email ?? '',
+      clean.email_2 ?? '',
       clean.phone ?? '',
       clean.address ?? '',
       clean.dealer ?? '',
@@ -74,14 +86,16 @@ export function createCustomerSeparate(input: CustomerInput): Customer {
   const db = getDb();
   const now = getNowTimestampString();
   const clean = normalizeCustomerInput(input);
+  assertEmail2Valid(clean.email_2 ?? '', clean.email ?? '');
   const result = db
     .prepare(
-      `INSERT INTO customers (name, email, phone, address, dealer, sales_manager, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO customers (name, email, email_2, phone, address, dealer, sales_manager, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       clean.name,
       clean.email ?? '',
+      clean.email_2 ?? '',
       clean.phone ?? '',
       clean.address ?? '',
       clean.dealer ?? '',
@@ -103,6 +117,12 @@ export function updateCustomer(id: number, input: Partial<CustomerInput>): Custo
 
   if (input.name !== undefined) { fields.push('name = ?'); values.push(normalizeCustomerText(input.name)); }
   if (input.email !== undefined) { fields.push('email = ?'); values.push(normalizeCustomerText(input.email)); }
+  if (input.email_2 !== undefined) {
+    const email2 = normalizeCustomerText(input.email_2);
+    const primaryEmail = input.email !== undefined ? normalizeCustomerText(input.email) : existing.email;
+    assertEmail2Valid(email2, primaryEmail);
+    fields.push('email_2 = ?'); values.push(email2);
+  }
   if (input.phone !== undefined) { fields.push('phone = ?'); values.push(normalizeCustomerText(input.phone)); }
   if (input.address !== undefined) { fields.push('address = ?'); values.push(normalizeCustomerText(input.address)); }
   if (input.dealer !== undefined) { fields.push('dealer = ?'); values.push(normalizeCustomerText(input.dealer)); }

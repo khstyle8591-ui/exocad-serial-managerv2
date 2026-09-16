@@ -8,6 +8,7 @@ import { getDb } from '../../../main/database';
 import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getNowTimestampString } from '../../../main/utils/date-utils';
+import { checkSecondaryEmail } from '../../../shared/email-utils';
 
 const router = Router();
 
@@ -63,7 +64,7 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
 // PATCH /portal/profile — 이메일/연락처/주소/exocad_id 수정 (이름·로그인ID는 변경 불가)
 router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
-  const { email, phone, address, exocad_id } = req.body as Record<string, string>;
+  const { email, email_2, phone, address, exocad_id } = req.body as Record<string, string>;
 
   if (email !== undefined) {
     const trimmed = email.trim();
@@ -74,8 +75,20 @@ router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) 
   }
 
   const accountId = pr.portalSession!.account_id;
+
+  if (email_2 !== undefined && email_2.trim()) {
+    const existingAccount = findAccountById(accountId);
+    const primaryEmail = email !== undefined ? email.trim() : (existingAccount?.email ?? '');
+    const check = checkSecondaryEmail(email_2, primaryEmail);
+    if (!check.ok) {
+      res.status(400).json({ error: check.reason === 'invalid' ? 'invalid_email2' : 'duplicate_email2' });
+      return;
+    }
+  }
+
   updatePortalAccountFields(accountId, {
     ...(email !== undefined && { email: email.trim() }),
+    ...(email_2 !== undefined && { email_2: email_2.trim() }),
     ...(phone !== undefined && { phone: phone.trim() }),
     ...(address !== undefined && { address: address.trim() }),
     ...(exocad_id !== undefined && { exocad_id: exocad_id.trim() }),
@@ -93,6 +106,7 @@ router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) 
   if (account && link) {
     updateCustomer(link.customer_id, {
       ...(email   !== undefined && { email:   account.email }),
+      ...(email_2 !== undefined && { email_2: account.email_2 }),
       ...(phone   !== undefined && { phone:   account.phone }),
       ...(address !== undefined && { address: account.address }),
     });
