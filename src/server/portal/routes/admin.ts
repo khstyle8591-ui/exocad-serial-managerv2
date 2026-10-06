@@ -326,6 +326,28 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
 
   if (action === 'reject') {
     updatePortalRequestStatus(id, 'rejected');
+
+    // 포털은 신청 접수 즉시 갱신중단 플래그를 세운다(claimStopRequest). 거절 시 플래그를 그대로
+    // 두면 사전취소 크론이 거절된 시리얼을 해지해 버리므로, 신청 취소 승인(decide-cancel)과 동일하게 해제한다.
+    // 중복 신청은 접수 시점에 이미 rejected 처리되어 이 분기에 도달하지 않으므로, 여기서 거절되는
+    // 신청이 곧 플래그를 세운 신청이다. 이미 해지/만료된 시리얼은 건드리지 않는다(되살림 방지).
+    if (request.type === 'renewal_stop' && request.target_serial) {
+      const serial = serialService.getBySerialNumber(request.target_serial);
+      if (serial && serial.status === 'active') {
+        serialService.setStopRequested(
+          serial.id,
+          false,
+          `portal-req-${id}`,
+          'manual',
+          pickLang({
+            ko: `관리자 거절 — 포털 갱신중단 신청(#${id}) 거절에 따라 플래그 해제`,
+            en: `Manager rejected — stop flag cleared per portal renewal-stop request (#${id}) rejection`,
+            ja: `管理者却下 — ポータル更新停止申請(#${id})の却下によりフラグ解除`,
+          }),
+        );
+      }
+    }
+
     logActivity({
       action: 'system', actor: 'manual', severity: 'info',
       details: pickLang({

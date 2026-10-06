@@ -81,10 +81,21 @@ export class CancelService {
   // ============================================================
   // dryRun=true: 계정/수량/메모 입력까지 수행하고 제출 버튼이 보이는지/활성화됐는지만 확인한 뒤
   // 클릭하지 않고 종료한다 (실제 배분 없음 — 검증용).
-  async distributeCredits(exocadId: string, amount: number, note: string, headless: boolean = true, dryRun: boolean = false): Promise<CreditDistributeResult> {
+  // beforeStart: 브라우저 슬롯을 실제로 받은 직후, 배분을 시작하기 직전에 실행된다. false를 돌려주면
+  // 배분하지 않고 skipped 결과를 반환한다(슬롯 대기 중 신청이 좌초 복구/수동 처리로 넘어간 경우의 이중 지급 방지).
+  async distributeCredits(
+    exocadId: string, amount: number, note: string, headless: boolean = true, dryRun: boolean = false,
+    beforeStart?: () => boolean,
+  ): Promise<CreditDistributeResult> {
     const op = this.cancelQueue
       .catch(() => {})
-      .then(() => withBrowserSlot(() => this._doDistributeCredits(exocadId, amount, note, headless, dryRun)));
+      .then(() => withBrowserSlot(async (): Promise<CreditDistributeResult> => {
+        if (beforeStart && !beforeStart()) {
+          logger.warn(`[distributeCredits] skipped before start — request state changed while waiting for the browser slot (exocadId=${exocadId})`);
+          return { exocad_id: exocadId, success: false, skipped: true, error: 'skipped: request state changed while waiting for the browser slot' };
+        }
+        return this._doDistributeCredits(exocadId, amount, note, headless, dryRun);
+      }));
     this.cancelQueue = op.catch(() => {});
     return op;
   }
