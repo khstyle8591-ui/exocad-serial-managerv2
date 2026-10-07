@@ -359,6 +359,21 @@ export function findStaleDistributingCredits(cutoffTimestamp: string): PortalReq
 }
 
 /**
+ * 브라우저 슬롯에서 실제 배분을 시작하는 시점에 호출한다. 아직 'distributing'일 때만 시작 시각(alloc_at)을
+ * 갱신하고 true를 돌려준다. claim 이후 슬롯 대기가 길어져 좌초 복구가 'failed'로 바꿔 버렸다면(또는 매니저가
+ * 이미 처리했다면) false → 호출부는 배분을 건너뛴다. 좌초 판정 시계도 대기 시간이 아닌 실제 시작 시점부터 잰다.
+ */
+export function markCreditDistributionStarted(id: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_at = ?
+       WHERE id = ? AND type = 'credit' AND alloc_status = 'distributing'`,
+    )
+    .run(getNowTimestampString(), id);
+  return result.changes > 0;
+}
+
+/**
  * 매니저가 수동 처리로 전환 — 자동배분 큐에서 원자적으로 빼낸다.
  * claimCreditForDistribution과 동일한 조건(pending & alloc_status IS NULL)으로 선점하므로,
  * 자동배분 크론이 이미 배분을 시작(distributing)했다면 false를 반환한다(한쪽만 이긴다 → 이중 발급 방지).

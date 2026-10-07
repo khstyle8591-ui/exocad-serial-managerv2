@@ -570,6 +570,8 @@ export interface CreditDistributeResult {
   verified?: boolean;
   error?: string;
   screenshot_path?: string;
+  // 슬롯 대기 중 신청 상태가 바뀌어(좌초 복구로 failed 등) 배분을 시도하지 않고 건너뛴 경우 true.
+  skipped?: boolean;
 }
 
 export interface CancelDryRunResult {

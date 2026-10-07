@@ -9,6 +9,7 @@ import {
   findCreditRequestsReadyForAutoDistribution,
   findStaleDistributingCredits,
   claimCreditForDistribution,
+  markCreditDistributionStarted,
   markCreditDistributed,
   markCreditDistributionFailed,
   getPortalRequestById,
@@ -637,7 +638,16 @@ export async function runCreditAutoDistributionNow(): Promise<{ processed: numbe
     // 지급된 것이므로 상태를 되돌리지 않는다. 프로세스 킬 시엔 이 catch도 못 돌아 좌초 복구가 처리한다.
     let distributed = false;
     try {
-      const result = await cancelService.distributeCredits(req.exocad_id, pkg.quantity, note, true);
+      const result = await cancelService.distributeCredits(
+        req.exocad_id, pkg.quantity, note, true, false,
+        () => markCreditDistributionStarted(req.id),
+      );
+      if (result.skipped) {
+        // 브라우저 슬롯을 기다리는 사이 이 신청은 좌초 복구('failed' + 알림)나 수동 처리로 넘어갔다.
+        // 크레딧을 지급하지 않았으므로 상태/알림을 덮어쓰지 않는다 — 사람이 이미 확인 중이다.
+        logger.warn(`[credit-auto-distribute] request #${req.id} skipped — state changed while queued; not distributing`);
+        continue;
+      }
       results.push(result);
 
       if (result.success && result.verified === false) {
