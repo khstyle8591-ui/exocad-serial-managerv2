@@ -957,10 +957,14 @@ export class CancelService {
         }
       }
 
-      // 폴링으로도 확인 안 됨 — 클라이언트 캐시된 상태일 수 있으니 reload로 서버 재조회 후 마지막 시도
+      // 폴링으로도 확인 안 됨 — 클라이언트 캐시된 상태일 수 있으니 reload로 서버 재조회 후 마지막 시도.
+      // reload는 검색어(필터)를 지워 전체 목록으로 돌아갈 수 있다. 그 상태에서 대상 행이 첫 화면에
+      // 없으면 "행 없음 = 취소 성공(row_removed)"으로 오판하므로, 상태를 읽기 전에 반드시 다시 검색한다.
+      // 재검색이 실패하면 예외가 아래 catch로 가서 verified:false(미확인)로 처리된다.
       logger.warn(`[verify] ${serialNumber}: still unconfirmed after polling -> reloading for final check`);
       await page.reload().catch(() => { });
       await waitForSettledPage(page, 'cancel verification (post-reload)', 10000);
+      await this.searchSerial(page, serialNumber);
       const finalStatusTexts = await this.readStatusCells(page, serialNumber);
       lastStatusTexts = finalStatusTexts;
 
