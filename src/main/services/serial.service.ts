@@ -245,9 +245,11 @@ export class SerialService {
 
   /**
    * 자동 재갱신 대상 — active 시리얼만 대상으로 함.
-   * 예외: cancelled/expired 상태라도 중단 플래그가 없고 만료일로부터 3일 이내라면 대상에 포함
+   * 예외: expired 상태라도 중단 플래그가 없고 만료일로부터 3일 이내라면 대상에 포함
    * (syncExpired가 auto-renew cron보다 먼저 돌아 status를 expired로 바꿔버리는 타이밍/다운타임 문제 구제).
-   * broken/not-activated 및 중단 플래그가 있는 시리얼은 상태 불문 항상 제외.
+   * cancelled는 유예 대상이 아니다: syncExpired는 cancelled를 만들지 않고, 관리자의 [DB만 해지]
+   * (cancelManual)는 중단 플래그를 세우지 않으므로 포함하면 해지한 시리얼이 +1년 부활하고 발주서가 나간다.
+   * broken/not-activated/cancelled 및 중단 플래그가 있는 시리얼은 항상 제외.
    * 이중 방어: renewal_stop_requested가 어떤 경로로든 0이 되어 있어도, 아직 해소되지 않은
    * 강제만료(status_forced_expired) 이력이 있는 시리얼은 부활시키지 않는다(wasLastForcedExpired).
    */
@@ -262,7 +264,7 @@ export class SerialService {
            AND s.renewal_stop_requested = 0
            AND (
              s.status = 'active'
-             OR (s.status IN ('cancelled', 'expired') AND s.expiry_date >= ?)
+             OR (s.status = 'expired' AND s.expiry_date >= ?)
            )
          ORDER BY s.expiry_date ASC, s.id ASC`
       )
