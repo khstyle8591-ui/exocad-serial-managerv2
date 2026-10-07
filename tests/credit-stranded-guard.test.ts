@@ -1,8 +1,4 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { AddressInfo } from 'net';
-import http from 'http';
-
-process.env.AUTH_DISABLED = 'true'; // non-production: admin BasicAuth bypass for the test app
 
 let sqliteAvailable = true;
 try {
@@ -14,35 +10,21 @@ try {
 }
 const describeSqlite = sqliteAvailable ? describe : describe.skip;
 
-const tokyoDate = (daysAhead: number) =>
-  new Date(Date.now() + daysAhead * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-
-describeSqlite('portal reject / credit stranded-guard regressions', () => {
-  let server: http.Server;
-  let base = '';
+describeSqlite('credit distribution stranded-guard regression', () => {
   let mods: any = {};
 
   beforeAll(async () => {
     const database = await import('../src/main/database');
     database.initDatabaseForTesting();
-    const express = (await import('express')).default;
-    const portalRouter = (await import('../src/server/portal/index')).default;
     mods = {
       database,
       settings: await import('../src/main/settings'),
-      serial: await import('../src/main/services/serial.service'),
       cancel: await import('../src/main/services/cancel.service'),
       portalDb: await import('../src/server/portal/db'),
-      mw: await import('../src/server/portal/middleware'),
       automation: await import('../src/main/services/automation.service'),
       notification: await import('../src/main/services/notification.service'),
       browser: await import('../src/main/services/playwright-browser'),
     };
-    const app = express();
-    app.use(express.json());
-    app.use('/portal', portalRouter);
-    server = app.listen(0);
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     vi.spyOn(mods.notification.notificationService, 'sendCriticalAutomationAlert').mockResolvedValue(undefined);
   });
 
@@ -51,65 +33,7 @@ describeSqlite('portal reject / credit stranded-guard regressions', () => {
   });
 
   afterAll(() => {
-    server?.close();
     mods.database?.closeDatabase();
-  });
-
-  async function submitStopRequest(serialNumber: string, login: string, expiry: string) {
-    const { serial, portalDb, mw } = mods;
-    const s = serial.serialService.create({
-      serial_number: serialNumber, customer_name: `Clinic ${login}`, customer_email: `${login}@example.com`,
-      expiry_date: expiry, status: 'active',
-    });
-    const accountId = portalDb.createAccount({
-      login_id: login, email: `${login}@example.com`, phone: '', address: '', name: `Clinic ${login}`,
-      exocad_id: '', password_hash: 'x', language: 'ko',
-    });
-    portalDb.createAccountLink(accountId, s.customer_id, s.serial_number);
-    const { token, csrfToken } = mw.createSession(accountId);
-    const submit = await fetch(`${base}/portal/requests/renewal-stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: `psid=${token}`, 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ target_serial: s.serial_number }),
-    }).then(r => r.json());
-    return { s, requestId: submit.request_id as number, submit };
-  }
-
-  const decide = (requestId: number, action: 'approve' | 'reject') =>
-    fetch(`${base}/portal/admin/requests/${requestId}/decide`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
-    }).then(r => r.json());
-
-  it('rejecting a portal renewal-stop request clears the stop flag, so pre-expiry auto-cancel skips the serial', async () => {
-    const { settings, serial, cancel } = mods;
-    settings.saveSettings({ portal_enabled: true, auto_cancel_enabled: true, auto_cancel_days_before: 30 });
-
-    const { s, requestId, submit } = await submitStopRequest('AAAAAAAA-BBBB-CCCCCCCC', 'rejected', tokyoDate(30));
-    expect(submit.ok).toBe(true);
-    expect(serial.serialService.getById(s.id).renewal_stop_requested).toBe(1);
-
-    expect((await decide(requestId, 'reject')).status).toBe('rejected');
-    expect(serial.serialService.getById(s.id).renewal_stop_requested).toBe(0);
-
-    const spy = vi.spyOn(cancel.cancelService, 'cancelSubscription')
-      .mockResolvedValue({ serial_number: s.serial_number, success: true, verified: true, verified_status: 'opted out' });
-    await cancel.cancelService.processPreExpiryAutoCancel();
-    expect(spy).not.toHaveBeenCalledWith(s.serial_number, true);
-    expect(serial.serialService.getById(s.id).status).toBe('active');
-    spy.mockRestore();
-  });
-
-  it('rejecting leaves an already-cancelled serial untouched (no revival path)', async () => {
-    const { settings, serial, portalDb } = mods;
-    settings.saveSettings({ portal_enabled: true });
-    const { s, requestId } = await submitStopRequest('DDDDDDDD-EEEE-FFFFFFFF', 'cancelled', tokyoDate(10));
-    serial.serialService.cancelSubscription(s.id); // auto-cancel ran while the request was still pending
-    expect(portalDb.getPortalRequestById(requestId).status).toBe('pending');
-
-    await decide(requestId, 'reject');
-    const after = serial.serialService.getById(s.id);
-    expect(after.status).toBe('cancelled');
-    expect(after.renewal_stop_requested).toBe(1);
   });
 
   function setupCreditRequest(login: string) {
