@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { getTemplate } from './template.service';
 import { renderTemplate, type TemplateVars } from './renderer';
 import { logActivity, pickLang } from '../activity-log.service';
+import { recordSentMail } from '../sent-mail-log.service';
 import type { AppSettings } from '../../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -11,29 +12,37 @@ type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+/** 1번/2번 이메일을 받는사람(To)에 나란히 합친다 (nodemailer는 콤마구분 다중 To를 지원). */
+export function buildRecipients(primary: string, secondary?: string | null): string {
+  return [primary, secondary].map(e => (e ?? '').trim()).filter(Boolean).join(', ');
+}
+
 function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
   return Object.fromEntries(
     Object.entries(settingsOverride ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
   ) as SettingsOverride;
 }
 
-function buildTransporter(settings: ReturnType<typeof getSettings>) {
+export function buildTransporter(settings: ReturnType<typeof getSettings>, opts?: { allowNoAuth?: boolean }) {
   const port = Number(settings.smtp_port) || 587;
   const useImplicitSSL = port === 465;
   const isGmail = settings.smtp_host.toLowerCase().includes('gmail');
-  const cleanPassword = settings.smtp_password.replace(/\s+/g, '');
+  const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
+  const auth = opts?.allowNoAuth && !settings.smtp_user
+    ? undefined
+    : { user: settings.smtp_user, pass: cleanPassword };
 
   return nodemailer.createTransport({
     host: settings.smtp_host,
     port,
     secure: useImplicitSSL,
     requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmail),
-    auth: { user: settings.smtp_user, pass: cleanPassword },
+    auth,
     connectionTimeout: 15000,
   });
 }
 
-function buildFrom(settings: ReturnType<typeof getSettings>) {
+export function buildFrom(settings: ReturnType<typeof getSettings>) {
   const name = (settings.smtp_from_name || 'Exocad Manager').trim();
   return settings.smtp_user ? { name, address: settings.smtp_user } : name;
 }
@@ -42,23 +51,25 @@ export async function sendTemplate(
   code: string,
   to: string,
   vars: TemplateVars,
-  options?: { serial_id?: number; actor?: 'manual' | 'auto' | 'email' | 'polling' | 'system' },
-): Promise<{ success: boolean; message: string }> {
+  options?: { serial_id?: number; actor?: 'manual' | 'auto' | 'email' | 'polling' | 'system'; reason?: string },
+): Promise<{ success: boolean; message: string; subject?: string; html?: string }> {
   const template = getTemplate(code);
   if (!template) return { success: false, message: `Template not found: ${code}` };
-  if (!template.enabled) return { success: false, message: `Template is disabled: ${code}` };
-
-  const settings = getSettings();
-  if (!settings.smtp_host || !settings.smtp_user) {
-    return { success: false, message: 'SMTP が設定されていません。' };
-  }
 
   const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
   const fullVars: TemplateVars = { TODAY: today, ...vars };
 
   const subject = renderTemplate(template.subject, fullVars);
   const bodyText = renderTemplate(template.body, fullVars);
-  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;font-size:14px">${bodyText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+  const escapedBody = bodyText.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const htmlBody = `<div style="font-family:sans-serif;font-size:14px">${escapedBody}</div>`;
+
+  if (!template.enabled) return { success: false, message: `Template is disabled: ${code}`, subject, html: htmlBody };
+
+  const settings = getSettings();
+  if (!settings.smtp_host || !settings.smtp_user) {
+    return { success: false, message: 'SMTP が設定されていません。', subject, html: htmlBody };
+  }
 
   try {
     const transporter = buildTransporter(settings);
@@ -71,7 +82,7 @@ export async function sendTemplate(
     });
 
     logger.info(`[mail] Sent template '${code}' to ${to}`);
-    await logActivity({
+    logActivity({
       serial_id: options?.serial_id ?? null,
       action: 'mail_sent',
       actor: options?.actor ?? 'manual',
@@ -82,12 +93,27 @@ export async function sendTemplate(
       }),
       severity: 'info',
     });
+    // 발송 로그 기록(실패해도 발송 흐름을 깨지 않도록 예외 삼킴)
+    try {
+      recordSentMail({
+        template_code: code,
+        to,
+        subject,
+        body_html: htmlBody,
+        reason: options?.reason || code,
+        actor: options?.actor ?? 'manual',
+        serial_id: options?.serial_id ?? null,
+        status: 'sent',
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSentMail failed (sent): ${getErrorMessage(logErr)}`);
+    }
 
-    return { success: true, message: `メール送信完了 → ${to}` };
+    return { success: true, message: `メール送信完了 → ${to}`, subject, html: htmlBody };
   } catch (err: unknown) {
     const errorMessage = getErrorMessage(err);
     logger.error(`[mail] Failed to send '${code}' to ${to}: ${errorMessage}`);
-    await logActivity({
+    logActivity({
       serial_id: options?.serial_id ?? null,
       action: 'mail_failed',
       actor: options?.actor ?? 'manual',
@@ -98,7 +124,22 @@ export async function sendTemplate(
       }),
       severity: 'error',
     });
-    return { success: false, message: `送信失敗: ${errorMessage}` };
+    try {
+      recordSentMail({
+        template_code: code,
+        to,
+        subject,
+        body_html: htmlBody,
+        reason: options?.reason || code,
+        actor: options?.actor ?? 'manual',
+        serial_id: options?.serial_id ?? null,
+        status: 'failed',
+        error: errorMessage,
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSentMail failed (failed): ${getErrorMessage(logErr)}`);
+    }
+    return { success: false, message: `送信失敗: ${errorMessage}`, subject, html: htmlBody };
   }
 }
 

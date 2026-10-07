@@ -6,8 +6,9 @@ import { t, type Lang } from '../i18n';
 
 interface LinkedProduct {
   main_product: string;
-  masked_serial: string;
+  serial_number: string;
   status: string;
+  expiry_date: string | null;
   renewal_stop_requested?: number;
 }
 
@@ -65,7 +66,12 @@ export default function DashboardPage() {
           <div key={i} className="product-card">
             <div className="product-card-info">
               <div className="product-card-name">{p.main_product}</div>
-              <div className="product-card-serial">{p.masked_serial}</div>
+              <div className="product-card-serial">{p.serial_number}</div>
+              {p.expiry_date && (
+                <div className="product-card-expiry" style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  {t(lang, 'expiry_date_label')}: {p.expiry_date}
+                </div>
+              )}
             </div>
             {statusBadge(p, lang)}
           </div>

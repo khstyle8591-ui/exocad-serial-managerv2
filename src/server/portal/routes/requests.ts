@@ -7,15 +7,16 @@ import {
   createPortalRequest,
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailed,
+  markPortalRequestDuplicate,
   getPortalRequestsByAccount,
 } from '../db';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
 import { sendCancelCompleteNotice } from '../../../main/services/mail/lifecycle-notice.service';
-import { sendTemplate } from '../../../main/services/mail/smtp.service';
+import { sendTemplate, buildRecipients } from '../../../main/services/mail/smtp.service';
 import { getSettings } from '../../../main/settings';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
-import { notificationService } from '../../../main/services/notification.service';
+import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
 import { logger } from '../../../main/utils/logger';
 
 const router = Router();
@@ -26,9 +27,9 @@ const getErrorMessage = (error: unknown) => error instanceof Error ? error.messa
 
 function resolveOwnedSerial(accountId: number, serialNumber: string) {
   const serial = serialService.getBySerialNumber(serialNumber.trim());
-  if (!serial) return { error: '시리얼을 찾을 수 없습니다.' };
+  if (!serial) return { error: 'serial_not_found' };
   if (!isSerialLinked(accountId, serial.customer_id)) {
-    return { error: '본인 소유의 시리얼이 아닙니다.' };
+    return { error: 'serial_not_owned' };
   }
   return { serial };
 }
@@ -59,14 +60,14 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
   const { exocad_id, package_code } = req.body as Record<string, string>;
 
   if (!exocad_id?.trim() || !package_code?.trim()) {
-    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
 
   const settings = getSettings();
   const pkg = settings.credit_packages.find(p => p.id === package_code.trim());
   if (!pkg) {
-    res.status(400).json({ error: '유효하지 않은 패키지입니다.' });
+    res.status(400).json({ error: 'invalid_package' });
     return;
   }
 
@@ -89,23 +90,9 @@ router.post('/credit', requirePortalAuth, requireCsrf, async (req: Request, res:
     }),
   });
 
-  // 자동 배분 OFF(기본) → 관리자 메일로 발송
-  if (!settings.credit_auto_alloc_enabled && settings.credit_notification_email) {
-    await sendTemplate('portal_credit_notify_admin', settings.credit_notification_email, {
-      REQUEST_ID: String(requestId),
-      ACCOUNT_NAME: account.name,
-      LOGIN_ID: account.login_id,
-      EMAIL: account.email,
-      EXOCAD_ID: exocad_id.trim(),
-      PACKAGE_LABEL: pkg.label,
-      PACKAGE_QTY: String(pkg.quantity),
-      PACKAGE_PRICE: String(pkg.price),
-    }).catch(() => {});
-  }
-
   // 고객 신청 확인 메일
   if (account.email) {
-    await sendTemplate('portal_credit_confirm', account.email, {
+    await sendTemplate('portal_credit_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       REQUEST_ID: String(requestId),
       EXOCAD_ID: exocad_id.trim(),
@@ -124,7 +111,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   const { target_serial } = req.body as Record<string, string>;
 
   if (!target_serial?.trim()) {
-    res.status(400).json({ error: '시리얼을 입력해주세요.' });
+    res.status(400).json({ error: 'serial_required' });
     return;
   }
 
@@ -136,24 +123,40 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   const { serial } = resolved;
 
   if (serial.status === 'cancelled') {
-    res.status(400).json({ error: '이미 취소된 시리얼입니다.' });
+    res.status(400).json({ error: 'serial_already_cancelled' });
     return;
   }
   if (serial.status === 'expired') {
-    res.status(400).json({ error: '이미 만료된 시리얼입니다. 재갱신 신청을 이용해주세요.' });
+    res.status(400).json({ error: 'serial_already_expired' });
     return;
   }
-  if (serial.renewal_stop_requested === 1) {
-    // 멱등 — 이미 중단 요청 상태
-    res.json({ ok: true, status: 'already_requested' });
-    return;
-  }
-
+  // 신청 레코드를 먼저 생성해 requestId를 확보한 뒤, 플래그 선점을 단일 원자적 UPDATE로 수행한다.
+  // DB 레벨에서 단 하나의 호출만 성공하도록 보장해, 메모리상의 "조회 후 분기" 방식이 갖는
+  // race window(동시 제출 시 둘 다 통과)를 원천적으로 차단한다.
   const requestId = createPortalRequest({
     account_id: accountId,
     type: 'renewal_stop',
     target_serial: serial.serial_number,
   });
+
+  const claimed = serialService.claimStopRequest(
+    serial.id,
+    `portal-req-${requestId}`,
+    'system',
+    pickLang({
+      ko: `포털 갱신 중단 신청(#${requestId}) 접수됨`,
+      en: `Portal renewal-stop request (#${requestId}) received`,
+      ja: `ポータル更新停止申請(#${requestId})受付`,
+    }),
+  );
+
+  if (!claimed) {
+    // 이미 다른 신청이 선점한 상태 — 방금 생성한 레코드를 "중복신청"으로 확정해
+    // 매니저의 처리 대기열(pending/manager_review)에 노출되지 않게 한다.
+    markPortalRequestDuplicate(requestId);
+    res.json({ ok: true, status: 'already_requested' });
+    return;
+  }
 
   logActivity({
     serial_id: serial.id, action: 'system', actor: 'system', severity: 'info',
@@ -170,13 +173,6 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
   let processingFailed = false;
   if (serial.expiry_date && isInFailsafeWindow(serial.expiry_date)) {
     const triggerId = `portal-req-${requestId}`;
-    serialService.setStopRequested(
-      serial.id,
-      true,
-      triggerId,
-      'system',
-      `포털 갱신 중단 신청(#${requestId}) — 만료 윈도우 자동 적용`,
-    );
     const cancelResult = await cancelService.cancelSubscription(serial.serial_number, true);
     if (cancelResult.success && cancelResult.verified) {
       const updated = serialService.cancelSubscription(serial.id);
@@ -194,13 +190,19 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
     } else {
       processingFailed = true;
       markPortalRequestPlaywrightFailed(requestId);
-      const reason = cancelResult.error || (cancelResult.success ? '취소 결과 미검증' : '알 수 없는 오류');
+      // reason은 언어별로 따로 계산 — cancelResult.error는 Playwright가 던진 한국어 원문이라
+      // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+      const reasonByLang = (lang: 'ko' | 'en' | 'ja') => cancelResult.error
+        ? localizeCancelError(cancelResult.error, lang)
+        : (cancelResult.success
+          ? ({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })[lang]
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]);
       logActivity({
         serial_id: serial.id, action: 'system', actor: 'system', severity: 'error', trigger_id: triggerId,
         details: pickLang({
-          ko: `포털 만료 윈도우 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${requestId}), 사유: ${reason}`,
-          en: `Portal expiry-window auto-cancel FAILED — serial: ${serial.serial_number} (request #${requestId}), reason: ${reason}`,
-          ja: `ポータル失効ウィンドウ自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${requestId}), 理由: ${reason}`,
+          ko: `포털 만료 윈도우 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${requestId}), 사유: ${reasonByLang('ko')}`,
+          en: `Portal expiry-window auto-cancel FAILED — serial: ${serial.serial_number} (request #${requestId}), reason: ${reasonByLang('en')}`,
+          ja: `ポータル失効ウィンドウ自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${requestId}), 理由: ${reasonByLang('ja')}`,
         }),
       });
       await notificationService.sendCriticalAutomationAlert({
@@ -220,7 +222,7 @@ router.post('/renewal-stop', requirePortalAuth, requireCsrf, async (req: Request
 
   const account = findAccountById(accountId);
   if (account?.email) {
-    await sendTemplate('portal_renewal_stop_confirm', account.email, {
+    await sendTemplate('portal_renewal_stop_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),
@@ -271,7 +273,7 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
   const { target_serial, include_quote = 'false' } = req.body as Record<string, string>;
 
   if (!target_serial?.trim()) {
-    res.status(400).json({ error: '시리얼을 입력해주세요.' });
+    res.status(400).json({ error: 'serial_required' });
     return;
   }
 
@@ -300,7 +302,7 @@ router.post('/renewal-resume', requirePortalAuth, requireCsrf, async (req: Reque
 
   const account = findAccountById(accountId);
   if (account?.email) {
-    await sendTemplate('portal_renewal_resume_confirm', account.email, {
+    await sendTemplate('portal_renewal_resume_confirm', buildRecipients(account.email, account.email_2), {
       NAME: account.name,
       SERIAL: serial.serial_number,
       REQUEST_ID: String(requestId),

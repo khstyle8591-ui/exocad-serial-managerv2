@@ -122,9 +122,11 @@ export function getFailureLogs(limit = 50): ActivityLog[] {
 export function getTodayLogs(): ActivityLog[] {
   return getDb()
     .prepare(
-      `SELECT * FROM activity_logs
-       WHERE date(created_at) = date('now','localtime')
-       ORDER BY created_at DESC`
+      `SELECT al.*, s.serial_number AS serial_number
+       FROM activity_logs al
+       LEFT JOIN serials s ON s.id = al.serial_id
+       WHERE date(al.created_at) = date('now','localtime')
+       ORDER BY al.created_at DESC`
     )
     .all() as ActivityLog[];
 }

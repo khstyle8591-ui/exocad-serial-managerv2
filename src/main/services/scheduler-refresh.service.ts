@@ -51,6 +51,7 @@ function getChangedSchedulers(before: AppSettings, after: AppSettings): Schedule
     'expiry_notice_days',
     'expiry_notice_renewal_template',
     'expiry_notice_stop_template',
+    'expiry_notice_stop_rules',
   ])) {
     schedulers.push('expiryNotice');
   }

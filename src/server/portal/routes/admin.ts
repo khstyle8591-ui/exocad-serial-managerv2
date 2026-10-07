@@ -12,17 +12,26 @@ import {
   updatePortalRequestStatus,
   markPortalRequestPlaywrightFailedByManager,
   markPortalRequestCancelRejected,
+  markPortalRequestCancelRejectedPending,
+  markPortalRequestDismissed,
+  holdCreditForManual,
+  countActionablePortalRequests,
+  getAccountLinks,
+  isSerialLinked,
+  createAccountLink,
   type PortalRequestType,
   type PortalRequestStatus,
 } from '../db';
-import { updateCustomer } from '../../../main/services/customer.service';
+import { portalRequestEvents } from '../request-events';
+import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
 import { getDb } from '../../../main/database';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getSettings, saveSettings } from '../../../main/settings';
 import { serialService } from '../../../main/services/serial.service';
 import { cancelService } from '../../../main/services/cancel.service';
-import { notificationService } from '../../../main/services/notification.service';
-import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../../shared/types';
+import { notificationService, localizeCancelError } from '../../../main/services/notification.service';
+import { sendCreditInvoiceMail } from '../../../main/services/credit-request.service';
+import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText } from '../../../shared/types';
 
 const router = Router();
 
@@ -45,10 +54,14 @@ router.get('/settings', (_req: Request, res: Response) => {
   });
 });
 
-function isLocalizedText(v: unknown): v is LocalizedText {
+function isLocalizedText(v: unknown): v is StyledLocalizedText {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
-  return typeof o.ko === 'string' && typeof o.en === 'string' && typeof o.ja === 'string';
+  if (!(typeof o.ko === 'string' && typeof o.en === 'string' && typeof o.ja === 'string')) return false;
+  if (o.color !== undefined && typeof o.color !== 'string') return false;
+  if (o.fontSize !== undefined && typeof o.fontSize !== 'number') return false;
+  if (o.bold !== undefined && typeof o.bold !== 'boolean') return false;
+  return true;
 }
 
 function isRequestDescriptions(v: unknown): v is PortalRequestDescriptions {
@@ -74,9 +87,9 @@ router.patch('/settings', (req: Request, res: Response) => {
     credit_notification_email?: string;
     credit_packages?: CreditPackage[];
     portal_request_descriptions?: PortalRequestDescriptions;
-    portal_mismatch_message?: LocalizedText;
-    portal_resume_quote_prompt?: LocalizedText;
-    portal_resume_quote_sent?: LocalizedText;
+    portal_mismatch_message?: StyledLocalizedText;
+    portal_resume_quote_prompt?: StyledLocalizedText;
+    portal_resume_quote_sent?: StyledLocalizedText;
   };
 
   const patch: Partial<ReturnType<typeof getSettings>> = {};
@@ -120,7 +133,8 @@ router.get('/accounts', (_req: Request, res: Response) => {
   res.json({ accounts: getAllPortalAccounts() });
 });
 
-// GET /portal/admin/accounts/:id
+// GET /portal/admin/accounts/:id — 가입 정보 전체(비밀번호 제외) + 연결된 고객/시리얼 함께 반환
+// (자동 identity 매치 없이 시리얼 단독으로 연결되므로, 매니저가 육안으로 대조할 수 있도록 제공)
 router.get('/accounts/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
@@ -128,7 +142,49 @@ router.get('/accounts/:id', (req: Request, res: Response) => {
   if (!account) { res.status(404).json({ error: 'Not found' }); return; }
   const { password_hash: _, ...safe } = account;
   const requests = getAllPortalRequests().filter(r => r.account_id === id);
-  res.json({ ...safe, requests });
+
+  const links = getAccountLinks(id).map(({ customer_id, verified_serial }) => ({
+    customer_id,
+    verified_serial,
+    customer: getCustomerById(customer_id) ?? null,
+    serials: serialService.list({ customer_id }).items,
+  }));
+
+  res.json({ ...safe, requests, links });
+});
+
+// POST /portal/admin/accounts/:id/link-serial — 관리자 수동 연결.
+// 파트 B에서 자동 identity(email/phone/name) 매치를 제거했으므로, 이 라우트도 동일하게
+// 시리얼 존재 여부만 확인하고 신원 대조 없이 강제 연결한다. 포털이 제한된 인원만 접근
+// 가능하다는 전제하의 결정 — 감사 추적을 위해 activity log를 warn 레벨로 남긴다.
+router.post('/accounts/:id/link-serial', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+  const account = findAccountById(id);
+  if (!account) { res.status(404).json({ error: 'Not found' }); return; }
+
+  const { serial } = req.body as Record<string, string>;
+  if (!serial?.trim()) { res.status(400).json({ error: 'serial_required' }); return; }
+
+  const serialRecord = serialService.getBySerialNumber(serial.trim());
+  if (!serialRecord) { res.status(404).json({ error: 'serial_not_found' }); return; }
+
+  if (isSerialLinked(id, serialRecord.customer_id)) {
+    res.json({ ok: true, already_linked: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
+    return;
+  }
+
+  createAccountLink(id, serialRecord.customer_id, serialRecord.serial_number.toUpperCase());
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'warn',
+    details: pickLang({
+      ko: `관리자가 포털 계정 #${id}(${account.login_id})에 시리얼 ${serialRecord.serial_number}를 수동 연결 — 고객 #${serialRecord.customer_id}, 신원확인 생략`,
+      en: `Manager manually linked serial ${serialRecord.serial_number} to portal account #${id} (${account.login_id}) — customer #${serialRecord.customer_id}, identity check skipped`,
+      ja: `管理者がポータルアカウント #${id}(${account.login_id})にシリアル ${serialRecord.serial_number} を手動連携 — 顧客 #${serialRecord.customer_id}、本人確認省略`,
+    }),
+  });
+
+  res.json({ ok: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });
 });
 
 // PATCH /portal/admin/accounts/:id
@@ -209,6 +265,36 @@ router.get('/requests', (req: Request, res: Response) => {
   res.json({ requests: getAllPortalRequests(filter) });
 });
 
+// GET /portal/admin/requests/actionable-count — 매니저 조치가 필요한 신청 건수 (사이드바/탭 배지용)
+// :id 라우트보다 먼저 등록해야 Express가 "actionable-count"를 id 파라미터로 잘못 매칭하지 않는다.
+router.get('/requests/actionable-count', (_req: Request, res: Response) => {
+  res.json({ count: countActionablePortalRequests() });
+});
+
+// GET /portal/admin/requests/stream — SSE: 신청이 생성/상태변경될 때마다 알림을 보내
+// 매니저 화면이 폴링 주기(30초)를 기다리지 않고 즉시 다시 조회하도록 한다.
+// :id 라우트보다 먼저 등록해야 Express가 "stream"을 id 파라미터로 잘못 매칭하지 않는다.
+router.get('/requests/stream', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+
+  const onChanged = () => res.write('event: changed\ndata: {}\n\n');
+  portalRequestEvents.on('changed', onChanged);
+
+  // 일부 프록시/터널이 idle 커넥션을 끊는 것을 막기 위한 주기적 heartbeat
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    portalRequestEvents.off('changed', onChanged);
+  });
+});
+
 // GET /portal/admin/requests/:id
 router.get('/requests/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
@@ -276,13 +362,17 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       // 매니저가 이미 승인했으므로 포털 고객에게는 '승인됨'으로 보이게 status='approved' 유지,
       // note로만 Playwright 실패를 구분해 매니저가 재시도할 수 있도록 한다.
       markPortalRequestPlaywrightFailedByManager(id);
-      const reason = cancelResult.error || '알 수 없는 오류';
+      // reason은 언어별로 따로 계산 — cancelResult.error는 Playwright가 던진 한국어 원문이라
+      // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+      const reasonByLang = (lang: 'ko' | 'en' | 'ja') => cancelResult.error
+        ? localizeCancelError(cancelResult.error, lang)
+        : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
       logActivity({
         serial_id: serial.id, action: 'system', actor: 'manual', severity: 'error', trigger_id: `portal-req-${id}`,
         details: pickLang({
-          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reason}`,
-          en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reason}`,
-          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reason}`,
+          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 실패: ${serial.serial_number}, 사유: ${reasonByLang('ko')}`,
+          en: `Portal renewal-stop approval (#${id}) — Playwright cancel FAILED: ${serial.serial_number}, reason: ${reasonByLang('en')}`,
+          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル失敗: ${serial.serial_number}, 理由: ${reasonByLang('ja')}`,
         }),
       });
       await notificationService.sendCriticalAutomationAlert({
@@ -308,6 +398,10 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
         ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
       }),
     });
+  } else if (request.type === 'credit') {
+    // 승인 시점에 지정된 메일 주소로 발주서(청구용) 메일 발송 — 자동배분 토글과 무관하게 항상 발송.
+    // (자동배분 성공 시에도 동일 함수가 자동승인 경로에서 호출됨 — automation.service.ts 참조)
+    await sendCreditInvoiceMail(id, 'manual');
   } else {
     logActivity({
       action: 'system', actor: 'manual', severity: 'info',
@@ -318,10 +412,70 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       }),
     });
   }
-  // credit / renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
+  // renewal_resume: DB 상태만 approved로 변경 (관리자 수동 처리)
 
-  updatePortalRequestStatus(id, 'approved');
+  // clearNote=true: 이전 시도가 실패해 note='playwright_failed_manual'로 남아 있던 경우
+  // 재승인이 성공하면 note를 지워 UI의 "취소 실패/재시도" 상태에서 벗어나게 한다.
+  updatePortalRequestStatus(id, 'approved', true);
   res.json({ ok: true, status: 'approved' });
+});
+
+// PATCH /portal/admin/requests/:id/dismiss — Playwright 취소 실패(cancel failed) 신청을 매니저가
+// 수동 처리 후 큐에서 닫음. status는 유지하고 note='dismissed'로만 바꿔 actionable 목록에서 제거.
+router.patch('/requests/:id/dismiss', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+  const request = getPortalRequestById(id);
+  if (!request) { res.status(404).json({ error: 'Not found' }); return; }
+
+  // cancel failed 상태(시스템/고객 자동처리 실패 또는 매니저 승인 후 Playwright 실패)만 dismiss 허용
+  const isCancelFailed =
+    (request.status === 'rejected' && request.note === 'playwright_failed') ||
+    (request.status === 'approved' && request.note === 'playwright_failed_manual');
+  if (!isCancelFailed) {
+    res.status(409).json({ error: 'dismiss 가능한 상태가 아닙니다.' });
+    return;
+  }
+
+  markPortalRequestDismissed(id);
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'info',
+    details: pickLang({
+      ko: `포털 신청(#${id}) 취소 실패 건 관리자 dismiss(수동 처리) — 유형: ${request.type}`,
+      en: `Portal request (#${id}) cancel-failed dismissed by manager (handled manually) — type: ${request.type}`,
+      ja: `ポータル申請(#${id})キャンセル失敗を管理者がdismiss(手動処理) — 種類: ${request.type}`,
+    }),
+  });
+  res.json({ ok: true, status: 'dismissed' });
+});
+
+// PATCH /portal/admin/requests/:id/manual-hold — 크레딧 신청을 자동배분 큐에서 빼내 매니저가
+// 수동으로 발급/승인하도록 전환한다(이중 발급 방지). 원자적 선점이라 자동배분 크론이 이미
+// 배분을 시작한 뒤라면 409로 실패한다.
+router.patch('/requests/:id/manual-hold', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'Invalid id' }); return; }
+
+  const request = getPortalRequestById(id);
+  if (!request) { res.status(404).json({ error: 'Not found' }); return; }
+  if (request.type !== 'credit') { res.status(409).json({ error: 'ERR_CREDIT_HOLD_NOT_CREDIT' }); return; }
+
+  // 원자적 hold — pending & alloc_status IS NULL일 때만 성공. 자동배분이 이미 시작됐으면 false.
+  if (!holdCreditForManual(id)) {
+    res.status(409).json({ error: 'ERR_CREDIT_HOLD_ALREADY_STARTED' });
+    return;
+  }
+
+  logActivity({
+    action: 'system', actor: 'manual', severity: 'info',
+    details: pickLang({
+      ko: `포털 크레딧 신청(#${id}) 수동 처리로 전환 — 자동배분 큐에서 제외(이중 발급 방지)`,
+      en: `Portal credit request (#${id}) switched to manual handling — excluded from auto-distribution queue`,
+      ja: `ポータルクレジット申請(#${id})を手動処理に切替 — 自動配分キューから除外(二重発行防止)`,
+    }),
+  });
+  res.json({ ok: true, alloc_status: 'manual_hold' });
 });
 
 // PATCH /portal/admin/requests/:id/decide-cancel — 고객의 취소 요청(cancel_requested)을 승인/거절
@@ -346,6 +500,26 @@ router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
     if (action === 'approve') {
       // 취소 확정 — 원래 신청은 최종적으로 취소됨
       updatePortalRequestStatus(id, 'user_cancelled');
+
+      // renewal_stop 신청 자체를 취소하는 것이므로, 시리얼에 세워둔 갱신중단 플래그도 함께 해제한다.
+      // (해제하지 않으면 매니저 승인 후에도 시리얼이 계속 "중단 요청됨" 상태로 남아 재신청이 막힘)
+      if (request.type === 'renewal_stop' && request.target_serial) {
+        const serial = serialService.getBySerialNumber(request.target_serial);
+        if (serial) {
+          serialService.setStopRequested(
+            serial.id,
+            false,
+            `portal-req-${id}`,
+            'manual',
+            pickLang({
+              ko: `관리자 승인 — 포털 갱신중단 신청(#${id}) 취소 요청에 따라 플래그 해제`,
+              en: `Manager approved — stop flag cleared per portal renewal-stop request (#${id}) cancellation`,
+              ja: `管理者承認 — ポータル更新停止申請(#${id})のキャンセル要請により解除`,
+            }),
+          );
+        }
+      }
+
       logActivity({
         action: 'system', actor: 'manual', severity: 'info',
         details: pickLang({
@@ -358,7 +532,24 @@ router.patch('/requests/:id/decide-cancel', (req: Request, res: Response) => {
       return;
     }
 
-    // 거절 — 취소 요청을 거절하고 원래 신청은 승인 확정(approved)으로 처리.
+    // 거절 — 취소 요청을 거절하고 원래 신청은 계속 진행.
+    // credit은 이 시점에 배분이 아직 안 됐을 수 있으므로(자동배분은 별도 스캔이 처리) 곧바로
+    // 'approved'(=발주서 발송)로 확정하지 않고 'pending'으로 되돌려 배분이 정상적으로 이어지게 한다.
+    // renewal_stop 등 그 외 유형은 기존과 동일하게 'approved'로 확정한다.
+    if (request.type === 'credit') {
+      markPortalRequestCancelRejectedPending(id);
+      logActivity({
+        action: 'system', actor: 'manual', severity: 'info',
+        details: pickLang({
+          ko: `포털 크레딧 신청(#${id}) 취소 요청 거절 — 배분 대기 상태로 복귀`,
+          en: `Portal credit request (#${id}) cancellation rejected by manager — returned to pending for distribution`,
+          ja: `ポータルクレジット申請(#${id})キャンセル要請を却下 — 配分待ちに復帰`,
+        }),
+      });
+      res.json({ ok: true, status: 'pending' });
+      return;
+    }
+
     // note='cancel_rejected'로 구분해 포털/매니저 화면에 별도 표시하고 재취소 신청을 막는다.
     markPortalRequestCancelRejected(id);
     logActivity({

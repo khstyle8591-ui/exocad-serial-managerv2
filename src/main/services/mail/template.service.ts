@@ -1,5 +1,6 @@
 import { getDb } from '../../database';
 import { getNowTimestampString } from '../../utils/date-utils';
+import { getSettings } from '../../settings';
 import { renderTemplate, type TemplateVars } from './renderer';
 import type { MailTemplate, MailTemplateUpsert } from '../../../shared/types';
 
@@ -13,6 +14,7 @@ interface TemplatePreviewRow {
   c_email: string | null;
   c_dealer: string | null;
   c_sm: string | null;
+  c_address: string | null;
 }
 
 const BUILTIN_TEMPLATES: Array<{ code: string; name: string; subject: string; body: string; enabled: boolean }> = [
@@ -215,12 +217,33 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
     enabled: true,
   },
   {
+    code: 'renewal_order_notice',
+    name: '更新発注書（内部通知）',
+    subject: '[Exocad Manager] 更新発注書（{{RENEWAL_TYPE}}） - {{SERIAL_NUMBER}}',
+    body: `以下のシリアルが{{RENEWAL_TYPE}}で更新処理されました。
+
+■ シリアル番号：{{SERIAL_NUMBER}}
+■ 顧客名：{{CUSTOMER_NAME}}
+■ 顧客メール：{{CUSTOMER_EMAIL}}
+■ 顧客住所：{{ADDRESS}}
+■ メイン製品：{{MAIN_PRODUCT}}
+■ モジュール：{{MODULES}}
+■ 更新前の有効期限：{{PREVIOUS_EXPIRY_DATE}}
+■ 更新後の有効期限：{{EXPIRY_DATE}}
+■ 処理時刻：{{PROCESSED_AT}}
+
+上記内容にてご請求処理をお願いいたします。`,
+    enabled: true,
+  },
+  {
     code: 'portal_credit_notify_admin',
-    name: 'クレジット申請受付（管理者通知）',
-    subject: '【ポータル】クレジット申請を受け付けました (#{{REQUEST_ID}})',
-    body: `クレジット申請が届きましたのでご確認ください。
+    name: 'クレジット発注書（承認時送付）',
+    subject: '【発注書】クレジット購入のご請求について (#{{REQUEST_ID}})',
+    body: `下記の内容でクレジット申請が承認されましたので、ご請求手続きをお願いいたします。
 
 ■ 申請番号：#{{REQUEST_ID}}
+■ 顧客名：{{CUSTOMER_NAME}}
+■ 住所：{{ADDRESS}}
 ■ アカウント名：{{ACCOUNT_NAME}}
 ■ ログインID：{{LOGIN_ID}}
 ■ メールアドレス：{{EMAIL}}
@@ -228,9 +251,9 @@ Exocad Portalより更新再開のお申し込みを受け付けました。
 ■ パッケージ：{{PACKAGE_LABEL}}
 ■ 数量：{{PACKAGE_QTY}}
 ■ 金額：{{PACKAGE_PRICE}}
-■ 受付日：{{TODAY}}
+■ 承認日：{{TODAY}}
 
-管理画面の「ポータル」タブから承認処理をお願いいたします。`,
+上記内容にてご請求処理をお願いいたします。`,
     enabled: true,
   },
   {
@@ -337,7 +360,7 @@ export function previewTemplate(
   const row = getDb().prepare(`
     SELECT s.serial_number, s.expiry_date, s.purchase_date, s.main_product, s.modules,
            c.name AS c_name, c.email AS c_email,
-           c.dealer AS c_dealer, c.sales_manager AS c_sm
+           c.dealer AS c_dealer, c.sales_manager AS c_sm, c.address AS c_address
     FROM serials s
     LEFT JOIN customers c ON s.customer_id = c.id
     WHERE s.id = ?
@@ -347,8 +370,10 @@ export function previewTemplate(
 
   const modules: string[] = JSON.parse(row.modules || '[]');
   const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  const pkg = getSettings().credit_packages[0];
 
   const vars: TemplateVars = {
+    // Serial/customer-based templates — real data from the selected serial.
     CUSTOMER_NAME: row.c_name || '',
     CUSTOMER_EMAIL: row.c_email || '',
     SERIAL_NUMBER: row.serial_number,
@@ -359,6 +384,31 @@ export function previewTemplate(
     TODAY: today,
     DEALER: row.c_dealer || '',
     SALES_MANAGER: row.c_sm || '',
+
+    // Portal templates address the account holder directly — reuse the same customer/serial data.
+    NAME: row.c_name || '',
+    SERIAL: row.serial_number,
+    ADDRESS: row.c_address || '',
+    EMAIL: row.c_email || '',
+    DETECTED_SERIAL: row.serial_number,
+    PACKAGE_LABEL: pkg?.label || '',
+    PACKAGE_QTY: pkg ? String(pkg.quantity) : '',
+    PACKAGE_PRICE: pkg ? String(pkg.price) : '',
+
+    // Portal account/request fields with no serial-level source — preview-only sample values.
+    REQUEST_ID: '1001',
+    ACCOUNT_NAME: row.c_name || '(サンプルアカウント)',
+    LOGIN_ID: 'sample_login',
+    EXOCAD_ID: 'EX-000000',
+    RESET_URL: 'https://example.com/reset?token=sample',
+    INCLUDE_QUOTE: '希望する',
+    PREVIOUS_EXPIRY_DATE: row.expiry_date || '',
+    PROCESSED_AT: today,
+    RENEWAL_TYPE: '手動',
+    MISSING_FIELDS: 'シリアルナンバー',
+    RECEIVED_SUBJECT: '（サンプル件名）',
+    RESPONSE_ERRORS: '（サンプルエラー内容）',
+    REPLY_TEMPLATE: '（サンプル返信テンプレート）',
   };
 
   return {

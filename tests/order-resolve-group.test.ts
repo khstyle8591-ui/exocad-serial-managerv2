@@ -10,8 +10,9 @@ describe('resolveGroup', () => {
     expect(resolveGroup('006-001002', [])).toBe('addon');
     expect(resolveGroup('006-001001', [])).toBe('main');
     expect(resolveGroup('006-001031', [])).toBe('memo');
-    expect(resolveGroup('006-001032', [])).toBe('main');
-    expect(resolveGroup('006-001018', [])).toBe('ignore');
+    expect(resolveGroup('006-001032', [])).toBe('upgrade');
+    expect(resolveGroup('006-001042', [])).toBe('credits');
+    expect(resolveGroup('006-001018', [])).toBe('renewal_addon');
   });
 
   it('trims product codes before matching', () => {
@@ -40,11 +41,19 @@ describe('resolveGroup', () => {
     expect(resolveGroup('CUSTOM-ADDON', rules)).toBe('addon');
   });
 
-  it('moves approved product codes into the main group', () => {
+  it('classifies reclassified product codes correctly', () => {
     expect(resolveGroup('006-001010', [])).toBe('main');
-    expect(resolveGroup('006-001032', [])).toBe('main');
     expect(resolveGroup('006-006100', [])).toBe('main');
     expect(resolveGroup('006-005080', [])).toBe('main');
+    expect(resolveGroup('006-006101', [])).toBe('main');
+    expect(resolveGroup('006-006102', [])).toBe('main');
+    // 스페셜1 승급 코드는 main이 아니라 upgrade
+    expect(resolveGroup('006-001032', [])).toBe('upgrade');
+    // 갱신 발급/모듈 재분류
+    expect(resolveGroup('006-006104', [])).toBe('renewal');
+    expect(resolveGroup('006-006107', [])).toBe('renewal_addon');
+    // 과거 addon에 있던 memo 코드
+    expect(resolveGroup('006-001036', [])).toBe('memo');
   });
 });
 
@@ -74,8 +83,8 @@ describe('getPolledProductFields', () => {
     });
   });
 
-  it('routes renewal, memo, and version-update products into notes instead of version', () => {
-    for (const group of ['renewal', 'memo', 'version_update'] as const) {
+  it('routes renewal, memo, renewal_addon, upgrade and credits products into notes instead of version', () => {
+    for (const group of ['renewal', 'memo', 'renewal_addon', 'upgrade', 'credits'] as const) {
       expect(getPolledProductFields(group, 'EXOCAD Update', '2026-05-22', group === 'renewal' ? 'renewal' : 'new'))
         .toEqual({
           main_product: '',

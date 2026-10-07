@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 16;
 
 type Migration = {
   version: number;
@@ -317,6 +317,7 @@ function createPortalTables(): void {
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       login_id       TEXT    NOT NULL UNIQUE,
       email          TEXT    NOT NULL DEFAULT '',
+      email_2        TEXT    NOT NULL DEFAULT '',
       phone          TEXT    NOT NULL DEFAULT '',
       address        TEXT    NOT NULL DEFAULT '',
       name           TEXT    NOT NULL DEFAULT '',
@@ -494,6 +495,71 @@ function migratePortalRequestsCancelRequested(): void {
   logger.info('[DB] Migration complete: portal_requests.status now includes cancel_requested');
 }
 
+function addPendingOrdersReviewFlag(): void {
+  const columns = db.prepare('PRAGMA table_info(pending_orders)').all() as { name: string }[];
+  if (columns.some(c => c.name === 'review_flag')) return;
+  db.exec(`ALTER TABLE pending_orders ADD COLUMN review_flag TEXT NOT NULL DEFAULT ''`);
+  logger.info('[DB] Migration complete: pending_orders.review_flag added');
+}
+
+function addCustomersAiCredits(): void {
+  const columns = db.prepare('PRAGMA table_info(customers)').all() as { name: string }[];
+  if (columns.some(c => c.name === 'ai_credits')) return;
+  db.exec(`ALTER TABLE customers ADD COLUMN ai_credits INTEGER NOT NULL DEFAULT 0`);
+  logger.info('[DB] Migration complete: customers.ai_credits added');
+}
+
+function addPortalRequestsAllocColumns(): void {
+  const columns = db.prepare('PRAGMA table_info(portal_requests)').all() as { name: string }[];
+  const existing = new Set(columns.map(c => c.name));
+  if (!existing.has('alloc_status')) db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_status TEXT`);
+  if (!existing.has('alloc_error'))  db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_error TEXT`);
+  if (!existing.has('alloc_at'))     db.exec(`ALTER TABLE portal_requests ADD COLUMN alloc_at TEXT`);
+  logger.info('[DB] Migration complete: portal_requests.alloc_status/alloc_error/alloc_at added');
+}
+
+function addEmail2Columns(): void {
+  const customerColumns = db.prepare('PRAGMA table_info(customers)').all() as { name: string }[];
+  if (!customerColumns.some(c => c.name === 'email_2')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN email_2 TEXT NOT NULL DEFAULT ''`);
+  }
+  const accountColumns = db.prepare('PRAGMA table_info(portal_accounts)').all() as { name: string }[];
+  if (!accountColumns.some(c => c.name === 'email_2')) {
+    db.exec(`ALTER TABLE portal_accounts ADD COLUMN email_2 TEXT NOT NULL DEFAULT ''`);
+  }
+  logger.info('[DB] Migration complete: customers.email_2 / portal_accounts.email_2 added');
+}
+
+function addSerialMailToggleColumns(): void {
+  const columns = db.prepare('PRAGMA table_info(serials)').all() as { name: string }[];
+  const existing = new Set(columns.map(c => c.name));
+  if (!existing.has('mail_expiry_notice_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_expiry_notice_enabled INTEGER NOT NULL DEFAULT 1`);
+  if (!existing.has('mail_order_form_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_order_form_enabled INTEGER NOT NULL DEFAULT 1`);
+  if (!existing.has('mail_lifecycle_notice_enabled'))
+    db.exec(`ALTER TABLE serials ADD COLUMN mail_lifecycle_notice_enabled INTEGER NOT NULL DEFAULT 1`);
+  logger.info('[DB] Migration complete: serials mail toggle columns added');
+}
+
+function createCustomerCreditLogsTable(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customer_credit_logs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id   INTEGER NOT NULL,
+      credits       INTEGER NOT NULL DEFAULT 0,
+      purchase_date TEXT NOT NULL DEFAULT '',
+      source        TEXT NOT NULL DEFAULT '',
+      pending_id    INTEGER,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (pending_id)  REFERENCES pending_orders(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_credit_logs_customer
+      ON customer_credit_logs(customer_id, created_at DESC);
+  `);
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -544,6 +610,36 @@ const migrations: Migration[] = [
     version: 10,
     name: 'portal_requests cancel_requested status',
     run: migratePortalRequestsCancelRequested,
+  },
+  {
+    version: 11,
+    name: 'pending_orders review_flag column',
+    run: addPendingOrdersReviewFlag,
+  },
+  {
+    version: 12,
+    name: 'customers ai_credits column',
+    run: addCustomersAiCredits,
+  },
+  {
+    version: 13,
+    name: 'customer_credit_logs table',
+    run: createCustomerCreditLogsTable,
+  },
+  {
+    version: 14,
+    name: 'portal_requests alloc_status columns',
+    run: addPortalRequestsAllocColumns,
+  },
+  {
+    version: 15,
+    name: 'serials per-serial mail toggle columns',
+    run: addSerialMailToggleColumns,
+  },
+  {
+    version: 16,
+    name: 'customers/portal_accounts email_2 columns',
+    run: addEmail2Columns,
   },
 ];
 
@@ -619,11 +715,13 @@ function createTables(): void {
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       name          TEXT NOT NULL,
       email         TEXT NOT NULL DEFAULT '',
+      email_2       TEXT NOT NULL DEFAULT '',
       phone         TEXT NOT NULL DEFAULT '',
       address       TEXT NOT NULL DEFAULT '',
       dealer        TEXT NOT NULL DEFAULT '',
       sales_manager TEXT NOT NULL DEFAULT '',
       notes         TEXT NOT NULL DEFAULT '',
+      ai_credits    INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -653,6 +751,12 @@ function createTables(): void {
         CHECK(renewal_stop_requested IN (0,1)),
       stop_requested_at      TEXT,
       activated_at           TEXT,
+      mail_expiry_notice_enabled    INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_expiry_notice_enabled IN (0,1)),
+      mail_order_form_enabled       INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_order_form_enabled IN (0,1)),
+      mail_lifecycle_notice_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK(mail_lifecycle_notice_enabled IN (0,1)),
       created_at             TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       updated_at             TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT
@@ -767,6 +871,7 @@ function createTables(): void {
       status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK(status IN ('pending','approved','rejected')),
       flag_duplicate   INTEGER NOT NULL DEFAULT 0,
+      review_flag      TEXT NOT NULL DEFAULT '',
       notes            TEXT NOT NULL DEFAULT '',
       created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -825,6 +930,49 @@ function createTables(): void {
       ON auto_renewal_order_notice_logs(serial_id, sent_at DESC);
     CREATE INDEX IF NOT EXISTS idx_auto_renew_order_notice_status
       ON auto_renewal_order_notice_logs(status);
+
+    -- =========================================================
+    -- customer_credit_logs  (AI credits purchase history)
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS customer_credit_logs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id   INTEGER NOT NULL,
+      credits       INTEGER NOT NULL DEFAULT 0,
+      purchase_date TEXT NOT NULL DEFAULT '',
+      source        TEXT NOT NULL DEFAULT '',
+      pending_id    INTEGER,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (pending_id)  REFERENCES pending_orders(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_credit_logs_customer
+      ON customer_credit_logs(customer_id, created_at DESC);
+
+    -- =========================================================
+    -- sent_mails  (unified outbound mail log — all sent emails)
+    -- 템플릿 메일(sendTemplate)과 시스템 메일(리포트/치명적 알림)을 한 곳에 기록.
+    -- 신규 발송분부터 쌓인다(과거 데이터 마이그레이션 없음).
+    -- =========================================================
+    CREATE TABLE IF NOT EXISTS sent_mails (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_code TEXT NOT NULL DEFAULT '',
+      to_addr       TEXT NOT NULL DEFAULT '',
+      subject       TEXT NOT NULL DEFAULT '',
+      body_html     TEXT NOT NULL DEFAULT '',
+      reason        TEXT NOT NULL DEFAULT '',
+      actor         TEXT NOT NULL DEFAULT 'system',
+      serial_id     INTEGER,
+      status        TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      error         TEXT NOT NULL DEFAULT '',
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (serial_id) REFERENCES serials(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_created
+      ON sent_mails(created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_template
+      ON sent_mails(template_code);
+    CREATE INDEX IF NOT EXISTS idx_sent_mails_status
+      ON sent_mails(status);
 
     -- =========================================================
     -- settings  (UNCHANGED)

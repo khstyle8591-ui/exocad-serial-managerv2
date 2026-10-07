@@ -153,6 +153,25 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
           TODAY: today,
           DEALER: serial.customer?.dealer ?? '',
           SALES_MANAGER: serial.customer?.sales_manager ?? '',
+          NAME: serial.customer?.name ?? '',
+          SERIAL: serial.serial_number,
+          ADDRESS: serial.customer?.address ?? '',
+          EMAIL: serial.customer?.email ?? '',
+          DETECTED_SERIAL: serial.serial_number,
+          PREVIOUS_EXPIRY_DATE: serial.expiry_date ?? '',
+          REQUEST_ID: '1001',
+          ACCOUNT_NAME: serial.customer?.name ?? '(サンプルアカウント)',
+          LOGIN_ID: 'sample_login',
+          EXOCAD_ID: 'EX-000000',
+          PACKAGE_LABEL: '',
+          PACKAGE_QTY: '',
+          PACKAGE_PRICE: '',
+          RESET_URL: 'https://example.com/reset?token=sample',
+          INCLUDE_QUOTE: '希望する',
+          MISSING_FIELDS: 'シリアルナンバー',
+          RECEIVED_SUBJECT: '（サンプル件名）',
+          RESPONSE_ERRORS: '（サンプルエラー内容）',
+          REPLY_TEMPLATE: '（サンプル返信テンプレート）',
         };
         const render = (tmpl: string) =>
           tmpl.replace(/\{\{([A-Z_]+)\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
@@ -260,7 +279,7 @@ export default function TemplateEditor({ template, onSave, onClose }: Props) {
 
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{t(lang, 'label_insert_var')}</div>
-                <VariableChips onInsert={insertVar} />
+                <VariableChips onInsert={insertVar} code={isBuiltin ? code : undefined} />
               </div>
 
               <div>

@@ -34,13 +34,13 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const GENERIC_ERROR = '입력하신 정보가 일치하지 않습니다.';
+const GENERIC_ERROR = 'invalid_credentials';
 
 function validatePassword(pw: string): string | null {
-  if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
-  if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
-  if (!/[a-z]/.test(pw)) return '소문자를 포함해야 합니다.';
-  if (!/[0-9]/.test(pw)) return '숫자를 포함해야 합니다.';
+  if (pw.length < 8) return 'pw_too_short';
+  if (!/[A-Z]/.test(pw)) return 'pw_no_uppercase';
+  if (!/[a-z]/.test(pw)) return 'pw_no_lowercase';
+  if (!/[0-9]/.test(pw)) return 'pw_no_number';
   return null;
 }
 
@@ -64,18 +64,18 @@ router.post('/signup', authLimiter, async (req: Request, res: Response) => {
   } = req.body as Record<string, string>;
 
   if (!login_id?.trim() || !email?.trim() || !name?.trim() || !password) {
-    res.status(400).json({ error: '필수 항목을 모두 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
   if (password !== confirm_password) {
-    res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
+    res.status(400).json({ error: 'error_pw_mismatch' });
     return;
   }
   const pwError = validatePassword(password);
   if (pwError) { res.status(400).json({ error: pwError }); return; }
 
   if (loginIdExists(login_id.trim())) {
-    res.status(409).json({ error: '이미 사용 중인 로그인 ID입니다.' });
+    res.status(409).json({ error: 'login_id_taken' });
     return;
   }
 
@@ -152,7 +152,10 @@ router.post('/reset-request', authLimiter, async (req: Request, res: Response) =
 
   const baseUrl = process.env.PORTAL_BASE_URL ||
     `${req.protocol}://${req.get('host')}`;
-  const resetUrl = `${baseUrl}/portal/reset?token=${resetToken}`;
+  // 주의: /portal/* 은 백엔드 API 전용 경로. 포털 프론트엔드(SPA)는 루트(/)에서 서빙되며
+  // 비밀번호 재설정 페이지의 실제 라우트는 /reset 이다(App.tsx 참조). /portal/reset으로 보내면
+  // 백엔드 라우터를 거쳐 결국 SPA가 로드되어도 React Router가 해당 경로를 몰라 빈 화면/로그인으로 빠진다.
+  const resetUrl = `${baseUrl}/reset?token=${resetToken}`;
 
   try {
     await sendTemplate('portal_reset_password', account.email, {

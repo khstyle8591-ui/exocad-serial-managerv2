@@ -1,10 +1,13 @@
 import { getDb } from '../../main/database';
+import { getNowTimestampString } from '../../main/utils/date-utils';
+import { emitPortalRequestChanged } from './request-events';
 import type { AppSettings, CustomerPortalInfo } from '../../shared/types';
 
 export interface PortalAccount {
   id: number;
   login_id: string;
   email: string;
+  email_2: string;
   phone: string;
   address: string;
   name: string;
@@ -53,31 +56,33 @@ export function createAccount(params: {
   password_hash: string;
   language: string;
 }): number {
+  // created_at/updated_at도 테이블 DEFAULT(OS 타임존 의존)가 아닌 Asia/Tokyo 명시 값으로 저장한다.
+  const now = getNowTimestampString();
   const result = getDb()
     .prepare(
       `INSERT INTO portal_accounts
-         (login_id, email, phone, address, name, exocad_id, password_hash, language)
+         (login_id, email, phone, address, name, exocad_id, password_hash, language, created_at, updated_at)
        VALUES
-         (@login_id, @email, @phone, @address, @name, @exocad_id, @password_hash, @language)`,
+         (@login_id, @email, @phone, @address, @name, @exocad_id, @password_hash, @language, @now, @now)`,
     )
-    .run(params);
+    .run({ ...params, now });
   return result.lastInsertRowid as number;
 }
 
 export function updateAccountPassword(accountId: number, passwordHash: string): void {
   getDb()
     .prepare(
-      "UPDATE portal_accounts SET password_hash = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+      'UPDATE portal_accounts SET password_hash = ?, updated_at = ? WHERE id = ?',
     )
-    .run(passwordHash, accountId);
+    .run(passwordHash, getNowTimestampString(), accountId);
 }
 
 // ── Reset tokens ──────────────────────────────────────────────────────────────
 
+// Asia/Tokyo 기준으로 통일 (consumeResetToken의 비교 기준과 일치시킴) — date-utils 설명 참조.
 function resetTokenExpiresAt(): string {
   return new Date(Date.now() + 60 * 60_000)
-    .toISOString()
-    .slice(0, 19)
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' })
     .replace('T', ' ');
 }
 
@@ -97,10 +102,10 @@ export interface ResetTokenRow {
 export function consumeResetToken(token: string): ResetTokenRow | null {
   const db = getDb();
   const row = db
-    .prepare<[string], ResetTokenRow>(
-      "SELECT account_id, used FROM portal_reset_tokens WHERE token = ? AND expires_at > datetime('now','localtime') AND used = 0",
+    .prepare<[string, string], ResetTokenRow>(
+      'SELECT account_id, used FROM portal_reset_tokens WHERE token = ? AND expires_at > ? AND used = 0',
     )
-    .get(token);
+    .get(token, getNowTimestampString());
   if (!row) return null;
   db.prepare('UPDATE portal_reset_tokens SET used = 1 WHERE token = ?').run(token);
   return row;
@@ -170,6 +175,8 @@ export function listCustomerPortalInfo(): CustomerPortalInfo[] {
 
 export type PortalRequestType = 'credit' | 'renewal_stop' | 'renewal_resume';
 export type PortalRequestStatus = 'pending' | 'manager_review' | 'auto_done' | 'approved' | 'rejected' | 'user_cancelled' | 'cancel_requested';
+// 크레딧 자동배분 진행 상태 — credit 신청에만 사용됨. null = 배분 대상 아님/미시작.
+export type CreditAllocStatus = 'scheduled' | 'distributing' | 'distributed' | 'failed' | 'manual_hold';
 
 export interface PortalRequestRow {
   id: number;
@@ -182,6 +189,9 @@ export interface PortalRequestRow {
   note: string;
   created_at: string;
   processed_at: string | null;
+  alloc_status: CreditAllocStatus | null;
+  alloc_error: string | null;
+  alloc_at: string | null;
 }
 
 export function createPortalRequest(params: {
@@ -192,11 +202,14 @@ export function createPortalRequest(params: {
   package_code?: string;
   note?: string;
 }): number {
+  // created_at은 테이블 DEFAULT(datetime('now','localtime'))에 맡기지 않고 명시적으로 전달한다.
+  // DEFAULT는 SQLite가 OS 타임존을 사용하므로, 서버 OS가 UTC인 경우(흔한 GCP VM 기본값)
+  // Asia/Tokyo 기준보다 9시간 어긋난 접수 시각이 저장/표시되는 버그가 있었음.
   const result = getDb()
     .prepare(
       `INSERT INTO portal_requests
-         (account_id, type, target_serial, exocad_id, package_code, note)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (account_id, type, target_serial, exocad_id, package_code, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       params.account_id,
@@ -205,25 +218,39 @@ export function createPortalRequest(params: {
       params.exocad_id ?? '',
       params.package_code ?? '',
       params.note ?? '',
+      getNowTimestampString(),
     );
+  emitPortalRequestChanged();
   return result.lastInsertRowid as number;
 }
 
-export function updatePortalRequestStatus(id: number, status: PortalRequestStatus): void {
+// clearNote=true이면 note 컬럼을 빈 문자열로 초기화한다. 재시도로 성공한 승인에서
+// 이전 실패로 박힌 note('playwright_failed_manual')를 지우지 않으면 isRetryable이
+// 계속 true로 남아 UI가 성공 후에도 "취소 실패/재시도" 상태로 고정되는 문제 방지.
+// note 컬럼은 NOT NULL(기본 '')이므로 NULL이 아닌 ''로 지운다.
+export function updatePortalRequestStatus(
+  id: number,
+  status: PortalRequestStatus,
+  clearNote: boolean = false,
+): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = ?, processed_at = datetime('now','localtime') WHERE id = ?",
+      clearNote
+        ? "UPDATE portal_requests SET status = ?, note = '', processed_at = ? WHERE id = ?"
+        : 'UPDATE portal_requests SET status = ?, processed_at = ? WHERE id = ?',
     )
-    .run(status, id);
+    .run(status, getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 시스템/고객 신청에서 발생한 Playwright 실패 — 포털에 "처리 실패"로 노출됨(고객이 시리얼 확인 후 재신청 유도).
 export function markPortalRequestPlaywrightFailed(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'rejected', note = 'playwright_failed', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 매니저가 승인한 후 Playwright 실행이 실패한 경우 — 매니저는 이미 신청을 검토/승인했으므로
@@ -232,9 +259,10 @@ export function markPortalRequestPlaywrightFailed(id: number): void {
 export function markPortalRequestPlaywrightFailedByManager(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'approved', note = 'playwright_failed_manual', processed_at = ? WHERE id = ?",
     )
-    .run(id);
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 // 매니저가 고객의 취소 요청(cancel_requested)을 거절한 경우 — 원래 신청은 그대로 승인된 것으로
@@ -243,9 +271,138 @@ export function markPortalRequestPlaywrightFailedByManager(id: number): void {
 export function markPortalRequestCancelRejected(id: number): void {
   getDb()
     .prepare(
-      "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = datetime('now','localtime') WHERE id = ?",
+      "UPDATE portal_requests SET status = 'approved', note = 'cancel_rejected', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+// credit 전용: 배분이 아직 완료(auto_status='distributed')되지 않았을 수 있으므로 곧바로
+// 'approved'(=발주서 발송)로 확정하지 않고 'pending'으로 되돌린다. 이렇게 해야 자동배분 스캔이
+// 다시 집어가거나(alloc_status가 아직 NULL인 경우) 매니저가 수동 배분 후 승인할 수 있다.
+// alloc_status/alloc_error는 그대로 유지(배분 실패 이력을 보존).
+export function markPortalRequestCancelRejectedPending(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'pending', note = 'cancel_rejected', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+// 매니저가 Playwright 취소 실패(cancel failed) 신청을 수동 처리하고 큐에서 닫는 경우 — status는
+// 그대로 두고(고객 화면 의미 유지: approved는 승인됨, rejected는 실패 표시) note만 'dismissed'로
+// 바꿔 매니저 actionable 목록에서 빠지게 한다.
+export function markPortalRequestDismissed(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET note = 'dismissed', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+// 갱신중단 플래그가 이미 선점된 상태에서 들어온 중복 신청 — 매니저 대기열에 노출되지 않도록
+// 즉시 'rejected'로 확정하고 note로만 구분해 포털/매니저 화면에 "중복신청"으로 표시한다.
+export function markPortalRequestDuplicate(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE portal_requests SET status = 'rejected', note = 'duplicate', processed_at = ? WHERE id = ?",
+    )
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+// ── 크레딧 자동배분 ─────────────────────────────────────────────────────────────
+
+/** 5분 유예기간이 지났고 아직 배분을 시작하지 않은 크레딧 신청 목록 (오래된 순). */
+export function findCreditRequestsReadyForAutoDistribution(cutoffTimestamp: string): PortalRequestRow[] {
+  return getDb()
+    .prepare<[string], PortalRequestRow>(
+      `SELECT * FROM portal_requests
+       WHERE type = 'credit' AND status = 'pending' AND alloc_status IS NULL
+         AND created_at <= ?
+       ORDER BY created_at ASC`,
+    )
+    .all(cutoffTimestamp);
+}
+
+/** 배분 시작을 원자적으로 선점 — 이미 다른 실행이 선점했거나 상태가 바뀌었으면 false. */
+export function claimCreditForDistribution(id: number): boolean {
+  // alloc_at에 claim(배분 시작) 시각을 기록한다 — 프로세스가 배분 도중 죽어 'distributing'에
+  // 멈춘 건을 워치독(findStaleDistributingCredits)이 경과시간으로 식별할 수 있게 하기 위함.
+  // 완료/실패 시 markCreditDistributed/Failed가 alloc_at을 최종 시각으로 덮어쓴다.
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_status = 'distributing', alloc_at = ?
+       WHERE id = ? AND type = 'credit' AND status = 'pending' AND alloc_status IS NULL`,
+    )
+    .run(getNowTimestampString(), id);
+  const claimed = result.changes > 0;
+  if (claimed) emitPortalRequestChanged();
+  return claimed;
+}
+
+/**
+ * claim(배분 시작) 후 cutoff 이상 'distributing'에 멈춰 있는 크레딧 신청 — 프로세스 종료/OOM 등으로
+ * 좌초된 건. 정상 흐름의 예외는 호출부 try/catch가 잡지만, 프로세스 킬 시엔 그 catch도 못 돌므로
+ * 이 목록을 별도로 조회해 정리한다. (alloc_at IS NULL: 이 변경 이전에 좌초된 레거시 건도 포함)
+ */
+export function findStaleDistributingCredits(cutoffTimestamp: string): PortalRequestRow[] {
+  return getDb()
+    .prepare<[string], PortalRequestRow>(
+      `SELECT * FROM portal_requests
+       WHERE type = 'credit' AND status = 'pending' AND alloc_status = 'distributing'
+         AND (alloc_at IS NULL OR alloc_at <= ?)`,
+    )
+    .all(cutoffTimestamp);
+}
+
+/**
+ * 브라우저 슬롯에서 실제 배분을 시작하는 시점에 호출한다. 아직 'distributing'일 때만 시작 시각(alloc_at)을
+ * 갱신하고 true를 돌려준다. claim 이후 슬롯 대기가 길어져 좌초 복구가 'failed'로 바꿔 버렸다면(또는 매니저가
+ * 이미 처리했다면) false → 호출부는 배분을 건너뛴다. 좌초 판정 시계도 대기 시간이 아닌 실제 시작 시점부터 잰다.
+ */
+export function markCreditDistributionStarted(id: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_at = ?
+       WHERE id = ? AND type = 'credit' AND alloc_status = 'distributing'`,
+    )
+    .run(getNowTimestampString(), id);
+  return result.changes > 0;
+}
+
+/**
+ * 매니저가 수동 처리로 전환 — 자동배분 큐에서 원자적으로 빼낸다.
+ * claimCreditForDistribution과 동일한 조건(pending & alloc_status IS NULL)으로 선점하므로,
+ * 자동배분 크론이 이미 배분을 시작(distributing)했다면 false를 반환한다(한쪽만 이긴다 → 이중 발급 방지).
+ * findCreditRequestsReadyForAutoDistribution은 alloc_status IS NULL만 조회하므로 hold된 건은 자동 제외된다.
+ */
+export function holdCreditForManual(id: number): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE portal_requests SET alloc_status = 'manual_hold'
+       WHERE id = ? AND type = 'credit' AND status = 'pending' AND alloc_status IS NULL`,
     )
     .run(id);
+  const held = result.changes > 0;
+  if (held) emitPortalRequestChanged();
+  return held;
+}
+
+export function markCreditDistributed(id: number): void {
+  getDb()
+    .prepare("UPDATE portal_requests SET alloc_status = 'distributed', alloc_at = ? WHERE id = ?")
+    .run(getNowTimestampString(), id);
+  emitPortalRequestChanged();
+}
+
+export function markCreditDistributionFailed(id: number, error: string): void {
+  getDb()
+    .prepare("UPDATE portal_requests SET alloc_status = 'failed', alloc_error = ?, alloc_at = ? WHERE id = ?")
+    .run(error, getNowTimestampString(), id);
+  emitPortalRequestChanged();
 }
 
 export function findActiveRenewalStopRequest(serialNumber: string): PortalRequestRow | null {
@@ -289,22 +446,22 @@ export function setCustomerMismatch(id: number, data: Record<string, [string, st
 
 export function updatePortalAccountFields(
   id: number,
-  fields: Partial<Pick<PortalAccount, 'name' | 'email' | 'phone' | 'address' | 'exocad_id' | 'language'>>,
+  fields: Partial<Pick<PortalAccount, 'name' | 'email' | 'email_2' | 'phone' | 'address' | 'exocad_id' | 'language'>>,
 ): void {
-  const allowed = ['name', 'email', 'phone', 'address', 'exocad_id', 'language'] as const;
+  const allowed = ['name', 'email', 'email_2', 'phone', 'address', 'exocad_id', 'language'] as const;
   const updates = allowed.filter(k => k in fields);
   if (updates.length === 0) return;
   const set = updates.map(k => `${k} = ?`).join(', ');
   const values = updates.map(k => (fields as Record<string, unknown>)[k]);
   getDb()
-    .prepare(`UPDATE portal_accounts SET ${set}, updated_at = datetime('now','localtime') WHERE id = ?`)
-    .run(...values, id);
+    .prepare(`UPDATE portal_accounts SET ${set}, updated_at = ? WHERE id = ?`)
+    .run(...values, getNowTimestampString(), id);
 }
 
 export function setPortalAccountStatus(id: number, status: 'active' | 'disabled'): void {
   getDb()
-    .prepare("UPDATE portal_accounts SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?")
-    .run(status, id);
+    .prepare('UPDATE portal_accounts SET status = ?, updated_at = ? WHERE id = ?')
+    .run(status, getNowTimestampString(), id);
 }
 
 export interface PortalRequestWithAccount extends PortalRequestRow {
@@ -331,6 +488,20 @@ export function getAllPortalRequests(filter?: {
        ORDER BY pr.created_at DESC`,
     )
     .all(...params);
+}
+
+// 매니저 조치가 필요한 신청 건수 — Requests 탭의 isActionable/cancel_requested 판정과 동일 기준.
+// 사이드바/탭 배지에 사용(별도 "확인함" 추적 없이, 처리하면 자동으로 줄어드는 단순 카운트).
+export function countActionablePortalRequests(): number {
+  const row = getDb()
+    .prepare<[], { n: number }>(
+      `SELECT COUNT(*) AS n FROM portal_requests
+       WHERE status IN ('pending', 'manager_review', 'cancel_requested')
+          OR (status = 'rejected' AND note = 'playwright_failed')
+          OR (status = 'approved' AND note = 'playwright_failed_manual')`,
+    )
+    .get();
+  return row?.n ?? 0;
 }
 
 export function getPortalRequestById(id: number): PortalRequestWithAccount | null {

@@ -22,10 +22,29 @@ export function getYesterdayDateString(): string {
 }
 
 /**
+ * Returns the date string N days ago in YYYY-MM-DD format (Asia/Tokyo timezone)
+ */
+export function getDaysAgoDateString(days: number): string {
+  const target = new Date();
+  target.setDate(target.getDate() - days);
+  return getDateString(target);
+}
+
+/**
  * Returns the current timestamp string in YYYY-MM-DD HH:mm:ss format (Asia/Tokyo timezone)
  */
 export function getNowTimestampString(): string {
   return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace('T', ' ');
+}
+
+/**
+ * Returns the timestamp string N minutes ago in YYYY-MM-DD HH:mm:ss format (Asia/Tokyo timezone),
+ * in the same format as getNowTimestampString() so it can be compared lexically against created_at columns.
+ */
+export function getTimestampMinutesAgoString(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000)
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    .replace('T', ' ');
 }
 
 /**

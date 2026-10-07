@@ -2,6 +2,7 @@ import React from 'react';
 import { api } from '../client';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { translateServerError, translateServerErrorList } from '../utils/serverError';
 
 interface BulkImportResult {
   imported: number;
@@ -31,13 +32,14 @@ export default function ExcelUpload({ onImportComplete }: Props) {
           onImportComplete();
         }
         if (result.errors.length > 0) {
-          alert(t(lang, 'excel_import_errors').replace('{errors}', result.errors.slice(0, 10).join('\n')) + (result.errors.length > 10 ? t(lang, 'excel_import_more').replace('{n}', String(result.errors.length - 10)) : ''));
+          const translatedErrors = translateServerErrorList(result.errors, lang);
+          alert(t(lang, 'excel_import_errors').replace('{errors}', translatedErrors.slice(0, 10).join('\n')) + (result.errors.length > 10 ? t(lang, 'excel_import_more').replace('{n}', String(result.errors.length - 10)) : ''));
         }
         if (result.imported === 0 && result.errors.length === 0) {
           alert(t(lang, 'excel_import_empty'));
         }
       } catch (err: unknown) {
-        alert(t(lang, 'import_failed').replace('{error}', getErrorMessage(err)));
+        alert(t(lang, 'import_failed').replace('{error}', translateServerError(getErrorMessage(err), lang)));
       }
     };
     input.click();

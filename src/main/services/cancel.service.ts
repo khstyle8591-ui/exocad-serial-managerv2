@@ -1,22 +1,25 @@
-import { Browser, Page, BrowserContext } from 'playwright';
+import { Browser, Page, BrowserContext, Locator } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { serialService } from './serial.service';
 import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
 import { logActivity, pickLang } from './activity-log.service';
-import { notificationService } from './notification.service';
+import { notificationService, localizeCancelError } from './notification.service';
 import { markPortalRequestPlaywrightFailed, findActiveRenewalStopRequest } from '../../server/portal/db';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
 import { getTodayDateString } from '../utils/date-utils';
 import { SCREENSHOT_DIR } from '../utils/paths';
-import type { CancelResult, CancelDryRunResult } from '../../shared/types';
-import { launchAutomationBrowser, newAutomationContext } from './playwright-browser';
+import type { CancelResult, CancelDryRunResult, CreditDistributeResult } from '../../shared/types';
+import { launchAutomationBrowser, newAutomationContext, withBrowserSlot } from './playwright-browser';
 import { shortPause, waitForSettledPage } from './playwright-waits';
 
 type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+// partner.exocad.com의 크레딧 배분 화면 — 취소 자동화와 동일 관리자 SSO 세션을 공유한다.
+const EXOCAD_CREDITS_URL = 'https://partner.exocad.com/credits';
 
 // 스크린샷 저장 디렉토리
 function getScreenshotDir(): string {
@@ -53,6 +56,10 @@ export class CancelService {
   // 큐는 앞선 작업 완료 후 순서대로 실행하여 false-positive Slack 알림 방지.
   private cancelQueue: Promise<unknown> = Promise.resolve();
 
+  // 취소가 이미 완료된 것으로 간주하는 상태 셀 텍스트(소문자).
+  // 사전 가드(이미 취소된 시리얼 조기 종료)와 사후 검증(verifyCancelResult)에서 공용으로 사용.
+  private static readonly SUCCESS_STATUSES = ['opted out', 'expired', 'cancelled', 'canceled'];
+
   // ============================================================
   // 단일 시리얼 cancel 처리
   // 전체 흐름: 로그인 → 라이선스 관리 페이지 → 검색 → 옵션 → cancel → 확인
@@ -62,9 +69,101 @@ export class CancelService {
     // 에러가 발생해도 다음 큐 항목이 blocking되지 않도록 .catch(() => {}) 체이닝.
     const op = this.cancelQueue
       .catch(() => {})
-      .then(() => this._doCancel(serialNumber, headless));
+      .then(() => withBrowserSlot(() => this._doCancel(serialNumber, headless)));
     this.cancelQueue = op.catch(() => {});
     return op;
+  }
+
+  // ============================================================
+  // 크레딧 배분 (partner.exocad.com/credits)
+  // cancelSubscription과 동일한 큐(cancelQueue)에 태워 단일 관리자 SSO 세션을
+  // 직렬로 공유한다 — 취소 자동화와 크레딧 배분이 동시에 같은 브라우저를 건드리지 않도록 함.
+  // ============================================================
+  // dryRun=true: 계정/수량/메모 입력까지 수행하고 제출 버튼이 보이는지/활성화됐는지만 확인한 뒤
+  // 클릭하지 않고 종료한다 (실제 배분 없음 — 검증용).
+  // beforeStart: 브라우저 슬롯을 실제로 받은 직후, 배분을 시작하기 직전에 실행된다. false를 돌려주면
+  // 배분하지 않고 skipped 결과를 반환한다(슬롯 대기 중 신청이 좌초 복구/수동 처리로 넘어간 경우의 이중 지급 방지).
+  async distributeCredits(
+    exocadId: string, amount: number, note: string, headless: boolean = true, dryRun: boolean = false,
+    beforeStart?: () => boolean,
+  ): Promise<CreditDistributeResult> {
+    const op = this.cancelQueue
+      .catch(() => {})
+      .then(() => withBrowserSlot(async (): Promise<CreditDistributeResult> => {
+        if (beforeStart && !beforeStart()) {
+          logger.warn(`[distributeCredits] skipped before start — request state changed while waiting for the browser slot (exocadId=${exocadId})`);
+          return { exocad_id: exocadId, success: false, skipped: true, error: 'skipped: request state changed while waiting for the browser slot' };
+        }
+        return this._doDistributeCredits(exocadId, amount, note, headless, dryRun);
+      }));
+    this.cancelQueue = op.catch(() => {});
+    return op;
+  }
+
+  // ============================================================
+  // 브라우저/컨텍스트/로그인 세션 확보 (cancel·크레딧배분 공용)
+  // 기존 세션이 살아있으면 재사용하고, 없으면 새로 생성 후 로그인까지 수행한다.
+  // 새 브라우저를 남발하지 않고 단일 관리자 SSO 세션을 여러 자동화가 공유하기 위함.
+  // ============================================================
+  private async ensureSessionPage(headless: boolean, settings: EffectiveSettings): Promise<Page> {
+    // ─── 브라우저 & 컨텍스트 초기화 ───
+    // 기존 브라우저가 없거나 연결이 끊어진 경우 새로 생성
+    // headless=true: 자동 스케줄러에서 호출 시 백그라운드 실행
+    // headless=false: 수동 실행 시 화면 표시
+    if (!this.browser || !this.browser.isConnected()) {
+      try {
+        this.browser = await launchAutomationBrowser(headless);
+        this.context = await this.browser.newContext();
+        // 네이티브 다이얼로그(alert, confirm) 자동 dismiss
+        // 브라우저가 표시하는 모든 dialog를 즉시 dismiss하여 자동화 흐름을 보호한다.
+        this.context.on('page', (p) => {
+          p.on('dialog', async (dialog) => {
+            logger.info(`[dialog] auto-dismiss: type=${dialog.type()}, msg=${dialog.message().slice(0, 80)}`);
+            await dialog.dismiss().catch(() => { });
+          });
+        });
+        this.isLoggedIn = false;
+      } catch (initErr) {
+        // 컨텍스트 생성 실패 등 초기화 단계 오류 시 브라우저가 누수되지 않도록 즉시 정리
+        if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+        this.context = null;
+        throw initErr;
+      }
+    }
+
+    const page = await this.context!.newPage();
+
+    // ─── 로그인 (세션이 없을 때만) ───
+    // Align Tech SSO 페이지에서 이메일+비밀번호로 로그인
+    // 한번 로그인하면 같은 context 내에서 쿠키가 유지되므로 재로그인 불필요
+    if (!this.isLoggedIn) {
+      await this.login(page, settings);
+    }
+
+    return page;
+  }
+
+  // ============================================================
+  // 세션 만료/무효 감지 시 브라우저 정리 (cancel·크레딧배분 공용)
+  // 명시적으로 로그인 페이지로 리다이렉트된 경우만 세션을 무효화한다.
+  // (단순 원소 미감지·타임아웃 등은 세션 무효가 아니므로 재로그인하지 않음)
+  // ============================================================
+  private async invalidateSessionIfLoggedOut(page: Page | null, context: string): Promise<void> {
+    const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
+    logger.warn(`[${context}] (URL: ${currentUrl})`);
+
+    if (
+      currentUrl.includes('login') ||
+      currentUrl.includes('aligntech.com') ||
+      currentUrl.includes('signin') ||
+      (currentUrl && !currentUrl.includes('exocad.com'))
+    ) {
+      logger.warn(`[${context}] Invalid session detected; setting isLoggedIn=false`);
+      this.isLoggedIn = false;
+      // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
+      if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+      this.context = null;
+    }
   }
 
   private async _doCancel(serialNumber: string, headless: boolean = true): Promise<CancelResult> {
@@ -73,39 +172,7 @@ export class CancelService {
     this.clearIdleCloseTimer();
 
     try {
-      // ─── 브라우저 & 컨텍스트 초기화 ───
-      // 기존 브라우저가 없거나 연결이 끊어진 경우 새로 생성
-      // headless=true: 자동 스케줄러에서 호출 시 백그라운드 실행
-      // headless=false: 수동 실행 시 화면 표시
-      if (!this.browser || !this.browser.isConnected()) {
-        try {
-          this.browser = await launchAutomationBrowser(headless);
-          this.context = await this.browser.newContext();
-          // 네이티브 다이얼로그(alert, confirm) 자동 dismiss
-          // 브라우저가 표시하는 모든 dialog를 즉시 dismiss하여 자동화 흐름을 보호한다.
-          this.context.on('page', (p) => {
-            p.on('dialog', async (dialog) => {
-              logger.info(`[dialog] auto-dismiss: type=${dialog.type()}, msg=${dialog.message().slice(0, 80)}`);
-              await dialog.dismiss().catch(() => { });
-            });
-          });
-          this.isLoggedIn = false;
-        } catch (initErr) {
-          // 컨텍스트 생성 실패 등 초기화 단계 오류 시 브라우저가 누수되지 않도록 즉시 정리
-          if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
-          this.context = null;
-          throw initErr;
-        }
-      }
-
-      page = await this.context!.newPage();
-
-      // ─── 1단계: 로그인 (세션이 없을 때만) ───
-      // Align Tech SSO 페이지에서 이메일+비밀번호로 로그인
-      // 한번 로그인하면 같은 context 내에서 쿠키가 유지되므로 재로그인 불필요
-      if (!this.isLoggedIn) {
-        await this.login(page, settings);
-      }
+      page = await this.ensureSessionPage(headless, settings);
 
       // ─── 2단계: 라이선스 관리 페이지로 이동 ───
       // 로그인 후 이미 target URL에 있으면 goto 생략 (불필요한 재로딩 방지)
@@ -132,6 +199,26 @@ export class CancelService {
       const productName = await this.getProductNameFromRow(page, serialNumber);
       logger.info(`Product name detected: "${productName}"`);
 
+      // ─── 4.5단계: 이미 취소(opt-out/expired)된 시리얼 조기 종료 가드 ───
+      // 대상 행의 상태 셀이 이미 성공 상태이면 취소 자동화를 건너뛰고 성공으로 처리한다.
+      // 이미 opt-out된 시리얼은 드롭다운에 취소 항목("Opt out upgrade" 등)이 없어
+      // 이전에는 clickCancelInDropdown이 10초 타임아웃 후 "Cancel failed"로 처리됐다.
+      const preStatusCells = await this.readStatusCells(page, serialNumber);
+      const alreadyCancelled = preStatusCells.find(
+        t => CancelService.SUCCESS_STATUSES.some(s => t.includes(s))
+      );
+      if (alreadyCancelled) {
+        logger.info(`[guard] ${serialNumber}: already in terminal status "${alreadyCancelled}" — skipping cancel automation, treating as success`);
+        const screenshotPath = await this.captureResultScreenshot(page, serialNumber);
+        return {
+          serial_number: serialNumber,
+          success: true,
+          verified: true,
+          verified_status: `already_${alreadyCancelled}`,
+          screenshot_path: screenshotPath,
+        };
+      }
+
       // ─── 5단계: 옵션 버튼(⋮) 클릭 → 드롭다운 열기 ───
       await this.clickOptionButton(page, serialNumber, settings);
 
@@ -156,26 +243,9 @@ export class CancelService {
 
     } catch (err: unknown) {
       const errorMessage = getErrorMessage(err);
-      // 로그인 세션 만료 또는 페이지 로드 실패 대응
-      const currentUrl = (() => { try { return page?.url() ?? ''; } catch { return ''; } })();
       logger.error(`Cancel failed [${serialNumber}]: ${errorMessage}`);
-      logger.warn(`\n (URL: ${currentUrl})`);
-
-      // 명시적으로 로그인 페이지에 있는 경우만 세션 초기화
-      // (Opt out upgrade 타임아웃 등 단순 또는 원소 미감지 오류는 세션 무효가 아님)
-      if (
-        currentUrl.includes('login') ||
-        currentUrl.includes('aligntech.com') ||
-        currentUrl.includes('signin') ||
-        (currentUrl && !currentUrl.includes('exocad.com'))
-      ) {
-        logger.warn('Invalid session detected; setting isLoggedIn=false');
-        this.isLoggedIn = false;
-        // browser.close()가 내부 context까지 모두 닫음 → context를 먼저 닫을 필요 없음
-        if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
-        this.context = null;
-      }
-
+      // 로그인 세션 만료 또는 페이지 로드 실패 대응 (명시적으로 로그인 페이지에 있는 경우만 세션 초기화)
+      await this.invalidateSessionIfLoggedOut(page, 'cancel');
       return { serial_number: serialNumber, success: false, error: errorMessage };
     } finally {
       // 페이지만 닫고 context(세션)는 유지 → 다음 시리얼 처리 시 재로그인 불필요
@@ -184,6 +254,176 @@ export class CancelService {
       }
       this.scheduleIdleClose();
     }
+  }
+
+  // ============================================================
+  // 단일 크레딧 배분 처리
+  // 전체 흐름: 로그인(세션 재사용) → credits 페이지 → Distribute credits 클릭
+  //          → 팝업에 계정/수량/메모 입력 → 제출 → 결과 확인
+  // ============================================================
+  private async _doDistributeCredits(
+    exocadId: string,
+    amount: number,
+    note: string,
+    headless: boolean = true,
+    dryRun: boolean = false,
+  ): Promise<CreditDistributeResult> {
+    const settings = getSettings();
+    let page: Page | null = null;
+    this.clearIdleCloseTimer();
+
+    try {
+      page = await this.ensureSessionPage(headless, settings);
+
+      // ─── credits 페이지로 이동 ───
+      const currentUrl = page.url();
+      if (!currentUrl.startsWith(EXOCAD_CREDITS_URL)) {
+        await page.goto(EXOCAD_CREDITS_URL, { waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
+          logger.warn('[distributeCredits] networkidle timeout; continuing with direct element wait');
+        });
+      }
+
+      // ─── "Distribute credits" 버튼(목록 페이지, type="button") 클릭 → 팝업 오픈 ───
+      // 팝업 내부의 제출 버튼도 동일 텍스트("Distribute credits")를 쓰므로 type 속성으로 구분한다.
+      const openButton = page.locator('button[type="button"]:has-text("Distribute credits")').first();
+      await openButton.waitFor({ state: 'visible', timeout: 20000 });
+      await openButton.click();
+
+      // ─── 팝업 필드 대기 + React hydration 여유 ───
+      const accountInput = page.locator('input[name="account"]').first();
+      await accountInput.waitFor({ state: 'visible', timeout: 10000 });
+      await shortPause(page, 500, 'credits modal hydration');
+
+      // ─── 계정(my.exocad ID) / 수량 / 메모 입력 ───
+      await this.fillFieldRobust(page, accountInput, exocadId, 'account');
+      const amountInput = page.locator('input[name="amount"]').first();
+      await this.fillFieldRobust(page, amountInput, String(amount), 'amount');
+      const noteInput = page.locator('textarea[name="note"]').first();
+      await noteInput.fill(note.slice(0, 200));
+
+      // ─── 제출 (팝업 내부, type="submit") ───
+      const submitButton = page.locator('button[type="submit"].bg-primary:has-text("Distribute credits")').first();
+      await submitButton.waitFor({ state: 'visible', timeout: 5000 });
+
+      if (dryRun) {
+        // 실제 배분 없이 폼이 정확히 채워졌고 제출 버튼이 눌릴 준비가 됐는지만 확인.
+        const enabled = await submitButton.isEnabled().catch(() => false);
+        const accountValue = await accountInput.inputValue().catch(() => '');
+        const amountValue = await amountInput.inputValue().catch(() => '');
+        const noteValue = await noteInput.inputValue().catch(() => '');
+        const screenshotPath = await this.captureResultScreenshot(page, exocadId, 'credit-dryrun');
+        logger.info(
+          `[distributeCredits][dry-run] form ready (NOT submitted) — exocadId=${exocadId}, amount=${amount}, ` +
+          `submitEnabled=${enabled}, account="${accountValue}", amount="${amountValue}", note="${noteValue.slice(0, 60)}"`
+        );
+        return {
+          exocad_id: exocadId,
+          success: accountValue === exocadId && amountValue === String(amount) && enabled,
+          error: enabled ? undefined : 'Submit button found but not enabled (dry-run)',
+          screenshot_path: screenshotPath,
+        };
+      }
+
+      await submitButton.click();
+
+      // ─── 결과 확인 ───
+      // 우상단에 약 1초간 노출되는 토스트를 best-effort로 픽업(제네릭 셀렉터 폭 대응) —
+      // 성공/실패 토스트 모두 이 셀렉터에 걸리므로 텍스트로 구분한다.
+      // 확인된 성공 토스트 문구: "Credits distributed successfully!"
+      // 토스트 감지에 실패하더라도 스크린샷은 항상 남겨 매니저가 수동으로 확인할 수 있게 한다.
+      const toastText = await this.captureErrorToast(page);
+      const screenshotPath = await this.captureResultScreenshot(page, exocadId, 'credit');
+
+      if (toastText) {
+        if (/success/i.test(toastText)) {
+          logger.info(`[distributeCredits] success toast detected for ${exocadId}: ${toastText}`);
+          return { exocad_id: exocadId, success: true, verified: true, screenshot_path: screenshotPath };
+        }
+        logger.warn(`[distributeCredits] error toast detected for ${exocadId}: ${toastText}`);
+        return { exocad_id: exocadId, success: false, error: toastText, screenshot_path: screenshotPath };
+      }
+
+      // 토스트가 감지되지 않았어도 팝업이 안 닫혔다면 결과를 신뢰할 수 없음 → 실패로 처리
+      const modalStillOpen = await accountInput.isVisible({ timeout: 2000 }).catch(() => false);
+      if (modalStillOpen) {
+        logger.warn(`[distributeCredits] modal still open after submit with no toast captured (exocadId=${exocadId})`);
+        return {
+          exocad_id: exocadId,
+          success: false,
+          error: 'Distribution result could not be verified (modal did not close after submit)',
+          screenshot_path: screenshotPath,
+        };
+      }
+
+      // 성공 토스트를 못 잡았고 modal은 닫힘 — 배분됐을 가능성이 높지만 확신할 수 없다(verified=false).
+      // 돈성 작업이라 이 "추정 성공"을 확정 성공과 구분해, 호출부가 자동승인/발주서를 보류하고
+      // 사람 확인을 받도록 한다(false-success로 굳는 것 방지).
+      logger.warn(`[distributeCredits] no toast captured but modal closed — assuming distributed but UNVERIFIED (exocadId=${exocadId}, amount=${amount})`);
+      return { exocad_id: exocadId, success: true, verified: false, screenshot_path: screenshotPath };
+
+    } catch (err: unknown) {
+      const errorMessage = getErrorMessage(err);
+      logger.error(`[distributeCredits] failed [${exocadId}]: ${errorMessage}`);
+      await this.invalidateSessionIfLoggedOut(page, 'distributeCredits');
+      return { exocad_id: exocadId, success: false, error: errorMessage };
+    } finally {
+      if (page) {
+        await page.close();
+      }
+      this.scheduleIdleClose();
+    }
+  }
+
+  // ============================================================
+  // 입력 필드에 값 채우기 (React controlled input 대응)
+  // fill()이 실패(값 불일치)하면 pressSequentially로 한 번 더 시도한다.
+  // ============================================================
+  private async fillFieldRobust(page: Page, locator: Locator, value: string, label: string): Promise<void> {
+    await locator.click();
+    await locator.fill(value);
+    await shortPause(page, 300, `${label} fill propagation`);
+
+    let current = await locator.inputValue().catch(() => '');
+    if (current !== value) {
+      logger.warn(`[distributeCredits] ${label} fill() mismatch (got: "${current}") -> trying pressSequentially`);
+      await locator.click({ clickCount: 3 });
+      await page.keyboard.press('Delete');
+      await locator.pressSequentially(value, { delay: 60 });
+      await shortPause(page, 300, `${label} fallback propagation`);
+
+      current = await locator.inputValue().catch(() => '');
+      if (current !== value) {
+        throw new Error(`Failed to enter ${label} into credits form (got: "${current}")`);
+      }
+    }
+  }
+
+  // ============================================================
+  // 배분 실패 시 우상단에 짧게(~1초) 노출되는 에러 토스트를 best-effort로 픽업.
+  // 실제 토스트 DOM 구조가 확인되지 않아 제네릭 셀렉터로 폭넓게 탐지한다 — 확보되는 대로 정밀화 필요.
+  // 최대 4초간 200ms 간격으로 폴링하며, 텍스트가 잡히면 즉시 반환한다.
+  // ============================================================
+  private async captureErrorToast(page: Page): Promise<string | null> {
+    const toastSelectors = [
+      '[role="alert"]',
+      '[class*="toast" i]',
+      '[class*="notification" i]',
+      '[class*="snackbar" i]',
+    ];
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      for (const sel of toastSelectors) {
+        const el = page.locator(sel).first();
+        const visible = await el.isVisible({ timeout: 200 }).catch(() => false);
+        if (visible) {
+          const text = (await el.textContent().catch(() => ''))?.trim();
+          if (text) return text;
+        }
+      }
+      await page.waitForTimeout(200);
+    }
+    return null;
   }
 
   private clearIdleCloseTimer(): void {
@@ -279,11 +519,43 @@ export class CancelService {
   }
 
   // ============================================================
-  // 시리얼 넘버 검색
+  // 시리얼 넘버 검색 (재시도 래퍼)
+  // 로그인 직후 React SPA가 아직 리렌더 중이면 search-input이 잠깐 등장했다
+  // 사라져(detach) 입력 단계가 일시적으로 실패할 수 있다(간헐적 flaky 실패).
+  // 이런 경우 페이지를 다시 로드해 SPA를 처음부터 마운트한 뒤 재시도한다.
+  // 세션 쿠키는 컨텍스트에 유지되므로 재로딩해도 재로그인은 발생하지 않는다.
+  // ============================================================
+  private async searchSerial(page: Page, serialNumber: string): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    const settings = getSettings();
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await this._searchSerialOnce(page, serialNumber);
+        return;
+      } catch (err: unknown) {
+        lastErr = err;
+        // 로그인 세션 만료는 재로딩으로 해결되지 않으므로(재로그인 필요) 즉시 전파
+        if (err instanceof Error && err.message.includes('로그인 세션')) throw err;
+        if (attempt >= MAX_ATTEMPTS) break;
+
+        logger.warn(`[searchSerial] attempt ${attempt}/${MAX_ATTEMPTS} failed (${getErrorMessage(err)}) -> reloading page and retrying`);
+        // 라이선스 관리 페이지를 다시 로드해 SPA를 처음부터 마운트
+        await page.goto(settings.exocad_site_url, { waitUntil: 'domcontentloaded' }).catch(() => { });
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => { });
+        await shortPause(page, 1500, `searchSerial retry ${attempt} settle`);
+      }
+    }
+    throw lastErr;
+  }
+
+  // ============================================================
+  // 시리얼 넘버 검색 (1회 시도)
   // 위치: 라이선스 관리 페이지 왼쪽 상단의 search 필드
   // 동작: 시리얼 넘버 입력 → Enter
   // ============================================================
-  private async searchSerial(page: Page, serialNumber: string): Promise<void> {
+  private async _searchSerialOnce(page: Page, serialNumber: string): Promise<void> {
     logger.info(`Serial search started: ${serialNumber}`);
 
     // ── Step 1: search-input이 DOM에 등장할 때까지 대기 ─────────────────────
@@ -632,48 +904,81 @@ export class CancelService {
     logger.info('Confirmation popup click completed');
   }
 
+  // 시리얼이 포함된 행에서 상태 셀 텍스트를 읽는다. 행을 못 찾으면 빈 배열.
+  private async readStatusCells(page: Page, serialNumber: string): Promise<string[]> {
+    return page.evaluate((sn: string) => {
+      const rows = Array.from(document.querySelectorAll('tbody tr, [role="row"]'));
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.textContent?.includes(sn)) {
+          const cells = Array.from(row.querySelectorAll('td, [role="cell"]'));
+          return cells.map((c: Element) => (c as HTMLElement).textContent?.trim()?.toLowerCase() || '');
+        }
+      }
+      return [] as string[];
+    }, serialNumber);
+  }
+
   // ============================================================
   // Cancel 결과 검증
   // 확인 버튼 클릭 후 페이지에서 해당 시리얼이
   // "opted out" 또는 "expired" 상태인지 확인
+  //
+  // 이 사이트는 백그라운드 폴링 때문에 networkidle이 거의 안 걸려 waitForSettledPage
+  // 직후 한 번만 스냅샷을 뜨면 SPA가 아직 리렌더하기 전이라 오탐(false unverified)이
+  // 잦았다. 대신 짧은 간격으로 여러 번 재조회하고, 그래도 안 되면 마지막에 한 번
+  // reload로 클라이언트 캐시를 우회해 서버에서 새로 받아온 상태로 최종 확인한다.
   // ============================================================
   private async verifyCancelResult(page: Page, serialNumber: string): Promise<{ verified: boolean; status: string }> {
+    const successStatuses = CancelService.SUCCESS_STATUSES;
+    let lastStatusTexts: string[] = [];
+
     try {
-      // cancel 완료 후 페이지 갱신 대기
       await waitForSettledPage(page, 'cancel verification', 10000);
 
-      // 시리얼이 포함된 행에서 상태 텍스트 확인
-      const statusTexts = await page.evaluate((sn: string) => {
-        const rows = Array.from(document.querySelectorAll('tbody tr, [role="row"]'));
-        for (let i = 0; i < rows.length; i++) {
-          const row = rows[i];
-          if (row.textContent?.includes(sn)) {
-            const cells = Array.from(row.querySelectorAll('td, [role="cell"]'));
-            return cells.map((c: Element) => (c as HTMLElement).textContent?.trim()?.toLowerCase() || '');
-          }
+      const POLL_ATTEMPTS = 5;
+      const POLL_INTERVAL_MS = 2000;
+      for (let attempt = 1; attempt <= POLL_ATTEMPTS; attempt++) {
+        const statusTexts = await this.readStatusCells(page, serialNumber);
+        lastStatusTexts = statusTexts;
+
+        const foundStatus = statusTexts.find(t => successStatuses.some(s => t.includes(s)));
+        if (foundStatus) {
+          logger.info(`[verify] ${serialNumber}: status confirmed -> "${foundStatus}" (attempt ${attempt}/${POLL_ATTEMPTS})`);
+          return { verified: true, status: foundStatus };
         }
-        return [] as string[];
-      }, serialNumber);
+        if (statusTexts.length === 0) {
+          logger.info(`[verify] ${serialNumber}: no result row (assuming cancel completed, attempt ${attempt}/${POLL_ATTEMPTS})`);
+          return { verified: true, status: 'row_removed' };
+        }
 
-      const successStatuses = ['opted out', 'expired', 'cancelled', 'canceled'];
-      const foundStatus = statusTexts.find(t => successStatuses.some(s => t.includes(s)));
-
-      if (foundStatus) {
-        logger.info(`[verify] ${serialNumber}: status confirmed -> "${foundStatus}"`);
-        return { verified: true, status: foundStatus };
+        if (attempt < POLL_ATTEMPTS) {
+          await shortPause(page, POLL_INTERVAL_MS, `verify retry ${attempt}/${POLL_ATTEMPTS}`);
+        }
       }
 
-      // 행이 사라졌거나 상태가 변경된 경우도 성공으로 간주
-      if (statusTexts.length === 0) {
-        logger.info(`[verify] ${serialNumber}: no result row (assuming cancel completed)`);
+      // 폴링으로도 확인 안 됨 — 클라이언트 캐시된 상태일 수 있으니 reload로 서버 재조회 후 마지막 시도
+      logger.warn(`[verify] ${serialNumber}: still unconfirmed after polling -> reloading for final check`);
+      await page.reload().catch(() => { });
+      await waitForSettledPage(page, 'cancel verification (post-reload)', 10000);
+      const finalStatusTexts = await this.readStatusCells(page, serialNumber);
+      lastStatusTexts = finalStatusTexts;
+
+      const finalFoundStatus = finalStatusTexts.find(t => successStatuses.some(s => t.includes(s)));
+      if (finalFoundStatus) {
+        logger.info(`[verify] ${serialNumber}: status confirmed after reload -> "${finalFoundStatus}"`);
+        return { verified: true, status: finalFoundStatus };
+      }
+      if (finalStatusTexts.length === 0) {
+        logger.info(`[verify] ${serialNumber}: no result row after reload (assuming cancel completed)`);
         return { verified: true, status: 'row_removed' };
       }
 
-      logger.warn(`[verify] ${serialNumber}: status verification failed; detected cells: ${JSON.stringify(statusTexts)}`);
-      return { verified: false, status: statusTexts.join(' | ') };
+      logger.warn(`[verify] ${serialNumber}: status verification failed; detected cells: ${JSON.stringify(finalStatusTexts)}`);
+      return { verified: false, status: finalStatusTexts.join(' | ') };
     } catch (err: unknown) {
       const errorMessage = getErrorMessage(err);
-      logger.warn(`[verify] ${serialNumber}: error - ${errorMessage}`);
+      logger.warn(`[verify] ${serialNumber}: error - ${errorMessage}; last known cells: ${JSON.stringify(lastStatusTexts)}`);
       return { verified: false, status: `error: ${errorMessage}` };
     }
   }
@@ -682,10 +987,10 @@ export class CancelService {
   // 결과 스크린샷 캡처
   // cancel 완료 후 현재 페이지 상태를 PNG로 저장
   // ============================================================
-  private async captureResultScreenshot(page: Page, serialNumber: string): Promise<string> {
+  private async captureResultScreenshot(page: Page, serialNumber: string, kind: string = 'cancel'): Promise<string> {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const filename = `cancel_${serialNumber}_${timestamp}.png`;
+      const filename = `${kind}_${serialNumber}_${timestamp}.png`;
       const filepath = path.join(getScreenshotDir(), filename);
 
       await page.screenshot({ path: filepath, fullPage: false });
@@ -785,13 +1090,17 @@ export class CancelService {
         });
       } else if (!result.success) {
         logger.warn(`[auto-cancel] FAILED: ${serial.serial_number} — ${result.error || 'unknown'}`);
-        const reason = result.error || '알 수 없는 오류';
+        // reason은 언어별로 따로 계산 — result.error는 Playwright가 던진 한국어 원문이라
+        // pickLang()으로만 감싸면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.error
+          ? localizeCancelError(result.error, lang)
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
         logActivity({
           serial_id: serial.id, action: 'system', actor: 'auto', severity: 'error', trigger_id: `auto-cancel-${serial.serial_number}`,
           details: pickLang({
-            ko: `만료 D-${daysBefore}일 자동취소 실패 — 시리얼: ${serial.serial_number}, 사유: ${reason}`,
-            en: `Pre-expiry D-${daysBefore} auto-cancel FAILED — serial: ${serial.serial_number}, reason: ${reason}`,
-            ja: `失効D-${daysBefore}日自動キャンセル失敗 — シリアル: ${serial.serial_number}, 理由: ${reason}`,
+            ko: `만료 D-${daysBefore}일 자동취소 실패 — 시리얼: ${serial.serial_number}, 사유: ${reasonByLang('ko')}`,
+            en: `Pre-expiry D-${daysBefore} auto-cancel FAILED — serial: ${serial.serial_number}, reason: ${reasonByLang('en')}`,
+            ja: `失効D-${daysBefore}日自動キャンセル失敗 — シリアル: ${serial.serial_number}, 理由: ${reasonByLang('ja')}`,
           }),
         });
         try {
@@ -828,10 +1137,14 @@ export class CancelService {
   // 각 시리얼에 대해 Playwright로 실제 사이트까지 확인 (confirm 버튼은 누르지 않음)
   // ============================================================
   async processPreExpiryDryRun(): Promise<CancelDryRunResult[]> {
+    // 자체 브라우저(dryBrowser)를 띄우므로 폴링·취소와 동시 활성화되지 않도록 전역 슬롯으로 직렬화
+    return withBrowserSlot(() => this._processPreExpiryDryRunImpl());
+  }
+
+  private async _processPreExpiryDryRunImpl(): Promise<CancelDryRunResult[]> {
     const settings = getSettings();
 
     const daysBefore = settings.auto_cancel_days_before ?? 1;
-    const today = getTodayDateString();
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + daysBefore);
     const targetDateStr = targetDate.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });

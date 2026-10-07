@@ -10,6 +10,7 @@ type CustomerMergeQuery = {
 const CUSTOMER_STRING_LIMITS = {
   name: 200,
   email: 200,
+  email_2: 200,
   phone: 200,
   address: 1000,
   dealer: 200,

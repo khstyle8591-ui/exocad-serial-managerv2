@@ -3,8 +3,8 @@ import { serialService } from './services/serial.service';
 import { cancelService, cleanOldScreenshots } from './services/cancel.service';
 import { checkInboundNow } from './services/mail/inbound.service';
 import { notificationService, buildScheduleSummary } from './services/notification.service';
-import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow } from './services/automation.service';
-import { sendTemplate as sendMailTemplate } from './services/mail/smtp.service';
+import { runAutoRenewNow, runCandidateFailsafeCancelNow, runLimboFallbackNow, runCreditAutoDistributionNow } from './services/automation.service';
+import { sendTemplate as sendMailTemplate, buildRecipients } from './services/mail/smtp.service';
 import { sendCancelCompleteNotice } from './services/mail/lifecycle-notice.service';
 import { deleteOldActivityLogs } from './services/activity-log.service';
 import { deleteExpiredSerialMailNoticeLogs, logSerialMailNotice } from './services/serial-mail-notice-log.service';
@@ -12,12 +12,11 @@ import { getSettings } from './settings';
 import { getDb } from './database';
 import { logger } from './utils/logger';
 import { getDateString, getTodayDateString, getYesterdayDateString } from './utils/date-utils';
-import type { DailyReport, CancelResult, ExpiryNoticeRule, SerialWithCustomer } from '../shared/types';
+import type { DailyReport, CancelResult, ExpiryNoticeRule, ExpiryNoticeStopRule, SerialWithCustomer } from '../shared/types';
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 let mailCheckTasks: cron.ScheduledTask[] = [];
-let dailyCancelTask: cron.ScheduledTask | null = null;
 let preExpiryCancelTask: cron.ScheduledTask | null = null;
 let autoRenewTask: cron.ScheduledTask | null = null;
 let dailyReportTasks: cron.ScheduledTask[] = [];
@@ -25,11 +24,21 @@ let monthlyReportTask: cron.ScheduledTask | null = null;
 let dailySummaryTask: cron.ScheduledTask | null = null;
 let retryCancelTask: cron.ScheduledTask | null = null;
 let expiryNoticeTask: cron.ScheduledTask | null = null;
+let creditAutoDistributeTask: cron.ScheduledTask | null = null;
+let dailyCronWatchdogTask: cron.ScheduledTask | null = null;
 
 // 하루 동안의 cancel 결과를 모아둠 (앱 재시작 대비 DB 영속)
 interface PersistedCancelResult extends CancelResult { date: string; }
 let limboCronTask: cron.ScheduledTask | null = null;
 let dailyCancelResults: PersistedCancelResult[] = [];
+
+// 인메모리 실행 락 — 예약 크론과 15분 워치독이 같은 분에 동시 발화하면(auto_cancel_time이
+// :00/:15/:30/:45 경계일 때) 일일 가드(getJobLastRunDate 체크~setJobLastRunDate 세팅 사이의
+// 긴 await 갭)가 원자적이지 않아 둘 다 통과, 사전취소/Limbo가 이중 실행되어 같은 시리얼을
+// 두 번 취소 시도한다(두 번째는 이미 취소돼 실패 → false critical alert). PM2 단일 프로세스
+// 기준으로 이 플래그가 동시 진입을 막는다(크래시 시 재시도는 워치독이 그대로 담당).
+let preExpiryCancelRunning = false;
+let limboFallbackRunning = false;
 // lastReportSentDate를 메모리에만 두면 앱 재시작 시 초기화되어 중복 리포트 발송.
 // DB settings에 영속화하여 재시작 후에도 중복 방지.
 function getLastReportSentDate(): string {
@@ -177,32 +186,6 @@ export function startScheduler(): void {
   // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
   startMailCheck();
 
-   // [제거됨] 2. 매일 자정에 만료된 시리얼 cancel 처리 (새벽 리포트 폭풍의 원인)
-   // 대신 실패 건만 재시도하는 로직이 startPreExpiryTask 내에서 별도로 스케줄링됩니다.
-  /*
-  dailyCancelTask = cron.schedule('0 0 * * *', async () => {
-    const settings = getSettings();
-    if (!settings.auto_cancel_enabled) {
-      logger.info('Expired serial cancel task is disabled (skip)');
-      return;
-    }
-
-    logger.info('Expired serial cancel task started');
-    try {
-      const results = await cancelService.processExpiredSerials();
-      dailyCancelResults.push(...results);
-      logger.info(`Cancel task completed: success=${results.filter(r => r.success).length}, failed=${results.filter(r => !r.success).length}`);
-
-      // cancel 결과를 개별적으로 Slack으로 전송
-      for (const result of results) {
-        await notificationService.sendCancelResultSlack(result).catch(() => { });
-      }
-    } catch (err: unknown) {
-      logger.error(`Cancel task error: ${getErrorMessage(err)}`);
-    }
-  }, { timezone: 'Asia/Tokyo' });
-  */
-
   // 3. 설정된 시각에 만료 N일 전 자동 cancel (갱신 중단 요청이 있으면)
   startPreExpiryTask();
 
@@ -242,8 +225,24 @@ export function startScheduler(): void {
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
   limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo' });
 
+  // 6-a. 일일 크론 워치독 — 15분마다 사전취소/Limbo가 오늘 실행됐는지 재확인.
+  // node-cron이 특정 틱에서 콜백을 놓치는 경우(이벤트루프 지연 등) 대비한 세이프티넷.
+  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo' });
+
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
+
+  // 6-b. 포털 크레딧 자동배분 — 매 1분마다 스캔(신청 후 5분 유예, 자동배분 토글은 함수 내부에서 확인)
+  creditAutoDistributeTask = cron.schedule('* * * * *', async () => {
+    try {
+      const result = await runCreditAutoDistributionNow();
+      if (result.processed > 0) {
+        logger.info(`[credit-auto-distribute] completed: processed=${result.processed}, success=${result.success}, failed=${result.failed}`);
+      }
+    } catch (err: unknown) {
+      logger.error(`[credit-auto-distribute] error: ${getErrorMessage(err)}`);
+    }
+  }, { timezone: 'Asia/Tokyo' });
 
   // 8. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
@@ -333,6 +332,11 @@ async function runLimboFallbackOnce(): Promise<void> {
     logger.info('[Limbo] already ran today, skip');
     return;
   }
+  if (limboFallbackRunning) {
+    logger.warn('[Limbo] already running — skipping concurrent invocation');
+    return;
+  }
+  limboFallbackRunning = true;
 
   logger.info('[Limbo] fallback started');
   try {
@@ -344,8 +348,46 @@ async function runLimboFallbackOnce(): Promise<void> {
     }
   } catch (err: unknown) {
     logger.error(`[Limbo] error: ${getErrorMessage(err)}`);
+  } finally {
+    setJobLastRunDate('limbo_fallback', today);
+    limboFallbackRunning = false;
   }
-  setJobLastRunDate('limbo_fallback', today);
+}
+
+// 15분마다 실행되는 워치독 — 서버 재시작 없이도 하루 중간에 사전취소/Limbo 크론이
+// 누락됐는지 재확인한다. node-cron의 내부 스케줄러는 이벤트루프가 특정 초에 지연되면
+// (autorecover 옵션 미사용 시) 그 틱을 영구히 스킵하는 한계가 있어, 라이브러리 동작에
+// 의존하지 않는 별도 세이프티넷으로 둔다. runPreExpiryCancelOnce/runLimboFallbackOnce는
+// 이미 "오늘 실행함" 가드가 있어 중복 호출돼도 안전(idempotent)하다.
+async function runDailyCronWatchdog(): Promise<void> {
+  try {
+    const today = getTodayDateString();
+    const settings = getSettings();
+    const cancelTime = settings.auto_cancel_time || '09:00';
+    if (
+      settings.auto_cancel_enabled &&
+      hasScheduledTimePassedToday(cancelTime) &&
+      getJobLastRunDate('pre_expiry_cancel') !== today
+    ) {
+      logger.warn(`[Watchdog] pre-expiry auto-cancel missed today's ${cancelTime} run — executing now`);
+      await runPreExpiryCancelOnce();
+      await sleep(10_000); // Playwright 연속 실행 방지 (e2-micro 부하 고려)
+      await retryFailedCancellations();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  }
+
+  try {
+    const today = getTodayDateString();
+    if (hasScheduledTimePassedToday('03:00') && getJobLastRunDate('limbo_fallback') !== today) {
+      logger.warn("[Watchdog] limbo fallback missed today's 03:00 run — executing now");
+      await sleep(10_000);
+      await runLimboFallbackOnce();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] limbo fallback error: ${getErrorMessage(err)}`);
+  }
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -390,6 +432,11 @@ async function runPreExpiryCancelOnce(): Promise<void> {
     logger.info('[PreExpiryCancel] already ran today, skip');
     return;
   }
+  if (preExpiryCancelRunning) {
+    logger.warn('[PreExpiryCancel] already running — skipping concurrent invocation');
+    return;
+  }
+  preExpiryCancelRunning = true;
 
   logger.info('Pre-expiry auto-cancel check started');
   try {
@@ -419,8 +466,10 @@ async function runPreExpiryCancelOnce(): Promise<void> {
     }
   } catch (err: unknown) {
     logger.error(`Pre-expiry auto-cancel error: ${getErrorMessage(err)}`);
+  } finally {
+    setJobLastRunDate('pre_expiry_cancel', today);
+    preExpiryCancelRunning = false;
   }
-  setJobLastRunDate('pre_expiry_cancel', today);
 }
 
 /**
@@ -572,6 +621,28 @@ function normalizeExpiryNoticeRules(settings: ReturnType<typeof getSettings>): E
     .map(day => ({ id: `d${day}`, days_before: day, renewal_template: fallbackTemplate }));
 }
 
+// 갱신 중단(renewal_stop_requested=1) 시리얼 전용 만료 예고 룰. 정상 룰과 독립적으로 관리된다.
+function normalizeExpiryNoticeStopRules(settings: ReturnType<typeof getSettings>): ExpiryNoticeStopRule[] {
+  const fallbackTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
+  const rawRules = Array.isArray(settings.expiry_notice_stop_rules) ? settings.expiry_notice_stop_rules : [];
+  const fromRules = rawRules
+    .map((rule: Partial<ExpiryNoticeStopRule>) => ({
+      id: String(rule.id || `s${rule.days_before ?? ''}`),
+      days_before: Number(rule.days_before),
+      stop_template: String(rule.stop_template || fallbackTemplate),
+    }))
+    .filter(rule => Number.isInteger(rule.days_before) && rule.days_before >= 0 && rule.days_before <= 365 && !!rule.stop_template);
+
+  if (fromRules.length > 0) {
+    return Array.from(new Map(fromRules.map(rule => [rule.id, rule])).values())
+      .sort((a, b) => b.days_before - a.days_before);
+  }
+
+  // 안전망: stop 룰이 비어 있으면 정상 룰의 발송일 × 단일 stop 템플릿으로 대체 (조용한 발송 중단 방지).
+  return normalizeExpiryNoticeRules(settings)
+    .map(rule => ({ id: `s${rule.days_before}`, days_before: rule.days_before, stop_template: fallbackTemplate }));
+}
+
 function buildExpiryNoticeVars(serial: SerialWithCustomer | null, today: string): Record<string, string> {
   if (!serial) {
     return {
@@ -600,6 +671,53 @@ function buildExpiryNoticeVars(serial: SerialWithCustomer | null, today: string)
     DEALER: serial.customer.dealer,
     SALES_MANAGER: serial.customer.sales_manager,
   };
+}
+
+// 만료 예고 메일 1건 발송 + 로깅 (정상/중단 공용).
+async function sendOneExpiryNotice(
+  serial: SerialWithCustomer,
+  code: string,
+  daysBefore: number,
+  kind: 'expiry_renewal' | 'expiry_stop',
+  todayStr: string,
+): Promise<void> {
+  const recipients = buildRecipients(serial.customer.email, serial.customer.email_2);
+  try {
+    const result = await sendMailTemplate(
+      code,
+      recipients,
+      buildExpiryNoticeVars(serial, todayStr),
+      { serial_id: serial.id, actor: 'auto' }
+    );
+    logSerialMailNotice({
+      serial_id: serial.id,
+      serial_number: serial.serial_number,
+      template_code: code,
+      notice_kind: kind,
+      days_before: daysBefore,
+      recipient_email: recipients,
+      status: result.success ? 'sent' : 'failed',
+      message: result.message,
+    });
+    if (result.success) {
+      logger.info(`[ExpiryNotice] D-${daysBefore} ${kind} sent: ${serial.serial_number} -> ${recipients} (${code})`);
+    } else {
+      logger.error(`[ExpiryNotice] D-${daysBefore} ${kind} failed: ${serial.serial_number} - ${result.message}`);
+    }
+  } catch (err: unknown) {
+    const message = getErrorMessage(err);
+    logSerialMailNotice({
+      serial_id: serial.id,
+      serial_number: serial.serial_number,
+      template_code: code,
+      notice_kind: kind,
+      days_before: daysBefore,
+      recipient_email: recipients,
+      status: 'failed',
+      message,
+    });
+    logger.error(`[ExpiryNotice] ${kind} failed: ${serial.serial_number} - ${message}`);
+  }
 }
 
 // 만료 예고 메일 스케줄 시작 (설정된 시각/템플릿 기반)
@@ -631,66 +749,30 @@ async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Pr
   logger.info('[ExpiryNotice] expiry notice email started');
   {
     const now = new Date();
-    const rules = normalizeExpiryNoticeRules(settings);
-    const stopTemplate = settings.expiry_notice_stop_template || 'stop_expiry_reminder';
+    const renewalRules = normalizeExpiryNoticeRules(settings);
+    const stopRules = normalizeExpiryNoticeStopRules(settings);
     const tokyoDateStr = (daysAhead: number): string =>
       new Date(now.getTime() + daysAhead * 86400000)
         .toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const todayStr = tokyoDateStr(0);
 
-    for (const rule of rules) {
+    // 1) 정상 갱신 안내 — 중단 요청이 없는 시리얼만.
+    for (const rule of renewalRules) {
       const targetDate = tokyoDateStr(rule.days_before);
       const serials = serialService.getExpiringSerialsOnDate(targetDate)
-        .filter(s => s.customer.email);
-
+        .filter(s => s.customer.email && !s.renewal_stop_requested && s.mail_expiry_notice_enabled);
       for (const serial of serials) {
-        const code = serial.renewal_stop_requested ? stopTemplate : rule.renewal_template;
-        try {
-          const result = await sendMailTemplate(
-            code,
-            serial.customer.email,
-            buildExpiryNoticeVars(serial, tokyoDateStr(0)),
-            { serial_id: serial.id, actor: 'auto' }
-          );
+        await sendOneExpiryNotice(serial, rule.renewal_template, rule.days_before, 'expiry_renewal', todayStr);
+      }
+    }
 
-          if (result.success) {
-            logSerialMailNotice({
-              serial_id: serial.id,
-              serial_number: serial.serial_number,
-              template_code: code,
-              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-              days_before: rule.days_before,
-              recipient_email: serial.customer.email,
-              status: 'sent',
-              message: result.message,
-            });
-            logger.info(`[ExpiryNotice] D-${rule.days_before} email sent: ${serial.serial_number} -> ${serial.customer.email} (${code})`);
-          } else {
-            logSerialMailNotice({
-              serial_id: serial.id,
-              serial_number: serial.serial_number,
-              template_code: code,
-              notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-              days_before: rule.days_before,
-              recipient_email: serial.customer.email,
-              status: 'failed',
-              message: result.message,
-            });
-            logger.error(`[ExpiryNotice] D-${rule.days_before} send failed: ${serial.serial_number} - ${result.message}`);
-          }
-        } catch (err: unknown) {
-          const message = getErrorMessage(err);
-          logSerialMailNotice({
-            serial_id: serial.id,
-            serial_number: serial.serial_number,
-            template_code: code,
-            notice_kind: serial.renewal_stop_requested ? 'expiry_stop' : 'expiry_renewal',
-            days_before: rule.days_before,
-            recipient_email: serial.customer.email,
-            status: 'failed',
-            message,
-          });
-          logger.error(`[ExpiryNotice] send failed: ${serial.serial_number} - ${message}`);
-        }
+    // 2) 중단 안내 — 중단 요청된 시리얼만 (독립 발송일/템플릿). 위 루프와 필터가 상호배타라 이중발송 없음.
+    for (const rule of stopRules) {
+      const targetDate = tokyoDateStr(rule.days_before);
+      const serials = serialService.getExpiringSerialsOnDate(targetDate)
+        .filter(s => s.customer.email && s.renewal_stop_requested && s.mail_expiry_notice_enabled);
+      for (const serial of serials) {
+        await sendOneExpiryNotice(serial, rule.stop_template, rule.days_before, 'expiry_stop', todayStr);
       }
     }
   }
@@ -798,7 +880,16 @@ async function catchUpDailyReports(): Promise<void> {
 // 서버 시작 시 1회 — VM 점검 등으로 다운된 동안 오늘 스케줄을 놓친 작업을 순차적으로 보정.
 // 자연히 따라잡는 작업(autoRenew/limbo/정리작업)은 대상에서 제외 — 정확한 날짜를 조회해
 // 그날을 놓치면 영구 손실되는 작업(만료예고메일/사전취소)과 전일자 리포트만 다룬다.
+//
+// 운영(production) 전용 안전장치다. dev DB는 항상 "오늘 기준 뒤처진" 스냅샷이므로 이 게이트가
+// 없으면 로컬 dev 서버를 켤 때마다 실제 고객 메일 발송·실제 exocad.com 구독취소(Playwright)가
+// 재실행될 수 있다 (2026-09-16 로컬 실행에서 일일리포트 재발송이 실제로 발생한 사고 재발 방지).
 async function runStartupCatchup(): Promise<void> {
+  if (process.env.NODE_ENV !== 'production') {
+    logger.info('[Catchup] skipped — not running in production (NODE_ENV != production)');
+    return;
+  }
+
   try {
     logger.info('[Catchup] running inbound mail check on startup');
     await checkInboundNow();
@@ -891,7 +982,6 @@ export function startDailyReportTasks(): void {
 export function stopScheduler(): void {
   for (const task of mailCheckTasks) task.stop();
   if (limboCronTask) limboCronTask.stop();
-  if (dailyCancelTask) dailyCancelTask.stop();
   if (preExpiryCancelTask) preExpiryCancelTask.stop();
   if (autoRenewTask) autoRenewTask.stop();
   if (expiryNoticeTask) expiryNoticeTask.stop();
@@ -899,5 +989,7 @@ export function stopScheduler(): void {
   if (monthlyReportTask) monthlyReportTask.stop();
   if (dailySummaryTask) dailySummaryTask.stop();
   if (retryCancelTask) retryCancelTask.stop();
+  if (creditAutoDistributeTask) creditAutoDistributeTask.stop();
+  if (dailyCronWatchdogTask) dailyCronWatchdogTask.stop();
   logger.info('Scheduler stopped');
 }

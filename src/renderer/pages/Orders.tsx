@@ -3,6 +3,7 @@ import { useLang } from '../App';
 import { t } from '../i18n';
 import type { Language } from '../i18n';
 import { api } from '../client';
+import { translateServerError } from '../utils/serverError';
 
 import type { PendingOrder, Serial, SerialWithCustomer } from '../../shared/types';
 
@@ -69,7 +70,7 @@ export default function Orders() {
         if (res.success) {
           alert(t(lang, 'orders_approve_success'));
         } else {
-          alert(`${t(lang, 'orders_approve_fail')}${res.error}`);
+          alert(`${t(lang, 'orders_approve_fail')}${translateServerError(res.error, lang)}`);
         }
       } else if (mode === 'update') {
         const res = await api.updateDataOrder(updated.id, updated) as UpdateDataResult;
@@ -82,7 +83,7 @@ export default function Orders() {
             .replace('{version}', d.version)
             .replace('{expiry}', d.expiry_date ?? ''));
         } else {
-          alert(t(lang, 'orders_update_fail').replace('{error}', res.error));
+          alert(t(lang, 'orders_update_fail').replace('{error}', res.error ?? ''));
         }
       }
     } catch (e: unknown) {

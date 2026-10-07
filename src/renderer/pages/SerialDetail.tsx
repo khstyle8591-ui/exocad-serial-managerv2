@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import type { SerialMailNoticeLog, SerialWithCustomer } from '../../shared/types';
+import type { ActivityLog, SerialMailNoticeLog, SerialMailSettings, SerialWithCustomer } from '../../shared/types';
 import { useLang } from '../App';
-import { t } from '../i18n';
+import { t, actionLabel, actorLabel } from '../i18n';
 import SerialForm from '../components/SerialForm';
 import ConfirmModal from '../components/ConfirmModal';
 import ModuleListEditor from '../components/ModuleListEditor';
@@ -21,6 +21,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [mailLogs, setMailLogs] = useState<SerialMailNoticeLog[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [showHistory, setShowHistory] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [confirm, setConfirm] = useState<{
     title: string; message: string; label: string; danger?: boolean; action: () => Promise<void>;
@@ -33,6 +35,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
       setSerial(s);
       const logs = await api.listSerialMailNoticeLogs(serialId) as SerialMailNoticeLog[];
       setMailLogs(logs);
+      const acts = await api.listSerialActivityLogs(serialId) as ActivityLog[];
+      setActivityLogs(acts);
     } catch (e: any) {
       setError(e?.message ?? t(lang, 'load_failed'));
     }
@@ -58,6 +62,16 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
 
   const ask = (cfg: typeof confirm) => setConfirm(cfg);
 
+  const setMail = async (patch: SerialMailSettings) => {
+    if (!serial) return;
+    try {
+      const r = await api.updateSerialMailSettings(serial.id, patch);
+      if (r) { setSerial(r); onUpdated(r); }
+    } catch (e: any) {
+      alert(e?.message ?? t(lang, 'error_occurred'));
+    }
+  };
+
   if (loading) return <div style={{ padding: 40, color: 'var(--text3)' }}>{t(lang, 'loading')}</div>;
   if (error || !serial) return (
     <div style={{ padding: 40 }}>
@@ -70,7 +84,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const isStop = serial.renewal_stop_requested === 1;
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 800 }}>
+    <div style={{ padding: '24px 28px', maxWidth: 800, height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <button onClick={onBack} style={backBtn}>{t(lang, 'btn_back')}</button>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
@@ -147,8 +161,8 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             danger: !isStop,
             action: async () => {
               setBusy('stop');
-              await api.setStopRequested(serial.id, !isStop);
-              await reload();
+              const r = await api.setStopRequested(serial.id, !isStop);
+              if (r) { setSerial(r); onUpdated(r); }
             },
           })}
         />
@@ -166,8 +180,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
             label: t(lang, 'delete'),
             danger: true,
             action: async () => {
-              const r = await api.deleteSerial(serial.id);
-              if (!r.success) { alert(r.error ?? t(lang, 'delete')); return; }
+              await api.deleteSerial(serial.id);
               onDeleted(serial.id);
             },
           })}
@@ -210,6 +223,16 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
         </div>
       )}
 
+      <Card title={t(lang, 'section_mail_settings')} style={{ marginTop: 16 }}>
+        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text3)' }}>{t(lang, 'mail_settings_hint')}</p>
+        <MailToggle label={t(lang, 'mail_toggle_expiry')} on={serial.mail_expiry_notice_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_expiry_notice_enabled: v })} />
+        <MailToggle label={t(lang, 'mail_toggle_order')} on={serial.mail_order_form_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_order_form_enabled: v })} />
+        <MailToggle label={t(lang, 'mail_toggle_lifecycle')} on={serial.mail_lifecycle_notice_enabled === 1} lang={lang}
+          onChange={v => setMail({ mail_lifecycle_notice_enabled: v })} last />
+      </Card>
+
       <Card title={t(lang, 'section_mail_notice_history')} style={{ marginTop: 16 }}>
         {mailLogs.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>{t(lang, 'mail_notice_history_empty')}</p>
@@ -246,6 +269,29 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
           </div>
         )}
       </Card>
+
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg2)', marginTop: 16 }}>
+        <button
+          onClick={() => setShowHistory(v => !v)}
+          style={{
+            width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: 16, background: 'transparent', border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          <span>{t(lang, 'section_activity_history')} ({activityLogs.length})</span>
+          <span style={{ fontSize: 11 }}>{showHistory ? '▼' : '▶'}</span>
+        </button>
+        {showHistory && (
+          <div style={{ padding: '0 16px 12px', maxHeight: 380, overflow: 'auto' }}>
+            {activityLogs.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)' }}>{t(lang, 'activity_history_empty')}</p>
+            ) : (
+              activityLogs.map(log => <ActivityRow key={log.id} log={log} lang={lang} />)
+            )}
+          </div>
+        )}
+      </div>
 
       {showEdit && (
         <SerialForm
@@ -297,6 +343,85 @@ function ActionButton({ label, color, busy, lang, onClick }: {
     }}>
       {busy ? t(lang, 'processing') : label}
     </button>
+  );
+}
+
+function MailToggle({ label, on, lang, onChange, last }: {
+  label: string; on: boolean; lang: import('../i18n').Language; onChange: (v: boolean) => void; last?: boolean;
+}) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '8px 0', borderBottom: last ? 'none' : '1px solid var(--border)',
+    }}>
+      <span style={{ fontSize: 13, color: 'var(--text)' }}>{label}</span>
+      <button
+        onClick={() => onChange(!on)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
+      >
+        <span style={{
+          width: 36, height: 20, borderRadius: 10, display: 'inline-block', position: 'relative',
+          background: on ? 'var(--accent)' : 'var(--border2)', transition: 'background 0.15s',
+        }}>
+          <span style={{
+            position: 'absolute', top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.15s',
+          }} />
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, minWidth: 26, textAlign: 'left', color: on ? 'var(--accent)' : 'var(--text3)' }}>
+          {on ? t(lang, 'mail_toggle_on') : t(lang, 'mail_toggle_off')}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function formatDiff(diffJson: string): string {
+  try {
+    const d = JSON.parse(diffJson) as Record<string, unknown>;
+    const parts = Object.entries(d).map(([field, val]) =>
+      Array.isArray(val)
+        ? `${field}: ${val[0] ?? '∅'} → ${val[1] ?? '∅'}`
+        : `${field}: ${JSON.stringify(val)}`
+    );
+    return parts.join(', ');
+  } catch {
+    return '';
+  }
+}
+
+const ACTOR_COLOR: Record<string, string> = {
+  manual: 'var(--accent)',
+  auto: 'var(--blue)',
+  email: 'var(--text3)',
+  polling: '#fbbf24',
+  system: '#a78bfa',
+};
+
+function ActivityRow({ log, lang }: { log: ActivityLog; lang: import('../i18n').Language }) {
+  const sevColor = (log.severity === 'critical' || log.severity === 'error')
+    ? 'var(--red)'
+    : log.severity === 'warn' ? '#fbbf24' : 'var(--text)';
+  const diffText = formatDiff(log.diff);
+  const actorColor = ACTOR_COLOR[log.actor] ?? 'var(--text3)';
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '124px 52px minmax(0, 1fr)', gap: 10,
+      alignItems: 'start', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 12,
+    }}>
+      <span style={{ color: 'var(--text2)', fontFamily: "'JetBrains Mono', monospace" }}>{log.created_at.slice(0, 16)}</span>
+      <span style={{
+        justifySelf: 'start', padding: '1px 7px', borderRadius: 8, fontSize: 10, fontWeight: 600,
+        background: `${actorColor}1f`, color: actorColor, whiteSpace: 'nowrap',
+      }}>
+        {actorLabel(lang, log.actor)}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <span style={{ fontWeight: 600, color: sevColor }}>{actionLabel(lang, log.action)}</span>
+        {log.details && <span style={{ color: 'var(--text2)' }}> — {log.details}</span>}
+        {diffText && <div style={{ color: 'var(--text3)', marginTop: 2, overflowWrap: 'anywhere' }}>{diffText}</div>}
+      </div>
+    </div>
   );
 }
 

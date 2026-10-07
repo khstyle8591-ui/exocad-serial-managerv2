@@ -1,7 +1,7 @@
 import { getSettings } from '../../settings';
 import { serialService } from '../serial.service';
 import { logger } from '../../utils/logger';
-import { sendTemplate } from './smtp.service';
+import { sendTemplate, buildRecipients } from './smtp.service';
 import type { SerialWithCustomer } from '../../../shared/types';
 
 type NoticeKind = 'stop_request' | 'cancel_complete';
@@ -53,6 +53,7 @@ function pickSampleSerial(kind: NoticeKind): SerialWithCustomer | null {
 export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer): Promise<void> {
   const settings = getSettings();
   if (settings.stop_request_notice_enabled === false) return;
+  if (!serial.mail_lifecycle_notice_enabled) return;   // 시리얼별 토글 (자동 발송 차단)
   if (!serial.customer.email) {
     logger.warn(`[mail] stop request notice skipped: no customer email (${serial.serial_number})`);
     return;
@@ -61,7 +62,7 @@ export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer):
   const template = settings.stop_request_notice_template || 'stop_request_received';
   const result = await sendTemplate(
     template,
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial),
     { serial_id: serial.id, actor: 'auto' }
   );
@@ -73,6 +74,7 @@ export async function sendStopRequestReceivedNotice(serial: SerialWithCustomer):
 export async function sendCancelCompleteNotice(serial: SerialWithCustomer): Promise<void> {
   const settings = getSettings();
   if (settings.cancel_complete_notice_enabled === false) return;
+  if (!serial.mail_lifecycle_notice_enabled) return;   // 시리얼별 토글 (자동 발송 차단)
   if (!serial.customer.email) {
     logger.warn(`[mail] cancel complete notice skipped: no customer email (${serial.serial_number})`);
     return;
@@ -81,7 +83,7 @@ export async function sendCancelCompleteNotice(serial: SerialWithCustomer): Prom
   const template = settings.cancel_complete_notice_template || 'cancel_confirmation';
   const result = await sendTemplate(
     template,
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial),
     { serial_id: serial.id, actor: 'auto' }
   );
@@ -101,7 +103,7 @@ export async function sendManualRenewalConfirmNotice(
 
   const result = await sendTemplate(
     'manual_renewal_confirm',
-    serial.customer.email,
+    buildRecipients(serial.customer.email, serial.customer.email_2),
     buildSerialTemplateVars(serial, { PREVIOUS_EXPIRY_DATE: previousExpiryDate ?? '' }),
     { serial_id: serial.id, actor: 'manual' }
   );

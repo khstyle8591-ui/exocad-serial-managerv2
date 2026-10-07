@@ -11,11 +11,20 @@ interface CreditPackage {
   price: number;
 }
 
-interface LocalizedText { ko: string; en: string; ja: string }
+interface LocalizedText { ko: string; en: string; ja: string; color?: string; fontSize?: number; bold?: boolean }
 interface RequestDescriptions {
   credit: LocalizedText;
   renewal_stop: LocalizedText;
   renewal_resume: LocalizedText;
+}
+
+function msgStyle(msg: LocalizedText | null | undefined, fallbackColor?: string): React.CSSProperties {
+  return {
+    color: msg?.color || fallbackColor,
+    fontSize: msg?.fontSize || 13,
+    fontWeight: msg?.bold ? 700 : 400,
+    whiteSpace: 'pre-wrap',
+  };
 }
 
 interface OwnedSerial {
@@ -47,6 +56,9 @@ function statusBadge(status: string, note: string, lang: Lang) {
   if (status === 'approved' && note === 'cancel_rejected') {
     return <span className="badge badge-red">{t(lang, 'req_status_cancel_rejected')}</span>;
   }
+  if (status === 'rejected' && note === 'duplicate') {
+    return <span className="badge badge-gray">{t(lang, 'req_status_duplicate')}</span>;
+  }
   const map: Record<string, { cls: string; key: Parameters<typeof t>[1] }> = {
     pending:        { cls: 'badge-yellow', key: 'req_status_pending' },
     manager_review: { cls: 'badge-blue',   key: 'req_status_manager_review' },
@@ -74,8 +86,13 @@ function renewalStopStatusBadge(status: string, note: string, lang: Lang) {
     return <span className="badge badge-green">{t(lang, 'req_status_approved')}</span>;
   }
   if (status === 'rejected') {
-    if (note === 'playwright_failed') {
+    // playwright_failed를 매니저가 dismiss(수동 처리)한 경우에도 고객에게는 기존 "처리 실패" 표시를 유지
+    // (dismiss는 매니저 큐 정리용 내부 동작 — 고객 화면을 갑자기 "거절됨"으로 바꾸지 않는다)
+    if (note === 'playwright_failed' || note === 'dismissed') {
       return <span className="badge badge-red">{t(lang, 'renewal_stop_failed')}</span>;
+    }
+    if (note === 'duplicate') {
+      return <span className="badge badge-gray">{t(lang, 'req_status_duplicate')}</span>;
     }
     return <span className="badge badge-red">{t(lang, 'req_status_rejected')}</span>;
   }
@@ -123,6 +140,7 @@ export default function RequestsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [successStyle, setSuccessStyle] = useState<React.CSSProperties>({});
   const [warning, setWarning] = useState('');
   const [showFailurePopup, setShowFailurePopup] = useState(false);
   const [showAlreadyRequestedPopup, setShowAlreadyRequestedPopup] = useState(false);
@@ -184,6 +202,9 @@ export default function RequestsPage() {
   function desc(type: keyof RequestDescriptions) {
     return descriptions ? descriptions[type][lang] : '';
   }
+  function descMsg(type: keyof RequestDescriptions) {
+    return descriptions ? descriptions[type] : null;
+  }
 
   async function submitCredit(e: React.FormEvent) {
     e.preventDefault();
@@ -198,7 +219,7 @@ export default function RequestsPage() {
       setTab('history');
       reloadRequests();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(t(lang, err instanceof Error ? err.message as Parameters<typeof t>[1] : 'error_generic'));
     } finally {
       setSubmitting(false);
     }
@@ -226,7 +247,7 @@ export default function RequestsPage() {
       setTab('history');
       reloadRequests();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(t(lang, err instanceof Error ? err.message as Parameters<typeof t>[1] : 'error_generic'));
     } finally {
       setSubmitting(false);
     }
@@ -249,8 +270,10 @@ export default function RequestsPage() {
       }
       if (includeQuote && quoteSent) {
         setSuccess(quoteSent[lang]);
+        setSuccessStyle(msgStyle(quoteSent));
       } else {
         setSuccess(`${t(lang, 'request_submitted')} (${t(lang, 'request_no')}: #${ids.join(', #')})`);
+        setSuccessStyle({});
       }
       setCheckedSerials({});
       setShowQuotePrompt(false);
@@ -296,7 +319,7 @@ export default function RequestsPage() {
       </div>
 
       {error   && <div className="alert alert-error">{error}</div>}
-      {success && <div className="alert alert-success">{success}</div>}
+      {success && <div className="alert alert-success" style={successStyle}>{success}</div>}
       {warning && <div className="alert alert-warn">{warning}</div>}
 
       <Modal
@@ -364,7 +387,7 @@ export default function RequestsPage() {
       {/* Credit */}
       {tab === 'credit' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20 }}>
+          <p style={{ ...msgStyle(descMsg('credit'), '#ffffff'), marginBottom: 20 }}>
             {desc('credit')}
           </p>
           <form onSubmit={submitCredit}>
@@ -406,7 +429,7 @@ export default function RequestsPage() {
       {/* Renewal Stop */}
       {tab === 'renewal_stop' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 20 }}>
+          <p style={{ ...msgStyle(descMsg('renewal_stop')), marginBottom: 20 }}>
             {desc('renewal_stop')}
           </p>
           <form onSubmit={submitRenewalStop}>
@@ -430,7 +453,7 @@ export default function RequestsPage() {
       {/* Renewal Resume */}
       {tab === 'renewal_resume' && (
         <div className="portal-card">
-          <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 16 }}>
+          <p style={{ ...msgStyle(descMsg('renewal_resume')), marginBottom: 16 }}>
             {desc('renewal_resume')}
           </p>
 
@@ -466,7 +489,7 @@ export default function RequestsPage() {
 
               {/* 2단계 견적서 안내 프롬프트 */}
               {showQuotePrompt && quotePrompt && (
-                <div className="alert alert-info" style={{ marginBottom: 16 }}>
+                <div className="alert alert-info" style={{ ...msgStyle(quotePrompt), marginBottom: 16 }}>
                   {quotePrompt[lang]}
                 </div>
               )}

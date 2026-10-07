@@ -26,7 +26,7 @@ export default function LoginPage() {
       await refresh();
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
+      setError(t(lang, err instanceof Error ? err.message as Parameters<typeof t>[1] : 'error_generic'));
     } finally {
       setLoading(false);
     }

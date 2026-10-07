@@ -6,6 +6,7 @@ export interface Account {
   id: number;
   login_id: string;
   email: string;
+  email_2: string;
   phone: string;
   address: string;
   name: string;

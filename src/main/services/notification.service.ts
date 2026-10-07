@@ -1,10 +1,10 @@
-import nodemailer from 'nodemailer';
 import https from 'https';
 import http from 'http';
-import fs from 'fs';
 import path from 'path';
 import { getSettings } from '../settings';
 import { logger } from '../utils/logger';
+import { sendTemplate, buildTransporter as buildMailTransporter, buildFrom as buildMailFrom } from './mail/smtp.service';
+import { recordSentMail } from './sent-mail-log.service';
 import type { AppSettings, DailyReport, MonthlyExpiryReport, SerialWithCustomer, CancelResult, LocalizedText } from '../../shared/types';
 
 type SettingsOverride = Partial<AppSettings>;
@@ -12,25 +12,10 @@ type EffectiveSettings = ReturnType<typeof getSettings>;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-function cleanSettingsOverride(settingsOverride?: SettingsOverride): SettingsOverride {
-  return Object.fromEntries(
-    Object.entries(settingsOverride || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
-  ) as SettingsOverride;
-}
-
-function buildSmtpFrom(settings: ReturnType<typeof getSettings>) {
-  const name = (settings.smtp_from_name || 'Exocad Manager').trim();
-  return settings.smtp_user ? { name, address: settings.smtp_user } : settings.smtp_host;
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// CERT_DOMAIN 환경변수 미설정 시 사용하는 폴백 도메인 (Slack 스크린샷/메일 링크용).
+// 2026-06-30 exocadai.geomedi.co.jp 고정도메인 전환 이후 Caddy가 HTTPS를 대신 처리하면서
+// CERT_DOMAIN을 설정할 일이 없어져, 옛 Cloudflare 시절 duckdns 도메인이 계속 남아있었다.
+const FALLBACK_DOMAIN = 'exocadai.geomedi.co.jp';
 
 function parseModules(modulesJson: string): string[] {
   try {
@@ -42,7 +27,7 @@ function parseModules(modulesJson: string): string[] {
 }
 
 // ─── Slack 메시지 다국어 사전 ────────────────────────────────────────────────
-type SlackLang = 'ko' | 'en' | 'ja';
+export type SlackLang = 'ko' | 'en' | 'ja';
 
 const S: Record<SlackLang, Record<string, string>> = {
   ko: {
@@ -85,8 +70,14 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[재시도 실패]',
     menu_button_missing: '옵션 버튼(menu-button)을 찾을 수 없습니다. 시리얼: {serial}',
     serial_not_found: '검색 결과에서 대상 시리얼을 찾지 못했습니다. 시리얼: {serial}',
+    login_user_missing: 'Exocad 사용자 이름이 설정되지 않았습니다.',
+    login_pass_missing: 'Exocad 비밀번호가 설정되지 않았습니다.',
+    login_failed: '로그인 실패: 이메일 또는 비밀번호를 확인하세요',
+    session_expired: '로그인 세션이 만료되었습니다. 다시 로그인 절차가 필요합니다.',
+    search_input_failed: '검색창에 시리얼 번호 입력 실패. 시리얼: {serial}',
+    confirm_button_missing: '확인 팝업 버튼을 찾을 수 없습니다. 시리얼: {serial}',
+    dropdown_button_missing: '드롭다운에서 취소 버튼을 찾을 수 없습니다. 시리얼: {serial}',
     related_mail: '🔔 *관련 메일 수신 알림*\n💡 설정에 지정된 단어(`{kws}`)가 포함된 메일이 수신되었습니다.\n• 수신 시각: {time}\n• 발신자: {from}\n• 제목: {subject}\n• 내용 보기: {link}',
-    scheduler_start: '🚀 *Exocad Manager 스케줄러 기동 완료*\n{details}',
   },
   en: {
     sched_mail_check: 'Mail Check',
@@ -128,8 +119,14 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[Retry failed]',
     menu_button_missing: 'Could not find the option button (menu-button). Serial: {serial}',
     serial_not_found: 'Target serial not found in search results. Serial: {serial}',
+    login_user_missing: 'Exocad username is not configured.',
+    login_pass_missing: 'Exocad password is not configured.',
+    login_failed: 'Login failed: please check the email or password',
+    session_expired: 'Login session has expired. Login is required again.',
+    search_input_failed: 'Failed to enter the serial number in the search box. Serial: {serial}',
+    confirm_button_missing: 'Could not find the confirmation popup button. Serial: {serial}',
+    dropdown_button_missing: 'Could not find the cancel button in the dropdown. Serial: {serial}',
     related_mail: '🔔 *Related Email Received*\n💡 An email containing keywords (`{kws}`) has been received.\n• Received at: {time}\n• From: {from}\n• Subject: {subject}\n• View content: {link}',
-    scheduler_start: '🚀 *Exocad Manager Scheduler Started*\n{details}',
   },
   ja: {
     sched_mail_check: 'メールチェック',
@@ -171,8 +168,14 @@ const S: Record<SlackLang, Record<string, string>> = {
     retry_failed: '[再試行失敗]',
     menu_button_missing: 'オプションボタン(menu-button)が見つかりません。シリアル: {serial}',
     serial_not_found: '検索結果に対象シリアルが見つかりませんでした。シリアル: {serial}',
+    login_user_missing: 'Exocadユーザー名が設定されていません。',
+    login_pass_missing: 'Exocadパスワードが設定されていません。',
+    login_failed: 'ログイン失敗: メールアドレスまたはパスワードを確認してください',
+    session_expired: 'ログインセッションが期限切れです。再度ログインが必要です。',
+    search_input_failed: '検索ボックスへのシリアル番号入力に失敗しました。シリアル: {serial}',
+    confirm_button_missing: '確認ポップアップボタンが見つかりません。シリアル: {serial}',
+    dropdown_button_missing: 'ドロップダウンでキャンセルボタンが見つかりません。シリアル: {serial}',
     related_mail: '🔔 *関連メール受信通知*\n💡 指定されたキーワード（`{kws}`）が含まれるメールを受信しました。\n• 受信時刻: {time}\n• 送信者: {from}\n• 件名: {subject}\n• 内容を表示: {link}',
-    scheduler_start: '🚀 *Exocad Manager スケジューラー起動完了*\n{details}',
   },
 };
 
@@ -204,7 +207,9 @@ function slackLocale(lang: SlackLang): string {
   return lang === 'en' ? 'en-US' : lang === 'ja' ? 'ja-JP' : 'ko-KR';
 }
 
-function localizeCancelError(error: string | undefined, lang: SlackLang): string {
+// 활동 로그(activity_logs)에도 동일한 매핑이 필요해 외부에 공개한다 — 실패 사유를 details 문구에
+// 끼워 넣을 때 ko/en/ja 각각에 대해 호출해야 한국어 원문이 그대로 섞여 나오는 것을 막을 수 있다.
+export function localizeCancelError(error: string | undefined, lang: SlackLang): string {
   if (!error) return '';
   const serial = error.match(/시리얼:\s*([A-Za-z0-9-]+)/)?.[1]
     || error.match(/대상 시리얼\(([^)]+)\)/)?.[1]
@@ -216,19 +221,37 @@ function localizeCancelError(error: string | undefined, lang: SlackLang): string
     || /^\[再試行失敗\]\s*/.test(error);
   const retryPrefix = retried ? `${sf('retry_failed', {}, lang)} ` : '';
 
-  if (
-    error.includes('옵션 버튼(menu-button)을 찾을 수 없습니다')
-    || error.includes('Could not find the option button')
-    || error.includes('オプションボタン(menu-button)')
-  ) {
+  // 키워드 기반 매칭 — 메시지 중간에 동적 값(시리얼 등)이 끼어들어도 안정적으로 매칭되도록 부분 키워드 사용
+  const has = (...kws: string[]) => kws.some(k => error.includes(k));
+
+  if (has('menu-button', 'メニューボタン')) {
     return `${retryPrefix}${sf('menu_button_missing', { serial }, lang)}`.trim();
   }
-
-  if (
-    error.includes('검색 결과에서 대상 시리얼')
-    || error.includes('행을 찾지 못했습니다')
-    || error.includes('Target serial not found')
-  ) {
+  if (has('검색 결과에서 대상 시리얼', '행을 찾지 못했습니다', 'Target serial not found', '対象シリアル')) {
+    return `${retryPrefix}${sf('serial_not_found', { serial }, lang)}`.trim();
+  }
+  if (has('사용자 이름이 설정되지 않았습니다', 'username is not configured', 'ユーザー名が設定されていません')) {
+    return `${retryPrefix}${sf('login_user_missing', {}, lang)}`.trim();
+  }
+  if (has('비밀번호가 설정되지 않았습니다', 'password is not configured', 'パスワードが設定されていません')) {
+    return `${retryPrefix}${sf('login_pass_missing', {}, lang)}`.trim();
+  }
+  if (has('로그인 실패: 이메일 또는 비밀번호', 'Login failed', 'ログイン失敗')) {
+    return `${retryPrefix}${sf('login_failed', {}, lang)}`.trim();
+  }
+  if (has('로그인 세션이 만료', 'Login session has expired', 'ログインセッションが期限切れ')) {
+    return `${retryPrefix}${sf('session_expired', {}, lang)}`.trim();
+  }
+  if (has('search-input에 시리얼 번호 입력 실패', 'Failed to enter the serial number', 'シリアル番号入力に失敗')) {
+    return `${retryPrefix}${sf('search_input_failed', { serial }, lang)}`.trim();
+  }
+  if (has('확인 팝업 버튼을 찾을 수 없습니다', 'confirmation popup button', '確認ポップアップボタン')) {
+    return `${retryPrefix}${sf('confirm_button_missing', { serial }, lang)}`.trim();
+  }
+  if (has('드롭다운에서', '버튼을 찾을 수 없음', 'dropdown', 'ドロップダウン')) {
+    return `${retryPrefix}${sf('dropdown_button_missing', { serial }, lang)}`.trim();
+  }
+  if (has('검색 결과에 시리얼', '이 표시되지 않음')) {
     return `${retryPrefix}${sf('serial_not_found', { serial }, lang)}`.trim();
   }
 
@@ -448,9 +471,8 @@ export class NotificationService {
     if (result.screenshot_path) {
       const filename = path.basename(result.screenshot_path);
       // 외부에서 접근 가능한 스크린샷 URL 생성
-      // CERT_DOMAIN 환경변수 없으면 settings의 fallback 도메인을 사용
-      const fallbackDomain = 'geomedi-exocad.duckdns.org';
-      const domain = process.env.CERT_DOMAIN || fallbackDomain;
+      // CERT_DOMAIN 환경변수 없으면 FALLBACK_DOMAIN을 사용
+      const domain = process.env.CERT_DOMAIN || FALLBACK_DOMAIN;
       const screenshotUrl = `https://${domain}/api/logs/screenshot/${encodeURIComponent(filename)}`;
       const msgWithShot = message + '\n' + sf('screenshot', { file: screenshotUrl });
       return this.sendSlack(msgWithShot);
@@ -506,19 +528,12 @@ export class NotificationService {
     return this.sendSlack(lines.join('\n'));
   }
   
-  // === 스케줄러 시작 알림 ===
-  async sendSchedulerStartupSlack(details: string): Promise<boolean> {
-    const msg = sf('scheduler_start', { details });
-    return this.sendSlack(msg);
-  }
-
   // === 관련 메일 수신 알림 (System Log 용도) ===
   async sendRelatedMailSlack(from: string, subject: string, matchedKeywords: string[], mailId?: number, mailDate?: Date | string): Promise<boolean> {
     const kwsStr = matchedKeywords.join(', ');
-    const fallbackDomain = 'geomedi-exocad.duckdns.org';
-    const domain = process.env.CERT_DOMAIN || fallbackDomain;
+    const domain = process.env.CERT_DOMAIN || FALLBACK_DOMAIN;
     const baseUrl = `https://${domain}`;
-    const link = mailId ? `${baseUrl}/system-logs?mailId=${mailId}` : '(시스템 로그 확인)';
+    const link = mailId ? `${baseUrl}/manage/system-logs?mailId=${mailId}` : '(시스템 로그 확인)';
     
     let timeStr = '(알 수 없음)';
     if (mailDate) {
@@ -536,47 +551,36 @@ export class NotificationService {
   }
 
   // === Email ===
-  async sendEmail(subject: string, htmlBody: string): Promise<boolean> {
+  async sendEmail(subject: string, htmlBody: string, reason: string = 'report'): Promise<boolean> {
     const settings = getSettings();
     if (!settings.smtp_host || !settings.report_email_to) {
       logger.warn('SMTP settings or recipient email are not configured');
       return false;
     }
 
+    const to = settings.report_email_to;
     try {
-      const port = Number(settings.smtp_port) || 587;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-      // 앱 비밀번호 공백 제거
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: {
-          user: settings.smtp_user,
-          pass: cleanPassword,
-        },
-      });
+      const transporter = buildMailTransporter(settings);
 
       await transporter.sendMail({
-        from: buildSmtpFrom(settings),
-        to: settings.report_email_to,
+        from: buildMailFrom(settings),
+        to,
         subject,
         html: htmlBody,
       });
 
       logger.info(`Email sent: ${subject}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'sent' });
       return true;
     } catch (err: unknown) {
-      logger.error(`Email send failed: ${getErrorMessage(err)}`);
+      const errorMessage = getErrorMessage(err);
+      logger.error(`Email send failed: ${errorMessage}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'failed', error: errorMessage });
       return false;
     }
   }
 
-  private async sendEmailTo(recipients: string[], subject: string, htmlBody: string): Promise<boolean> {
+  private async sendEmailTo(recipients: string[], subject: string, htmlBody: string, reason: string = 'critical_alert'): Promise<boolean> {
     const settings = getSettings();
     const to = recipients.filter(Boolean).join(',');
     if (!settings.smtp_host || !to) {
@@ -585,34 +589,47 @@ export class NotificationService {
     }
 
     try {
-      const port = Number(settings.smtp_port) || 587;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: settings.smtp_user ? { user: settings.smtp_user, pass: cleanPassword } : undefined,
-      });
+      const transporter = buildMailTransporter(settings, { allowNoAuth: true });
 
       await transporter.sendMail({
-        from: buildSmtpFrom(settings),
+        from: buildMailFrom(settings),
         to,
         subject,
         html: htmlBody,
       });
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'sent' });
       return true;
     } catch (err: unknown) {
-      logger.error(`Emergency email send failed: ${getErrorMessage(err)}`);
+      const errorMessage = getErrorMessage(err);
+      logger.error(`Emergency email send failed: ${errorMessage}`);
+      this.recordSystemMail({ to, subject, htmlBody, reason, status: 'failed', error: errorMessage });
       return false;
+    }
+  }
+
+  // 시스템 메일(리포트/알림)을 발송 로그에 기록. template_code는 '(system)'으로 구분.
+  // 기록 실패가 발송 흐름을 깨지 않도록 예외를 삼킨다.
+  private recordSystemMail(input: { to: string; subject: string; htmlBody: string; reason: string; status: 'sent' | 'failed'; error?: string }): void {
+    try {
+      recordSentMail({
+        template_code: '(system)',
+        to: input.to,
+        subject: input.subject,
+        body_html: input.htmlBody,
+        reason: input.reason,
+        actor: 'system',
+        status: input.status,
+        error: input.error,
+      });
+    } catch (logErr: unknown) {
+      logger.warn(`[mail] recordSystemMail failed: ${getErrorMessage(logErr)}`);
     }
   }
 
   async sendCriticalAutomationAlert(input: {
     serial_number: string;
+    // 대상이 시리얼이 아닌 경우(예: 크레딧 배분의 my.exocad ID)의 라벨 오버라이드. 기본값 'Serial'.
+    target_label?: string;
     customer_name?: string;
     action: string | LocalizedText;
     error?: string | LocalizedText;
@@ -633,7 +650,7 @@ export class NotificationService {
       const err = rawErr ? localizeCancelError(rawErr, lang) : '';
       return [
         '*CRITICAL automation alert*',
-        `Serial: ${input.serial_number}`,
+        `${input.target_label || 'Serial'}: ${input.serial_number}`,
         input.customer_name ? `Customer: ${input.customer_name}` : '',
         `Action: ${pick(input.action, lang)}`,
         `Trigger: ${input.trigger_id}`,
@@ -660,7 +677,7 @@ export class NotificationService {
       const subject = `[Exocad Manager][CRITICAL] ${pick(input.action, appLang)} - ${input.serial_number}`;
       const emailText = buildText(appLang);
       const html = emailText.split('\n').map(line => `<div>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
-      tasks.push(this.sendEmailTo(recipients, subject, html));
+      tasks.push(this.sendEmailTo(recipients, subject, html, 'critical_alert'));
     }
 
     await Promise.all(tasks);
@@ -676,133 +693,46 @@ export class NotificationService {
     const modules = parseModules(input.serial.modules);
     const moduleText = modules.join(', ') || '-';
     const renewedAt = (input.renewed_at ?? new Date()).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-    const isManual = input.source === 'manual';
-    const subject = isManual
-      ? `[Exocad Manager] 更新注文書 (手動) - ${input.serial.serial_number}`
-      : `[Exocad Manager] 自動更新注文書 - ${input.serial.serial_number}`;
-    const html = `
-      <h2>${isManual ? '更新注文書（手動更新）' : '自動更新注文書'}</h2>
-      <p>以下のシリアルが${isManual ? '手動で更新処理されました。' : '自動更新処理されました。'}</p>
-      <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-        <tr><td><strong>シリアル番号</strong></td><td>${escapeHtml(input.serial.serial_number)}</td></tr>
-        <tr><td><strong>顧客名</strong></td><td>${escapeHtml(input.serial.customer?.name || '')}</td></tr>
-        <tr><td><strong>顧客メール</strong></td><td>${escapeHtml(input.serial.customer?.email || '')}</td></tr>
-        <tr><td><strong>メイン製品</strong></td><td>${escapeHtml(input.serial.main_product || '')}</td></tr>
-        <tr><td><strong>モジュール</strong></td><td>${escapeHtml(moduleText)}</td></tr>
-        <tr><td><strong>更新前の有効期限</strong></td><td>${escapeHtml(input.previous_expiry_date || '-')}</td></tr>
-        <tr><td><strong>更新後の有効期限</strong></td><td>${escapeHtml(input.serial.expiry_date || '')}</td></tr>
-        <tr><td><strong>処理時刻</strong></td><td>${escapeHtml(renewedAt)}</td></tr>
-      </table>
-    `;
-    const recipientEmail = settings.report_email_to || '';
+    const recipientEmail = settings.credit_notification_email || '';
 
-    const success = await this.sendEmail(subject, html);
+    if (!recipientEmail) {
+      return {
+        success: false,
+        subject: '',
+        html_body: '',
+        recipient_email: '',
+        message: 'Credit Notification Email이 설정되어 있지 않습니다.',
+      };
+    }
+
+    const result = await sendTemplate(
+      'renewal_order_notice',
+      recipientEmail,
+      {
+        SERIAL_NUMBER: input.serial.serial_number,
+        CUSTOMER_NAME: input.serial.customer?.name || '',
+        CUSTOMER_EMAIL: input.serial.customer?.email || '',
+        ADDRESS: input.serial.customer?.address || '',
+        MAIN_PRODUCT: input.serial.main_product || '',
+        MODULES: moduleText,
+        PREVIOUS_EXPIRY_DATE: input.previous_expiry_date || '-',
+        EXPIRY_DATE: input.serial.expiry_date || '',
+        PROCESSED_AT: renewedAt,
+        RENEWAL_TYPE: input.source === 'manual' ? '手動' : '自動',
+      },
+      { serial_id: input.serial.id, actor: input.source === 'manual' ? 'manual' : 'auto' },
+    );
+
     return {
-      success,
-      subject,
-      html_body: html,
+      success: result.success,
+      subject: result.subject || '',
+      html_body: result.html || '',
       recipient_email: recipientEmail,
-      message: success ? 'メール送信成功' : 'メール送信失敗',
+      message: result.message,
     };
   }
 
   // === Test Connection (SMTP) ===
-  async testSmtpConnection(settingsOverride?: SettingsOverride): Promise<{ success: boolean; message: string }> {
-    // settingsOverride에 undefined 값이 있으면 DB 저장값을 덮어쓰는 버그 방지
-    // undefined/null 제거 후 병합
-    const settings: EffectiveSettings = { ...getSettings(), ...cleanSettingsOverride(settingsOverride) };
-
-    // 로그: 어떤 값으로 테스트하는지 확인 (비밀번호는 마스킹)
-    logger.info(`SMTP 테스트 - host: ${settings.smtp_host}, port: ${settings.smtp_port}, user: ${settings.smtp_user}, hasPassword: ${!!settings.smtp_password}`);
-
-    if (!settings.smtp_host) {
-      return { success: false, message: 'SMTP 서버 주소를 입력해주세요.' };
-    }
-    if (!settings.smtp_user) {
-      return { success: false, message: 'SMTP 사용자명(이메일)을 입력해주세요.' };
-    }
-    if (!settings.smtp_password) {
-      return { success: false, message: 'SMTP 비밀번호 또는 앱 비밀번호를 입력해주세요.' };
-    }
-    if (!settings.report_email_to) {
-      return { success: false, message: '리포트 수신 이메일을 입력해주세요.' };
-    }
-    const parsedPort = Number(settings.smtp_port);
-    if (!settings.smtp_port || isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
-      return { success: false, message: `SMTP 포트가 올바르지 않습니다: "${settings.smtp_port}" (유효 범위: 1–65535)` };
-    }
-
-    try {
-      logger.info(`SMTP connection test started: ${settings.smtp_host}:${settings.smtp_port}`);
-      const port = parsedPort;
-      const useImplicitSSL = port === 465;
-      const isGmailHost = (settings.smtp_host || '').toLowerCase().includes('gmail');
-
-      // 앱 비밀번호 공백 제거 (Google App Password는 'xxxx xxxx xxxx xxxx' 형태로 복붙되는 경우 있음)
-      const cleanPassword = (settings.smtp_password || '').replace(/\s+/g, '');
-
-      const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port,
-        secure: useImplicitSSL,
-        // Gmail port 587 사용 시 STARTTLS 강제 (requireTLS: true)
-        requireTLS: !useImplicitSSL && (settings.smtp_tls || isGmailHost),
-        auth: {
-          user: settings.smtp_user,
-          pass: cleanPassword,
-        },
-        connectionTimeout: 15000,
-      });
-
-      // Verify connection configuration
-      await transporter.verify();
-
-      // Send a test email
-      await transporter.sendMail({
-        from: buildSmtpFrom(settings),
-        to: settings.report_email_to,
-        subject: '[Exocad Manager] SMTP 설정 테스트',
-        text: '이 이메일은 Exocad Manager 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.',
-        html: '<p>이 이메일은 <strong>Exocad Manager</strong> 애플리케이션에서 SMTP 설정이 정상인지 확인하기 위해 발송된 테스트 메일입니다.</p>',
-      });
-
-      logger.info('SMTP connection test succeeded and test email sent');
-      return { success: true, message: 'SMTP 연결 성공 및 테스트 메일 발송 완료' };
-    } catch (err: unknown) {
-      const msg = getErrorMessage(err);
-      logger.error(`SMTP connection test error: ${msg}`);
-
-      // Gmail 530 / 535 인증 오류 → App Password 안내
-      if (
-        msg.includes('535') || msg.includes('530') ||
-        msg.includes('Authentication') || msg.includes('Username and Password not accepted')
-      ) {
-        const isGmail = (settings.smtp_host || '').toLowerCase().includes('gmail');
-        if (isGmail) {
-          return {
-            success: false,
-            message:
-              '❌ Gmail 인증 실패 (530/535)\n\n' +
-              '✅ 해결 방법: Gmail 계정의 일반 비밀번호 대신 "앱 비밀번호(App Password)"를 사용해야 합니다.\n\n' +
-              '📌 앱 비밀번호 생성 방법:\n' +
-              '1. Google 계정 → 보안 → 2단계 인증 활성화 필수\n' +
-              '2. 보안 → 앱 비밀번호 → "기타(사용자 지정)" 선택\n' +
-              '3. 생성된 16자리 비밀번호를 SMTP Password에 입력\n\n' +
-              '🔗 https://myaccount.google.com/apppasswords',
-          };
-        }
-        return {
-          success: false,
-          message:
-            `❌ SMTP 인증 실패: ${msg}\n\n` +
-            '비밀번호 또는 계정 설정을 확인하세요. Gmail 사용 시 앱 비밀번호가 필요합니다.',
-        };
-      }
-
-      return { success: false, message: `테스트 실패: ${msg}` };
-    }
-  }
-
   // === Daily Report ===
   async sendDailyReport(report: DailyReport): Promise<void> {
     const slackMsg = this.formatDailyReportSlack(report);
@@ -810,7 +740,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 日次レポート - ${report.date}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 日次レポート - ${report.date}`, emailHtml, 'daily_report'),
     ]);
   }
 
@@ -873,7 +803,7 @@ export class NotificationService {
 
     await Promise.all([
       this.sendSlack(slackMsg),
-      this.sendEmail(`[Exocad Manager] 失効予定レポート - ${report.target_month}`, emailHtml),
+      this.sendEmail(`[Exocad Manager] 失効予定レポート - ${report.target_month}`, emailHtml, 'expiry_report'),
     ]);
   }
 

@@ -1,15 +1,19 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { getDb } from '../../main/database';
+import { getNowTimestampString } from '../../main/utils/date-utils';
 
 export const SESSION_COOKIE = 'psid';
 const CSRF_HEADER = 'x-csrf-token';
 const SESSION_TTL_HOURS = 24;
 
+// Asia/Tokyo 기준 시각으로 통일 — 비교 시점(getSessionByToken)도 같은 기준(getNowTimestampString)을
+// 사용해야 서버 OS 타임존(흔히 UTC)과 무관하게 만료 시각이 정확히 계산된다.
+// (과거 버그: new Date().toISOString()은 UTC 문자열을 만들지만 SQLite localtime()은 OS 타임존을
+//  쓰므로, OS가 UTC인 서버에서는 세션/토큰이 실제 TTL보다 9시간 일찍 만료되었음)
 function expiresAt(hours: number): string {
   return new Date(Date.now() + hours * 3_600_000)
-    .toISOString()
-    .slice(0, 19)
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' })
     .replace('T', ' ');
 }
 
@@ -57,10 +61,10 @@ export function destroySession(token: string): void {
 
 export function getSessionByToken(token: string): PortalSession | null {
   const row = getDb()
-    .prepare<[string], PortalSession>(
-      "SELECT id, account_id, csrf_token FROM portal_sessions WHERE token = ? AND expires_at > datetime('now','localtime')",
+    .prepare<[string, string], PortalSession>(
+      'SELECT id, account_id, csrf_token FROM portal_sessions WHERE token = ? AND expires_at > ?',
     )
-    .get(token);
+    .get(token, getNowTimestampString());
   return row ?? null;
 }
 

@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLang } from '../App';
 import { t, type Language, type TranslationKey } from '../i18n';
 import { api } from '../client';
-import type { CreditPackage, PortalRequestDescriptions, LocalizedText } from '../../shared/types';
+import { usePortalActionableCount } from '../hooks/usePortalActionableCount';
+import type { CreditPackage, PortalRequestDescriptions, StyledLocalizedText, Customer, Serial } from '../../shared/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface PortalSettings {
@@ -11,9 +12,9 @@ interface PortalSettings {
   credit_notification_email: string;
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
-  portal_mismatch_message: LocalizedText;
-  portal_resume_quote_prompt: LocalizedText;
-  portal_resume_quote_sent: LocalizedText;
+  portal_mismatch_message: StyledLocalizedText;
+  portal_resume_quote_prompt: StyledLocalizedText;
+  portal_resume_quote_sent: StyledLocalizedText;
 }
 
 interface PortalAccount {
@@ -21,12 +22,26 @@ interface PortalAccount {
   login_id: string;
   email: string;
   phone: string;
+  address: string;
   name: string;
   exocad_id: string;
   language: string;
   status: 'active' | 'disabled';
   created_at: string;
+  last_synced_at?: string | null;
   customer_mismatch?: string | null;
+}
+
+interface AccountLinkDetail {
+  customer_id: number;
+  verified_serial: string;
+  customer: Customer | null;
+  serials: Serial[];
+}
+
+interface AccountDetail extends PortalAccount {
+  requests: AdminRequest[];
+  links: AccountLinkDetail[];
 }
 
 interface AdminRequest {
@@ -42,6 +57,9 @@ interface AdminRequest {
   account_name: string;
   account_login_id: string;
   account_email: string;
+  alloc_status: 'distributing' | 'distributed' | 'failed' | 'manual_hold' | null;
+  alloc_error: string | null;
+  alloc_at: string | null;
 }
 
 type Tab = 'settings' | 'packages' | 'descriptions' | 'accounts' | 'requests';
@@ -79,6 +97,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function Portal() {
   const { lang } = useLang();
+  const actionableCount = usePortalActionableCount();
   const [tab, setTab] = useState<Tab>('settings');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -86,8 +105,20 @@ export default function Portal() {
   const [settings, setSettings] = useState<PortalSettings | null>(null);
   const [accounts, setAccounts] = useState<PortalAccount[]>([]);
   const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [detailAccount, setDetailAccount] = useState<AccountDetail | null>(null);
   const [reqFilter, setReqFilter] = useState<string>('');
+  // 승인/거절 등 처리 중인 요청 id — 해당 행 버튼을 비활성화하고 "처리 중…" 표시
+  const [busyId, setBusyId] = useState<number | null>(null);
+  // 간단한 토스트(성공/경고) — 별도 인프라가 없어 자체 구현
+  const [toast, setToast] = useState<{ msg: string; kind: 'success' | 'warn' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string, kind: 'success' | 'warn' = 'success') => {
+    setToast({ msg, kind });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     api.portal.getSettings<PortalSettings>()
@@ -113,14 +144,27 @@ export default function Portal() {
     if (next === 'accounts') loadAccounts();
     if (next === 'requests') {
       loadRequests();
+
+      // 포털에서 신청이 들어오는 즉시 갱신: SSE로 변경 신호를 받으면 바로 재조회.
+      // 터널/프록시가 SSE 연결을 끊는 경우를 대비해 30초 폴링도 안전망으로 함께 둔다.
+      if (sseRef.current) sseRef.current.close();
+      const es = new EventSource('/portal/admin/requests/stream');
+      es.addEventListener('changed', () => loadRequests());
+      es.onerror = () => { /* EventSource 자체가 자동 재연결을 시도함 */ };
+      sseRef.current = es;
+
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(() => loadRequests(), 30_000);
     } else {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
     }
   }
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (sseRef.current) sseRef.current.close();
+  }, []);
 
   async function save() {
     if (!settings) return;
@@ -155,25 +199,92 @@ export default function Portal() {
     }
   }
 
+  async function openAccountDetail(acc: PortalAccount) {
+    try {
+      const detail = await api.portal.getAccount<AccountDetail>(acc.id);
+      setDetailAccount(detail);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    }
+  }
+
+  async function linkAccountSerial(accountId: number, serial: string) {
+    const result = await api.portal.linkAccountSerial<{ ok: boolean; already_linked?: boolean; main_product?: string }>(accountId, serial);
+    const detail = await api.portal.getAccount<AccountDetail>(accountId);
+    setDetailAccount(detail);
+    loadAccounts();
+    return result;
+  }
+
   async function decide(req: AdminRequest, action: 'approve' | 'reject') {
     const confirmKey = action === 'approve' ? 'portal_confirm_approve' : 'portal_confirm_reject';
     if (!window.confirm(t(lang, confirmKey))) return;
+    setBusyId(req.id);
     try {
-      await api.portal.decideRequest(req.id, action);
+      // approve의 경우 서버가 Playwright 취소까지 동기 실행 후 status를 돌려준다.
+      // status='playwright_failed'이면 승인은 됐지만 자동 취소가 실패한 것 → 경고 토스트.
+      const res = await api.portal.decideRequest(req.id, action) as { status?: string };
       loadRequests();
+      if (action === 'reject') {
+        showToast(t(lang, 'portal_toast_rejected'));
+      } else if (res?.status === 'playwright_failed') {
+        showToast(t(lang, 'portal_toast_cancel_failed'), 'warn');
+      } else {
+        showToast(t(lang, 'portal_toast_approved'));
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function decideCancel(req: AdminRequest, action: 'approve' | 'reject') {
     const confirmKey = action === 'approve' ? 'portal_confirm_cancel_approve' : 'portal_confirm_cancel_reject';
     if (!window.confirm(t(lang, confirmKey))) return;
+    setBusyId(req.id);
     try {
       await api.portal.decideCancelRequest(req.id, action);
       loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
     } catch (err) {
       alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function dismiss(req: AdminRequest) {
+    if (!window.confirm(t(lang, 'portal_confirm_dismiss'))) return;
+    setBusyId(req.id);
+    try {
+      await api.portal.dismissRequest(req.id);
+      loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function holdManual(req: AdminRequest) {
+    if (!window.confirm(t(lang, 'portal_confirm_manual_hold'))) return;
+    setBusyId(req.id);
+    try {
+      await api.portal.holdRequestManual(req.id);
+      loadRequests();
+      showToast(t(lang, 'portal_toast_done'));
+    } catch (err) {
+      // 서버는 코드 토큰을 반환 — 프론트에서 번역한다.
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('ERR_CREDIT_HOLD_ALREADY_STARTED')) {
+        alert(t(lang, 'portal_manual_hold_already_started'));
+      } else {
+        alert(msg || 'error');
+      }
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -215,9 +326,19 @@ export default function Portal() {
               color: tab === tb.id ? 'var(--accent)' : 'var(--text2)',
               fontWeight: tab === tb.id ? 600 : 400, cursor: 'pointer',
               fontSize: 13, fontFamily: 'inherit', marginBottom: -1,
+              display: 'flex', alignItems: 'center', gap: 6,
             }}
           >
             {t(lang, tb.key)}
+            {tb.id === 'requests' && actionableCount > 0 && (
+              <span style={{
+                minWidth: 16, height: 16, padding: '0 4px',
+                borderRadius: 8, background: 'var(--red)', color: '#fff',
+                fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center',
+              }}>
+                {actionableCount > 99 ? '99+' : actionableCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -225,17 +346,47 @@ export default function Portal() {
       {tab === 'settings'     && <SettingsTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'packages'     && <PackagesTab lang={lang} settings={settings} setSettings={setSettings} />}
       {tab === 'descriptions' && <DescriptionsTab lang={lang} settings={settings} setSettings={setSettings} />}
-      {tab === 'accounts'     && <AccountsTab lang={lang} accounts={accounts} onToggle={toggleAccount} onSync={syncAccountToCustomer} />}
+      {tab === 'accounts'     && (
+        <AccountsTab
+          lang={lang}
+          accounts={accounts}
+          onToggle={toggleAccount}
+          onSync={syncAccountToCustomer}
+          onDetail={openAccountDetail}
+        />
+      )}
+      {detailAccount && (
+        <AccountDetailModal
+          lang={lang}
+          account={detailAccount}
+          onClose={() => setDetailAccount(null)}
+          onLinkSerial={linkAccountSerial}
+        />
+      )}
       {tab === 'requests'     && (
         <RequestsTab
           lang={lang}
           requests={requests}
           filter={reqFilter}
+          busyId={busyId}
           onFilter={f => { setReqFilter(f); loadRequests(f); }}
           onDecide={decide}
           onDecideCancel={decideCancel}
+          onDismiss={dismiss}
+          onHoldManual={holdManual}
           creditPackages={settings.credit_packages ?? []}
         />
+      )}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: toast.kind === 'warn' ? 'var(--red)' : 'var(--green)',
+          color: toast.kind === 'warn' ? '#fff' : '#0d0f12',
+          padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.35)', zIndex: 1000, maxWidth: '80vw',
+        }}>
+          {toast.msg}
+        </div>
       )}
     </div>
   );
@@ -325,6 +476,46 @@ function PackagesTab({ lang, settings, setSettings }: {
   );
 }
 
+// ── Style controls (색상/크기/굵기) ──────────────────────────────────────────────
+function StyleControls({ lang, color, fontSize, bold, onColor, onFontSize, onBold }: {
+  lang: Language;
+  color?: string;
+  fontSize?: number;
+  bold?: boolean;
+  onColor: (v: string | undefined) => void;
+  onFontSize: (v: number | undefined) => void;
+  onBold: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        {t(lang, 'portal_style_color')}
+        <input
+          type="color"
+          value={color || '#ffffff'}
+          onChange={e => onColor(e.target.value)}
+          style={{ width: 32, height: 24, padding: 0, border: 'none' }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        {t(lang, 'portal_style_font_size')}
+        <input
+          type="number"
+          min={10}
+          max={32}
+          value={fontSize ?? 13}
+          onChange={e => onFontSize(e.target.value ? Number(e.target.value) : undefined)}
+          style={{ width: 60 }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        <input type="checkbox" checked={!!bold} onChange={e => onBold(e.target.checked)} />
+        {t(lang, 'portal_style_bold')}
+      </label>
+    </div>
+  );
+}
+
 // ── Descriptions tab ───────────────────────────────────────────────────────────
 function DescriptionsTab({ lang, settings, setSettings }: {
   lang: Language;
@@ -337,11 +528,18 @@ function DescriptionsTab({ lang, settings, setSettings }: {
       ...s,
       portal_request_descriptions: { ...s.portal_request_descriptions, [type]: { ...s.portal_request_descriptions[type], [l]: value } },
     } : s));
+  const setDescStyle = (type: keyof PortalRequestDescriptions, field: 'color' | 'fontSize' | 'bold', value: string | number | boolean | undefined) =>
+    setSettings(s => (s ? {
+      ...s,
+      portal_request_descriptions: { ...s.portal_request_descriptions, [type]: { ...s.portal_request_descriptions[type], [field]: value } },
+    } : s));
 
   // 단일 LocalizedText 설정 편집 (미매치 안내 / 견적 안내 문구)
   type MsgKey = 'portal_mismatch_message' | 'portal_resume_quote_prompt' | 'portal_resume_quote_sent';
   const setMsg = (key: MsgKey, l: LangKey, value: string) =>
     setSettings(s => (s ? { ...s, [key]: { ...s[key], [l]: value } } : s));
+  const setMsgStyle = (key: MsgKey, field: 'color' | 'fontSize' | 'bold', value: string | number | boolean | undefined) =>
+    setSettings(s => (s ? { ...s, [key]: { ...s[key], [field]: value } } : s));
 
   const blocks: { type: keyof PortalRequestDescriptions; title: TranslationKey }[] = [
     { type: 'credit', title: 'portal_desc_credit_title' },
@@ -366,6 +564,15 @@ function DescriptionsTab({ lang, settings, setSettings }: {
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {t(lang, b.title)}
           </h3>
+          <StyleControls
+            lang={lang}
+            color={d[b.type].color}
+            fontSize={d[b.type].fontSize}
+            bold={d[b.type].bold}
+            onColor={v => setDescStyle(b.type, 'color', v)}
+            onFontSize={v => setDescStyle(b.type, 'fontSize', v)}
+            onBold={v => setDescStyle(b.type, 'bold', v)}
+          />
           {langs.map(l => (
             <div className="form-group" key={l.key} style={{ marginBottom: 10 }}>
               <label>{l.label}</label>
@@ -383,6 +590,15 @@ function DescriptionsTab({ lang, settings, setSettings }: {
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {t(lang, b.title)}
           </h3>
+          <StyleControls
+            lang={lang}
+            color={settings[b.key].color}
+            fontSize={settings[b.key].fontSize}
+            bold={settings[b.key].bold}
+            onColor={v => setMsgStyle(b.key, 'color', v)}
+            onFontSize={v => setMsgStyle(b.key, 'fontSize', v)}
+            onBold={v => setMsgStyle(b.key, 'bold', v)}
+          />
           {langs.map(l => (
             <div className="form-group" key={l.key} style={{ marginBottom: 10 }}>
               <label>{l.label}</label>
@@ -400,11 +616,12 @@ function DescriptionsTab({ lang, settings, setSettings }: {
 }
 
 // ── Accounts tab ───────────────────────────────────────────────────────────────
-function AccountsTab({ lang, accounts, onToggle, onSync }: {
+function AccountsTab({ lang, accounts, onToggle, onSync, onDetail }: {
   lang: Language;
   accounts: PortalAccount[];
   onToggle: (a: PortalAccount) => void;
   onSync: (a: PortalAccount) => void;
+  onDetail: (a: PortalAccount) => void;
 }) {
   if (accounts.length === 0) {
     return <div className="settings-section"><p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_empty')}</p></div>;
@@ -447,6 +664,9 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
                   </span>
                 </td>
                 <td style={{ ...cell, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => onDetail(a)}>
+                    {t(lang, 'portal_acc_detail')}
+                  </button>
                   {mismatch && (
                     <button className="btn btn-danger btn-sm" onClick={() => onSync(a)}>
                       {t(lang, 'portal_acc_sync')}
@@ -465,14 +685,134 @@ function AccountsTab({ lang, accounts, onToggle, onSync }: {
   );
 }
 
+// ── Account detail modal ─────────────────────────────────────────────────────────
+// 자동 identity 매치 없이 시리얼 단독으로 연결되므로, 가입 시 입력한 정보 전체를
+// 연결된 고객 DB 값과 나란히 보여줘 매니저가 육안으로 대조/검증할 수 있게 한다.
+function AccountDetailModal({ lang, account, onClose, onLinkSerial }: {
+  lang: Language;
+  account: AccountDetail;
+  onClose: () => void;
+  onLinkSerial: (accountId: number, serial: string) => Promise<{ ok: boolean; already_linked?: boolean; main_product?: string }>;
+}) {
+  const [serialInput, setSerialInput] = useState('');
+  const [linking, setLinking] = useState(false);
+
+  async function handleLink() {
+    if (!serialInput.trim()) return;
+    setLinking(true);
+    try {
+      const result = await onLinkSerial(account.id, serialInput.trim());
+      setSerialInput('');
+      alert(result.already_linked
+        ? t(lang, 'portal_acc_link_already')
+        : `${t(lang, 'portal_acc_link_done')}${result.main_product ? ` — ${result.main_product}` : ''}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'error');
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  const fields: { key: keyof AccountDetail; label: string; custKey?: keyof Customer }[] = [
+    { key: 'login_id', label: t(lang, 'label_portal_login_id') },
+    { key: 'name', label: t(lang, 'portal_req_applicant'), custKey: 'name' },
+    { key: 'email', label: 'Email', custKey: 'email' },
+    { key: 'phone', label: t(lang, 'label_phone'), custKey: 'phone' },
+    { key: 'address', label: t(lang, 'label_address'), custKey: 'address' },
+    { key: 'exocad_id', label: 'My.exocad ID' },
+    { key: 'created_at', label: t(lang, 'portal_acc_created') },
+  ];
+  const primaryCustomer = account.links[0]?.customer ?? null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{t(lang, 'portal_acc_detail')} — {account.login_id}</h3>
+          <button className="btn btn-sm btn-secondary" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 20 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg3)', textAlign: 'left' }}>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_field')}</th>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_portal_value')}</th>
+                <th style={detailCell}>{t(lang, 'portal_acc_detail_customer_value')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map(f => {
+                const portalValue = String(account[f.key] ?? '') || '—';
+                const custValue = f.custKey && primaryCustomer ? (String(primaryCustomer[f.custKey] ?? '') || '—') : '—';
+                const mismatch = f.custKey && primaryCustomer
+                  && portalValue.trim().toLowerCase() !== custValue.trim().toLowerCase();
+                return (
+                  <tr key={f.key} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ ...detailCell, color: 'var(--text3)' }}>{f.label}</td>
+                    <td style={{ ...detailCell, color: mismatch ? 'var(--orange)' : 'var(--text)' }}>{portalValue}</td>
+                    <td style={detailCell}>{custValue}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>{t(lang, 'portal_acc_detail_linked_serials')}</h4>
+          {account.links.length === 0 && (
+            <p style={{ color: 'var(--text3)', fontSize: 13 }}>{t(lang, 'portal_acc_detail_no_links')}</p>
+          )}
+          {account.links.map(link => (
+            <div key={link.customer_id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                {link.customer?.name ?? `#${link.customer_id}`}
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {link.serials.map(s => (
+                    <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={detailCell}>{s.serial_number}</td>
+                      <td style={detailCell}>{s.main_product}</td>
+                      <td style={detailCell}>{s.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <label>{t(lang, 'portal_acc_link_label')}</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                value={serialInput}
+                onChange={e => setSerialInput(e.target.value)}
+                placeholder="XXXXXXXX-XXXX-XXXXXXXX"
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={linking || !serialInput.trim()}>
+                {linking ? t(lang, 'saving') : t(lang, 'portal_acc_link_btn')}
+              </button>
+            </div>
+            <p className="form-help">{t(lang, 'portal_acc_link_help')}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Requests tab ───────────────────────────────────────────────────────────────
-function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCancel, creditPackages }: {
+function RequestsTab({ lang, requests, filter, busyId, onFilter, onDecide, onDecideCancel, onDismiss, onHoldManual, creditPackages }: {
   lang: Language;
   requests: AdminRequest[];
   filter: string;
+  busyId: number | null;
   onFilter: (f: string) => void;
   onDecide: (r: AdminRequest, action: 'approve' | 'reject') => void;
   onDecideCancel: (r: AdminRequest, action: 'approve' | 'reject') => void;
+  onDismiss: (r: AdminRequest) => void;
+  onHoldManual: (r: AdminRequest) => void;
   creditPackages: CreditPackage[];
 }) {
   const FILTERS: { id: string; key: TranslationKey }[] = [
@@ -481,10 +821,12 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
     { id: 'renewal_stop', key: 'portal_type_renewal_stop' },
     { id: 'renewal_resume', key: 'portal_type_renewal_resume' },
   ];
-  const isActionable = (r: AdminRequest) =>
-    r.status === 'pending' || r.status === 'manager_review' ||
+  // cancel failed 상태 — approve/reject 외에 dismiss(수동 처리 후 큐에서 닫기)도 가능
+  const isCancelFailed = (r: AdminRequest) =>
     (r.status === 'rejected' && r.note === 'playwright_failed') ||
     (r.status === 'approved' && r.note === 'playwright_failed_manual');
+  const isActionable = (r: AdminRequest) =>
+    r.status === 'pending' || r.status === 'manager_review' || isCancelFailed(r);
 
   return (
     <div>
@@ -554,6 +896,14 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                       <span style={{ color: 'var(--red)', fontWeight: 600 }}>
                         {t(lang, 'portal_st_cancel_rejected')}
                       </span>
+                    ) : r.status === 'rejected' && r.note === 'duplicate' ? (
+                      <span style={{ color: 'var(--text3)', fontWeight: 600 }}>
+                        {t(lang, 'portal_st_duplicate')}
+                      </span>
+                    ) : r.note === 'dismissed' ? (
+                      <span style={{ color: 'var(--text3)', fontWeight: 600 }}>
+                        {t(lang, 'portal_st_dismissed')}
+                      </span>
                     ) : (
                       <span style={{ color: STATUS_COLOR[r.status] || 'var(--text2)', fontWeight: 600 }}>
                         {STATUS_KEY[r.status] ? t(lang, STATUS_KEY[r.status]) : r.status}
@@ -564,34 +914,80 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
                         {t(lang, 'portal_st_cancel_requested_note')}
                       </div>
                     )}
+                    {r.type === 'credit' && r.status === 'pending' && r.note === 'cancel_rejected' && (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                        {t(lang, 'portal_cancel_rejected_pending_note')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'distributing' && (
+                      <div style={{ fontSize: 11, color: 'var(--blue)', marginTop: 2 }}>
+                        {t(lang, 'portal_alloc_distributing')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'distributed' && (
+                      <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
+                        {t(lang, 'portal_alloc_distributed')}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.alloc_status === 'failed' && (
+                      <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
+                        <div style={{ fontWeight: 600 }}>{t(lang, 'portal_alloc_failed')}</div>
+                        {r.alloc_error && (
+                          <div style={{ color: 'var(--text3)', marginTop: 1 }}>
+                            {t(lang, 'portal_alloc_error_label')}{r.alloc_error}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {r.type === 'credit' && r.status === 'pending' && r.alloc_status === 'manual_hold' && (
+                      <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2, fontWeight: 600 }}>
+                        {t(lang, 'portal_alloc_manual_hold')}
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...cell, fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
                     {r.created_at.slice(0, 16).replace('T', ' ')}
                   </td>
                   <td style={cell}>
-                    {r.status === 'cancel_requested' ? (
+                    {(() => { const busy = busyId === r.id; return (
+                    r.status === 'cancel_requested' ? (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--red)', color: '#fff' }}
-                          onClick={() => onDecideCancel(r, 'approve')}>
-                          {t(lang, 'portal_req_cancel_approve')}
+                          disabled={busy} onClick={() => onDecideCancel(r, 'approve')}>
+                          {busy ? t(lang, 'portal_processing') : t(lang, 'portal_req_cancel_approve')}
                         </button>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
-                          onClick={() => onDecideCancel(r, 'reject')}>
+                          disabled={busy} onClick={() => onDecideCancel(r, 'reject')}>
                           {t(lang, 'portal_req_cancel_reject')}
                         </button>
                       </div>
                     ) : isActionable(r) && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#0d0f12' }}
-                          onClick={() => onDecide(r, 'approve')}>
-                          {t(lang, 'portal_req_approve')}
+                          disabled={busy} onClick={() => onDecide(r, 'approve')}>
+                          {busy ? t(lang, 'portal_processing') : t(lang, 'portal_req_approve')}
                         </button>
                         <button className="btn btn-sm" style={{ background: 'var(--red)', color: '#fff' }}
-                          onClick={() => onDecide(r, 'reject')}>
+                          disabled={busy} onClick={() => onDecide(r, 'reject')}>
                           {t(lang, 'portal_req_reject')}
                         </button>
+                        {r.type === 'credit' && r.status === 'pending' && r.alloc_status == null && (
+                          <button className="btn btn-sm btn-secondary"
+                            disabled={busy}
+                            title={t(lang, 'portal_req_manual_hold_help')}
+                            onClick={() => onHoldManual(r)}>
+                            {t(lang, 'portal_req_manual_hold')}
+                          </button>
+                        )}
+                        {isCancelFailed(r) && (
+                          <button className="btn btn-sm btn-secondary"
+                            disabled={busy} onClick={() => onDismiss(r)}>
+                            {t(lang, 'portal_req_dismiss')}
+                          </button>
+                        )}
                       </div>
-                    )}
+                    )
+                    ); })()}
                   </td>
                 </tr>
               ))}
@@ -604,3 +1000,4 @@ function RequestsTab({ lang, requests, filter, onFilter, onDecide, onDecideCance
 }
 
 const cell: React.CSSProperties = { padding: '8px 12px', verticalAlign: 'middle' };
+const detailCell: React.CSSProperties = { ...cell, padding: '10px 12px' };

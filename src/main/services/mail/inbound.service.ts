@@ -2,6 +2,7 @@ import Pop3Command from 'node-pop3';
 import Imap from 'imap';
 import net from 'net';
 import tls from 'tls';
+import { createHash } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { getSettings } from '../../settings';
 import { getDb } from '../../database';
@@ -882,15 +883,25 @@ async function parseEmail(raw: string, fallbackMsgId: string | null): Promise<Pa
   const toText = addressToText(parsed.to);
   const ccText = addressToText(parsed.cc);
 
+  const from = parsed.from?.text || '';
+  const subject = parsed.subject || '';
+  const body = parsed.text || (typeof parsed.html === 'string' ? parsed.html : '') || '';
+  const date = parsed.date?.toISOString() || '';
+
+  // Message-ID 헤더가 없고 호출부 fallback도 없으면(주로 IMAP 경로) 내용 해시로 안정적 dedup 키를
+  // 만든다. 이게 없으면 message_id=null → isDuplicate가 항상 false → keep_copy/unread 유지 시
+  // 같은 메일이 매 스캔마다 재저장·재처리된다. (from+date+subject+body는 재fetch해도 동일)
+  const syntheticId = `synthetic:${createHash('sha1').update(`${from}|${date}|${subject}|${body.slice(0, 1000)}`).digest('hex')}`;
+
   return {
-    messageId: parsed.messageId || fallbackMsgId,
-    from: parsed.from?.text || '',
+    messageId: parsed.messageId || fallbackMsgId || syntheticId,
+    from,
     replyTo: parsed.replyTo?.text || '',
     to: toText,
     cc: ccText,
-    subject: parsed.subject || '',
-    body: parsed.text || (typeof parsed.html === 'string' ? parsed.html : '') || '',
-    date: parsed.date?.toISOString() || '',
+    subject,
+    body,
+    date,
     deliveredTo: getMailparserHeader('delivered-to') || getHeaderRaw('Delivered-To'),
     xForwardedTo: getMailparserHeader('x-forwarded-to') || getHeaderRaw('X-Forwarded-To'),
     xOriginalTo: getMailparserHeader('x-original-to') || getHeaderRaw('X-Original-To'),

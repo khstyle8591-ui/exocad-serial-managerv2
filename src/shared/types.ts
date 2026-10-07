@@ -7,18 +7,31 @@ export interface Customer {
   id: number;
   name: string;
   email: string;
+  email_2: string;
   phone: string;
   address: string;
   dealer: string;
   sales_manager: string;
   notes: string;
+  ai_credits: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CustomerCreditLog {
+  id: number;
+  customer_id: number;
+  credits: number;
+  purchase_date: string;
+  source: string;
+  pending_id: number | null;
+  created_at: string;
 }
 
 export interface CustomerInput {
   name: string;
   email?: string;
+  email_2?: string;
   phone?: string;
   address?: string;
   dealer?: string;
@@ -65,6 +78,9 @@ export interface Serial {
   renewal_stop_requested: number;   // 0 | 1 (SQLite BOOLEAN)
   stop_requested_at: string | null;
   activated_at: string | null;
+  mail_expiry_notice_enabled: number;    // 0 | 1 — 만료안내 메일 (시리얼별)
+  mail_order_form_enabled: number;       // 0 | 1 — 내부 주문서 메일 (시리얼별)
+  mail_lifecycle_notice_enabled: number; // 0 | 1 — 중단접수·취소완료 등 라이프사이클 안내 (시리얼별)
   created_at: string;
   updated_at: string;
 }
@@ -88,6 +104,7 @@ export interface ActivityLog {
   trigger_id: string | null;
   severity: 'info' | 'warn' | 'error' | 'critical';
   created_at: string;
+  serial_number?: string | null; // 일부 조회(getTodayLogs)에서만 JOIN으로 채워짐
 }
 
 export interface SerialMailNoticeLog {
@@ -122,6 +139,31 @@ export interface AutoRenewalOrderNoticeLog {
   message: string;
   sent_at: string;
   created_at: string;
+}
+
+// 발송(outbound) 메일 통합 로그. 템플릿 메일과 시스템 메일(리포트/알림) 모두 여기에 기록.
+export interface SentMail {
+  id: number;
+  template_code: string;
+  to_addr: string;
+  subject: string;
+  body_html: string;
+  reason: string;
+  actor: string;
+  serial_id: number | null;
+  status: 'sent' | 'failed';
+  error: string;
+  created_at: string;
+}
+
+export interface SentMailFilter {
+  template_code?: string;
+  status?: 'sent' | 'failed';
+  date_from?: string;
+  date_to?: string;
+  q?: string;          // 수신자 주소 부분검색
+  limit?: number;
+  offset?: number;
 }
 
 // ── Mail ──────────────────────────────────────────────────────────────────────
@@ -170,6 +212,27 @@ export interface InboundMail {
   error: string | null;
 }
 
+export interface InboundDryRunEntry {
+  from: string;
+  subject: string;
+  date: string;
+  classification: InboundMail['classification'];
+  matched_keywords: string[];
+  extracted_serial: string | null;
+  serial_exists: boolean;
+  is_duplicate: boolean;
+  message_id: string | null;
+  missing_fields: string[];
+}
+
+export interface InboundDryRunResult {
+  total_checked: number;
+  would_save: number;
+  would_skip: number;
+  entries: InboundDryRunEntry[];
+  error?: string;
+}
+
 // ── Pending Orders ────────────────────────────────────────────────────────────
 
 export interface PendingOrder {
@@ -194,6 +257,7 @@ export interface PendingOrder {
   raw_data: string;
   status: 'pending' | 'approved' | 'rejected';
   flag_duplicate: number;
+  review_flag: string;
   notes: string;
   product_code: string;
   created_at: string;
@@ -202,6 +266,7 @@ export interface PendingOrder {
   existing_status?: string;
   existing_expiry?: string;
   existing_customer_name?: string;
+  customer_name_mismatch?: boolean;
   serial_status?: Serial['status'];
 }
 
@@ -210,6 +275,7 @@ export interface GroupedOrder {
   main: PendingOrder | null;
   modules: PendingOrder[];
   flagged_duplicate: boolean;
+  review_flag: string;
   created_at: string;
 }
 
@@ -261,6 +327,57 @@ export interface SerialListResult {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** 시리얼별 메일 발송 on/off (미지정 필드는 변경 없음). */
+export interface SerialMailSettings {
+  mail_expiry_notice_enabled?: boolean;
+  mail_order_form_enabled?: boolean;
+  mail_lifecycle_notice_enabled?: boolean;
+}
+
+// ── Bulk update (Excel upsert: 다운로드→편집→업로드) ─────────────────────────
+/** 업로드된 워크북을 파싱한 원본(서버 내부 전용). */
+export interface ParsedBulkUpdateRow {
+  rowNum: number;            // 메인 시트의 엑셀 행 번호
+  id: number | null;         // 숨김 id 열 (기존 시리얼=값 있음, 신규 행=null)
+  fields: Record<string, unknown>;  // header → 셀 원본값 (id 제외)
+}
+export interface ParsedBulkUpdate {
+  rows: ParsedBulkUpdateRow[];
+  snapshot: Record<number, Record<string, unknown>>;  // id → export 시점 원본값 (변경 감지 기준)
+  hasSnapshot: boolean;      // 숨김 스냅샷 시트 존재 여부
+  parseErrors: string[];
+}
+
+export type BulkRowAction = 'insert' | 'update' | 'skip' | 'error';
+export interface BulkFieldChange {
+  field: string;             // 엑셀 header
+  from: string;              // 현재(DB) 값
+  to: string;                // 반영하려는 값
+  status: 'apply' | 'conflict';  // apply=반영, conflict=편집 창 중 시스템도 바꿔서 건너뜀
+}
+export interface BulkRowResult {
+  rowNum: number;
+  serial_number: string;
+  action: BulkRowAction;
+  changes: BulkFieldChange[];
+  error?: string;            // action==='error'일 때 사유
+  warning?: string;          // 스냅샷 없음 등 주의
+}
+export interface BulkUpdatePreview {
+  summary: {
+    insert: number;
+    update: number;
+    skip: number;
+    conflict: number;        // 충돌 칸을 1개 이상 가진 행 수
+    error: number;
+    total: number;
+  };
+  hasSnapshot: boolean;
+  rows: BulkRowResult[];
+  committed: boolean;        // dry-run=false, 실제 반영=true
+  backupPath?: string;       // 반영 시 생성한 백업 파일 경로
 }
 
 export interface SerialVersionSummary {
@@ -356,7 +473,15 @@ export interface ExcelSerialRow {
 
 // ── Product Code Groups ───────────────────────────────────────────────────────
 
-export type ProductCodeGroup = 'renewal' | 'addon' | 'main' | 'memo' | 'version_update' | 'ignore';
+export type ProductCodeGroup =
+  | 'main'           // 신규 필수 메인 프로덕트. serial이 DB에 있으면 중복(노랑)
+  | 'addon'          // 메인에 종속되는 모듈. 연결 메인 없으면 orphan(노랑)
+  | 'renewal'        // 메인 갱신 시 발급. 자동갱신 처리 / stop-flag 충돌 시 대응
+  | 'renewal_addon'  // 갱신과 함께 발급되는 모듈. 단독이면 노랑
+  | 'memo'           // 메모만 추가
+  | 'upgrade'        // 스페셜1 — Basic→Ultimate 승급(메인 교체+갱신 수동)
+  | 'credits'        // 스페셜2 — AI credits, customer DB에 기록
+  | 'ignore';        // 완전 무시(수집 안 함)
 
 export interface ProductCodeRule {
   code: string;
@@ -368,6 +493,12 @@ export interface ExpiryNoticeRule {
   id: string;
   days_before: number;
   renewal_template: string;
+}
+
+export interface ExpiryNoticeStopRule {
+  id: string;
+  days_before: number;
+  stop_template: string;
 }
 
 // ── Poll Types ────────────────────────────────────────────────────────────────
@@ -426,6 +557,21 @@ export interface CancelResult {
   verified?: boolean;
   verified_status?: string;
   screenshot_path?: string;
+}
+
+// ── Credit distribution (partner.exocad.com/credits) ───────────────────────────
+
+export interface CreditDistributeResult {
+  exocad_id: string;
+  success: boolean;
+  // 성공 신호(성공 토스트)로 확인된 성공이면 true. 토스트를 못 잡았지만 modal이 닫혀
+  // 성공으로 추정한 경우 false — 호출부는 이 경우 자동승인/발주서를 보류하고 사람 확인을 받는다.
+  // (undefined = 하위호환: verified로 간주)
+  verified?: boolean;
+  error?: string;
+  screenshot_path?: string;
+  // 슬롯 대기 중 신청 상태가 바뀌어(좌초 복구로 failed 등) 배분을 시도하지 않고 건너뛴 경우 true.
+  skipped?: boolean;
 }
 
 export interface CancelDryRunResult {
@@ -509,10 +655,17 @@ export interface LocalizedText {
   ja: string;
 }
 
+// 안내 문구 표시 스타일(색상/크기/굵기) — 언어별 텍스트와 별개로 문구 단위로 적용됨
+export interface StyledLocalizedText extends LocalizedText {
+  color?: string;
+  fontSize?: number;
+  bold?: boolean;
+}
+
 export interface PortalRequestDescriptions {
-  credit: LocalizedText;
-  renewal_stop: LocalizedText;
-  renewal_resume: LocalizedText;
+  credit: StyledLocalizedText;
+  renewal_stop: StyledLocalizedText;
+  renewal_resume: StyledLocalizedText;
 }
 
 export interface AppSettings {
@@ -576,6 +729,7 @@ export interface AppSettings {
   expiry_notice_days: number[];
   expiry_notice_renewal_template: string;
   expiry_notice_stop_template: string;
+  expiry_notice_stop_rules: ExpiryNoticeStopRule[];
   stop_request_notice_enabled: boolean;
   stop_request_notice_template: string;
   cancel_complete_notice_enabled: boolean;
@@ -587,11 +741,11 @@ export interface AppSettings {
   credit_packages: CreditPackage[];
   portal_request_descriptions: PortalRequestDescriptions;
   // 데이터 미매치 시 안내 팝업 문구 (PM 연락 안내 포함)
-  portal_mismatch_message: LocalizedText;
+  portal_mismatch_message: StyledLocalizedText;
   // 갱신재개 신청 시 견적서 안내 2단계 팝업 문구
-  portal_resume_quote_prompt: LocalizedText;
+  portal_resume_quote_prompt: StyledLocalizedText;
   // 견적서 신청 완료 안내 문구
-  portal_resume_quote_sent: LocalizedText;
+  portal_resume_quote_sent: StyledLocalizedText;
   // 제품명 드롭다운 목록 (빈 배열이면 자유 입력)
   product_list: string[];
 }

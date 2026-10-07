@@ -15,6 +15,7 @@ import type { AppSettings } from '../shared/types';
 import type { Language, TranslationKey } from './i18n';
 import { t } from './i18n';
 import { api } from './client';
+import { usePortalActionableCount } from './hooks/usePortalActionableCount';
 
 interface LangCtx {
   lang: Language;
@@ -69,9 +70,14 @@ const MAIN_NAV: { key: Page; labelKey: TranslationKey; icon: string }[] = [
 ];
 
 export default function App() {
-  const [page, setPage]   = useState<Page>('dashboard');
+  // Slack "관련 메일" 알림 링크(/manage/system-logs?mailId=...)로 들어온 경우
+  // System Logs 탭으로 바로 진입 — 클라이언트 라우팅이 없는 구조라 초기 page state에서 판단.
+  const [page, setPage]   = useState<Page>(() =>
+    new URLSearchParams(window.location.search).has('mailId') ? 'system_logs' : 'dashboard'
+  );
   const [params, setParams] = useState<unknown>(null);
   const [lang, setLang]   = useState<Language>('ko');
+  const portalActionableCount = usePortalActionableCount();
 
   const handleSetPage = (p: Page, pms?: unknown) => {
     setPage(p);
@@ -141,10 +147,21 @@ export default function App() {
               {MAIN_NAV.map(item => {
                 const active = page === item.key;
                 const label = t(lang, item.labelKey);
+                const badgeCount = item.key === 'portal' ? portalActionableCount : 0;
                 return (
                   <li key={item.key} className={active ? 'active' : ''} onClick={() => handleSetPage(item.key)}>
                     {NavIcons[item.icon]}
                     <span>{label}</span>
+                    {badgeCount > 0 && (
+                      <span style={{
+                        marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px',
+                        borderRadius: 8, background: 'var(--red)', color: '#fff',
+                        fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center',
+                        flexShrink: 0,
+                      }}>
+                        {badgeCount > 99 ? '99+' : badgeCount}
+                      </span>
+                    )}
                   </li>
                 );
               })}

@@ -7,25 +7,16 @@ import { syncPortalAccountIfNeeded } from '../sync';
 import { getDb } from '../../../main/database';
 import { updateCustomer, getCustomerById } from '../../../main/services/customer.service';
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
+import { getNowTimestampString } from '../../../main/utils/date-utils';
+import { checkSecondaryEmail } from '../../../shared/email-utils';
 
 const router = Router();
 
-function maskSerial(serial: string): string {
-  const parts = serial.split('-');
-  if (parts.length !== 3) return 'X'.repeat(serial.replace(/-/g, '').length);
-  const [s1, s2, s3] = parts;
-  return [
-    s1.slice(0, 4) + 'X'.repeat(Math.max(0, s1.length - 4)),
-    'X'.repeat(s2.length),
-    'X'.repeat(Math.max(0, s3.length - 4)) + s3.slice(-4),
-  ].join('-');
-}
-
 function validatePassword(pw: string): string | null {
-  if (pw.length < 8) return '비밀번호는 8자 이상이어야 합니다.';
-  if (!/[A-Z]/.test(pw)) return '대문자를 포함해야 합니다.';
-  if (!/[a-z]/.test(pw)) return '소문자를 포함해야 합니다.';
-  if (!/[0-9]/.test(pw)) return '숫자를 포함해야 합니다.';
+  if (pw.length < 8) return 'pw_too_short';
+  if (!/[A-Z]/.test(pw)) return 'pw_no_uppercase';
+  if (!/[a-z]/.test(pw)) return 'pw_no_lowercase';
+  if (!/[0-9]/.test(pw)) return 'pw_no_number';
   return null;
 }
 
@@ -33,9 +24,10 @@ interface SerialRow {
   serial_number: string;
   main_product: string;
   status: string;
+  expiry_date: string | null;
 }
 
-// GET /portal/profile — 프로필 + 연결된 제품(마스킹 시리얼) 반환
+// GET /portal/profile — 프로필 + 연결된 제품(시리얼 전체 + 만료일) 반환
 router.get('/', requirePortalAuth, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
   const accountId = pr.portalSession!.account_id;
@@ -54,13 +46,14 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
   const linkedProducts = links.flatMap(({ customer_id }) =>
     getDb()
       .prepare<[number], SerialRow>(
-        'SELECT serial_number, main_product, status FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+        'SELECT serial_number, main_product, status, expiry_date FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
       )
       .all(customer_id)
       .map(s => ({
         main_product: s.main_product,
-        masked_serial: maskSerial(s.serial_number),
+        serial_number: s.serial_number,
         status: s.status,
+        expiry_date: s.expiry_date,
       })),
   );
 
@@ -71,19 +64,31 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
 // PATCH /portal/profile — 이메일/연락처/주소/exocad_id 수정 (이름·로그인ID는 변경 불가)
 router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
   const pr = req as PortalRequest;
-  const { email, phone, address, exocad_id } = req.body as Record<string, string>;
+  const { email, email_2, phone, address, exocad_id } = req.body as Record<string, string>;
 
   if (email !== undefined) {
     const trimmed = email.trim();
     if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      res.status(400).json({ error: '올바른 이메일 형식을 입력해주세요.' });
+      res.status(400).json({ error: 'invalid_email' });
       return;
     }
   }
 
   const accountId = pr.portalSession!.account_id;
+
+  if (email_2 !== undefined && email_2.trim()) {
+    const existingAccount = findAccountById(accountId);
+    const primaryEmail = email !== undefined ? email.trim() : (existingAccount?.email ?? '');
+    const check = checkSecondaryEmail(email_2, primaryEmail);
+    if (!check.ok) {
+      res.status(400).json({ error: check.reason === 'invalid' ? 'invalid_email2' : 'duplicate_email2' });
+      return;
+    }
+  }
+
   updatePortalAccountFields(accountId, {
     ...(email !== undefined && { email: email.trim() }),
+    ...(email_2 !== undefined && { email_2: email_2.trim() }),
     ...(phone !== undefined && { phone: phone.trim() }),
     ...(address !== undefined && { address: address.trim() }),
     ...(exocad_id !== undefined && { exocad_id: exocad_id.trim() }),
@@ -101,6 +106,7 @@ router.patch('/', requirePortalAuth, requireCsrf, (req: Request, res: Response) 
   if (account && link) {
     updateCustomer(link.customer_id, {
       ...(email   !== undefined && { email:   account.email }),
+      ...(email_2 !== undefined && { email_2: account.email_2 }),
       ...(phone   !== undefined && { phone:   account.phone }),
       ...(address !== undefined && { address: account.address }),
     });
@@ -139,15 +145,15 @@ router.patch('/language', requirePortalAuth, requireCsrf, (req: Request, res: Re
   const { language } = req.body as Record<string, string>;
 
   if (!['ko', 'en', 'ja'].includes(language)) {
-    res.status(400).json({ error: '유효하지 않은 언어입니다.' });
+    res.status(400).json({ error: 'invalid_language' });
     return;
   }
 
   getDb()
     .prepare(
-      "UPDATE portal_accounts SET language = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+      'UPDATE portal_accounts SET language = ?, updated_at = ? WHERE id = ?',
     )
-    .run(language, pr.portalSession!.account_id);
+    .run(language, getNowTimestampString(), pr.portalSession!.account_id);
 
   res.json({ ok: true, language });
 });
@@ -158,11 +164,11 @@ router.post('/change-password', requirePortalAuth, requireCsrf, async (req: Requ
   const { current_password, password, confirm_password } = req.body as Record<string, string>;
 
   if (!current_password || !password) {
-    res.status(400).json({ error: '필수 항목을 입력해주세요.' });
+    res.status(400).json({ error: 'error_required' });
     return;
   }
   if (password !== confirm_password) {
-    res.status(400).json({ error: '새 비밀번호가 일치하지 않습니다.' });
+    res.status(400).json({ error: 'error_pw_mismatch' });
     return;
   }
   const pwError = validatePassword(password);
@@ -173,7 +179,7 @@ router.post('/change-password', requirePortalAuth, requireCsrf, async (req: Requ
 
   const ok = await bcrypt.compare(current_password, account.password_hash);
   if (!ok) {
-    res.status(401).json({ error: '현재 비밀번호가 일치하지 않습니다.' });
+    res.status(401).json({ error: 'invalid_current_password' });
     return;
   }
 

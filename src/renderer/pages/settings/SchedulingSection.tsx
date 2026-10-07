@@ -1,7 +1,7 @@
 import React from 'react';
 import { api } from '../../client';
 import { t, type Language } from '../../i18n';
-import type { ExpiryNoticeRule, MailTemplate } from '../../../shared/types';
+import type { ExpiryNoticeRule, ExpiryNoticeStopRule, MailTemplate } from '../../../shared/types';
 import { genId, SectionHeader } from './SettingsShared';
 import { getErrorMessage, type DryRunActionResult, type SetSettingValue, type SettingsFormRef } from './settingsTypes';
 
@@ -20,15 +20,15 @@ type ExpiryNoticeState = {
   setExpiryDryRunning: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 };
 
-type StopDryRunState = {
-  stopDryRunDays: number;
-  setStopDryRunDays: React.Dispatch<React.SetStateAction<number>>;
-  stopDryRunEmail: string;
-  setStopDryRunEmail: React.Dispatch<React.SetStateAction<string>>;
-  stopDryRunResult: string | null;
-  setStopDryRunResult: React.Dispatch<React.SetStateAction<string | null>>;
-  stopDryRunning: boolean;
-  setStopDryRunning: React.Dispatch<React.SetStateAction<boolean>>;
+type ExpiryStopNoticeState = {
+  expiryNoticeStopRules: ExpiryNoticeStopRule[];
+  setExpiryNoticeStopRules: React.Dispatch<React.SetStateAction<ExpiryNoticeStopRule[]>>;
+  stopRuleDryRunEmails: Record<string, string>;
+  setStopRuleDryRunEmails: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  stopRuleDryRunResults: Record<string, string>;
+  setStopRuleDryRunResults: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  stopRuleDryRunning: Record<string, boolean>;
+  setStopRuleDryRunning: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 };
 
 type LifecycleNoticeState = {
@@ -52,7 +52,7 @@ type SchedulingSectionProps = {
   setVal: SetSettingValue;
   mailTemplates: MailTemplate[];
   expiryNotice: ExpiryNoticeState;
-  stopDryRun: StopDryRunState;
+  expiryStopNotice: ExpiryStopNoticeState;
   lifecycleNotice: LifecycleNoticeState;
   onManual: () => void;
 };
@@ -65,7 +65,7 @@ export function SchedulingSection({
   setVal,
   mailTemplates,
   expiryNotice,
-  stopDryRun,
+  expiryStopNotice,
   lifecycleNotice,
   onManual,
 }: SchedulingSectionProps) {
@@ -82,15 +82,15 @@ export function SchedulingSection({
   setExpiryDryRunning,
   } = expiryNotice;
   const {
-  stopDryRunDays,
-  setStopDryRunDays,
-  stopDryRunEmail,
-  setStopDryRunEmail,
-  stopDryRunResult,
-  setStopDryRunResult,
-  stopDryRunning,
-  setStopDryRunning,
-  } = stopDryRun;
+  expiryNoticeStopRules,
+  setExpiryNoticeStopRules,
+  stopRuleDryRunEmails,
+  setStopRuleDryRunEmails,
+  stopRuleDryRunResults,
+  setStopRuleDryRunResults,
+  stopRuleDryRunning,
+  setStopRuleDryRunning,
+  } = expiryStopNotice;
   const {
   stopRequestNoticeEnabled,
   setStopRequestNoticeEnabled,
@@ -139,21 +139,40 @@ export function SchedulingSection({
     }
   };
 
-  const runStopTemplateDryRun = async () => {
-    setStopDryRunning(true);
-    setStopDryRunResult(null);
+  const updateStopRule = (id: string, patch: Partial<ExpiryNoticeStopRule>) => {
+    setExpiryNoticeStopRules(current => current.map(rule => rule.id === id ? { ...rule, ...patch } : rule));
+  };
+
+  const addStopRule = () => {
+    setExpiryNoticeStopRules(current => [
+      ...current,
+      { id: genId(), days_before: 30, stop_template: current[0]?.stop_template || 'stop_expiry_reminder' },
+    ]);
+  };
+
+  const removeStopRule = (id: string) => {
+    setExpiryNoticeStopRules(current => current.filter(rule => rule.id !== id));
+  };
+
+  const runStopRuleDryRun = async (rule: ExpiryNoticeStopRule) => {
+    const testEmail = (stopRuleDryRunEmails[rule.id] || '').trim();
+    setStopRuleDryRunning(current => ({ ...current, [rule.id]: true }));
+    setStopRuleDryRunResults(current => ({ ...current, [rule.id]: '' }));
     try {
       const result = await api.runExpiryNoticeDryRun({
-        days_before: stopDryRunDays,
-        template_code: formVals.current.expiry_notice_stop_template || 'stop_expiry_reminder',
-        test_email: stopDryRunEmail,
+        days_before: rule.days_before,
+        template_code: rule.stop_template,
+        test_email: testEmail,
         use_stop_template: true,
       }) as DryRunActionResult;
-      setStopDryRunResult(`${result.success ? 'OK' : 'FAIL'} - ${result.message}${result.sample_serial ? ` (${result.sample_serial})` : ''}`);
+      setStopRuleDryRunResults(current => ({
+        ...current,
+        [rule.id]: `${result.success ? 'OK' : 'FAIL'} - ${result.message}${result.sample_serial ? ` (${result.sample_serial})` : ''}`,
+      }));
     } catch (err: unknown) {
-      setStopDryRunResult(`FAIL - ${getErrorMessage(err)}`);
+      setStopRuleDryRunResults(current => ({ ...current, [rule.id]: `FAIL - ${getErrorMessage(err)}` }));
     } finally {
-      setStopDryRunning(false);
+      setStopRuleDryRunning(current => ({ ...current, [rule.id]: false }));
     }
   };
 
@@ -207,24 +226,10 @@ export function SchedulingSection({
                 onChange={e => setVal('expiry_notice_time', e.target.value)}
               />
             </div>
-            <div className="form-group">
-              <label>{t(lang, 'label_expiry_notice_stop_template')}</label>
-              <select
-                key={`enstop-${loadKey}`}
-                defaultValue={formVals.current.expiry_notice_stop_template || 'stop_expiry_reminder'}
-                onChange={e => setVal('expiry_notice_stop_template', e.target.value)}
-              >
-                {mailTemplates.map(template => (
-                  <option key={template.code} value={template.code}>
-                    {template.name} ({template.code})
-                  </option>
-                ))}
-              </select>
-              <small style={{ color: 'var(--text3)', fontSize: 12 }}>{t(lang, 'expiry_notice_stop_hint')}</small>
-            </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginTop: 6 }}>{t(lang, 'expiry_notice_renewal_heading')}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
             {expiryNoticeRules.map((rule, index) => (
               <div key={rule.id} style={{ border: '1px solid var(--border2)', borderRadius: 8, padding: 12, background: 'var(--bg2)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(220px, 1fr) minmax(190px, 1fr) auto auto', gap: 8, alignItems: 'end' }}>
@@ -292,35 +297,76 @@ export function SchedulingSection({
           </div>
 
           <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(190px, 1fr) auto', gap: 8, alignItems: 'end' }}>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>{t(lang, 'label_expiry_notice_stop_dryrun_days')}</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={365}
-                  value={stopDryRunDays}
-                  onChange={e => setStopDryRunDays(Number(e.target.value))}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>{t(lang, 'label_expiry_notice_stop_test_email')}</label>
-                <input
-                  type="email"
-                  value={stopDryRunEmail}
-                  onChange={e => setStopDryRunEmail(e.target.value)}
-                  placeholder="test@example.com"
-                />
-              </div>
-              <button className="btn btn-sm btn-secondary" disabled={stopDryRunning} onClick={runStopTemplateDryRun}>
-                {stopDryRunning ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_stop_dryrun')}
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{t(lang, 'expiry_notice_stop_heading')}</div>
+            <small style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginTop: 2 }}>
+              {t(lang, 'expiry_notice_stop_heading_hint')}
+            </small>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+              {expiryNoticeStopRules.map((rule, index) => (
+                <div key={rule.id} style={{ border: '1px solid var(--border2)', borderRadius: 8, padding: 12, background: 'var(--bg2)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(220px, 1fr) minmax(190px, 1fr) auto auto', gap: 8, alignItems: 'end' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_days')}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={rule.days_before}
+                        onChange={e => updateStopRule(rule.id, { days_before: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_stop_template')}</label>
+                      <select
+                        value={rule.stop_template}
+                        onChange={e => updateStopRule(rule.id, { stop_template: e.target.value })}
+                      >
+                        {mailTemplates.map(template => (
+                          <option key={template.code} value={template.code}>
+                            {template.name} ({template.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>{t(lang, 'label_expiry_notice_test_email')}</label>
+                      <input
+                        type="email"
+                        value={stopRuleDryRunEmails[rule.id] || ''}
+                        onChange={e => setStopRuleDryRunEmails(current => ({ ...current, [rule.id]: e.target.value }))}
+                        placeholder="test@example.com"
+                      />
+                    </div>
+                    <button
+                      className="btn btn-sm btn-secondary"
+                      disabled={!!stopRuleDryRunning[rule.id]}
+                      onClick={() => runStopRuleDryRun(rule)}
+                    >
+                      {stopRuleDryRunning[rule.id] ? t(lang, 'expiry_notice_dryrun_sending') : t(lang, 'expiry_notice_stop_dryrun')}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={expiryNoticeStopRules.length === 1}
+                      style={{ background: 'var(--red-dim)', color: 'var(--red)' }}
+                      onClick={() => removeStopRule(rule.id)}
+                    >
+                      {t(lang, 'delete')}
+                    </button>
+                  </div>
+                  {stopRuleDryRunResults[rule.id] && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: stopRuleDryRunResults[rule.id].startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
+                      {stopRuleDryRunResults[rule.id]}
+                    </div>
+                  )}
+                  <small style={{ color: 'var(--text3)', fontSize: 12 }}>
+                    {t(lang, 'expiry_notice_stop_rule_label').replace('{n}', String(index + 1))}
+                  </small>
+                </div>
+              ))}
+              <button className="btn btn-sm btn-secondary" style={{ alignSelf: 'flex-start' }} onClick={addStopRule}>
+                {t(lang, 'expiry_notice_stop_add_rule')}
               </button>
             </div>
-            {stopDryRunResult && (
-              <div style={{ marginTop: 8, fontSize: 12, color: stopDryRunResult.startsWith('OK') ? 'var(--green)' : 'var(--red)' }}>
-                {stopDryRunResult}
-              </div>
-            )}
           </div>
           </>
         )}

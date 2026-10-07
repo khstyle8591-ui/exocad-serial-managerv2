@@ -61,13 +61,6 @@ router.post('/report-times', (req: Request, res: Response) => {
     res.json(afterSettings.daily_report_times);
 });
 
-// POST /api/settings/test-smtp
-router.post('/test-smtp', async (req: Request, res: Response) => {
-    markDeprecated(res, '/api/mail/test-smtp');
-    const result = await notificationService.testSmtpConnection(req.body);
-    res.json(result);
-});
-
 // POST /api/settings/test-slack
 router.post('/test-slack', async (req: Request, res: Response) => {
     const result = await notificationService.testSlackWebhook(req.body);

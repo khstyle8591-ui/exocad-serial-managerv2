@@ -3,6 +3,7 @@ import type { SerialListResult, SerialWithCustomer } from '../../shared/types';
 import SerialForm from '../components/SerialForm';
 import ConfirmModal from '../components/ConfirmModal';
 import LegacyImportWizard from '../components/LegacyImportWizard';
+import BulkUpdateModal from '../components/BulkUpdateModal';
 import SerialDetail from './SerialDetail';
 import { useLang, useNav } from '../App';
 import { t } from '../i18n';
@@ -56,7 +57,9 @@ export default function SerialData() {
   const [showLegacy, setShowLegacy] = useState(false);
   const [legacyAvailable, setLegacyAvailable] = useState(false);
   const [excelMsg, setExcelMsg] = useState('');
+  const [bulkUpdateFile, setBulkUpdateFile] = useState<File | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const bulkUpdateInputRef = useRef<HTMLInputElement>(null);
 
     const load = useCallback(async () => {
     setLoading(true);
@@ -85,11 +88,11 @@ export default function SerialData() {
   }, [search, statusFilter, specialFilter]);
 
   useEffect(() => {
-    const filter = params?.filter;
+    const filter = (params as { filter?: string } | null)?.filter;
     if (filter === 'expiring') {
       setStatusFilter('all');
       setSpecialFilter('expiring');
-    } else if (['active', 'not-activated', 'expired', 'cancelled', 'broken'].includes(filter)) {
+    } else if (filter && ['active', 'not-activated', 'expired', 'cancelled', 'broken'].includes(filter)) {
       setStatusFilter(filter as StatusFilter);
       setSpecialFilter(null);
     } else {
@@ -206,7 +209,7 @@ export default function SerialData() {
         status: specialFilter ? undefined : statusFilter,
         expiring_this_month: specialFilter === 'expiring' || undefined,
       });
-      if (result.success) setExcelMsg(result.filePath ? t(lang, 'export_done_path').replace('{path}', result.filePath) : t(lang, 'export_done'));
+      if (result.success) setExcelMsg(t(lang, 'export_done'));
       else if (result.error) setExcelMsg(t(lang, 'export_failed').replace('{error}', result.error));
     } catch (e) {
       setExcelMsg(t(lang, 'export_failed').replace('{error}', errorMessage(e)));
@@ -262,6 +265,20 @@ export default function SerialData() {
           </button>
           <button onClick={handleExport} style={btnOutline} disabled={filtered.length === 0}>
             {t(lang, 'btn_serial_db_download')}
+          </button>
+          <input
+            ref={bulkUpdateInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) setBulkUpdateFile(file);
+            }}
+          />
+          <button onClick={() => bulkUpdateInputRef.current?.click()} style={btnOutline}>
+            {t(lang, 'bu_btn')}
           </button>
           <button onClick={() => { setEditTarget(null); setShowForm('create'); }} style={btnPrimary}>
             {t(lang, 'btn_new_register')}
@@ -451,6 +468,14 @@ export default function SerialData() {
         <LegacyImportWizard
           onClose={() => setShowLegacy(false)}
           onDone={() => { setShowLegacy(false); load(); }}
+        />
+      )}
+
+      {bulkUpdateFile && (
+        <BulkUpdateModal
+          file={bulkUpdateFile}
+          onClose={() => setBulkUpdateFile(null)}
+          onApplied={() => { setBulkUpdateFile(null); load(); }}
         />
       )}
     </div>

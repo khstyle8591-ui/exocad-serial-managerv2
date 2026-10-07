@@ -69,19 +69,15 @@ export default function Notification() {
   const runAutomation = async (mode: 'renew' | 'cancel' | 'limbo') => {
     setBusy(mode); setAutomationResult(null);
     try {
-      const result = mode === 'renew'
-        ? await api.runAutoRenewNow()
-        : mode === 'cancel'
-          ? await api.runAutoCancelNow()
-          : await api.runLimboFallbackNow();
-
       if (mode === 'renew') {
+        const result = await api.runAutoRenewNow();
         setAutomationResult(
           t(lang, 'notification_renew_result')
             .replace('{renewed}', String(result.renewed))
             .replace('{processed}', String(result.processed))
         );
       } else {
+        const result = mode === 'cancel' ? await api.runAutoCancelNow() : await api.runLimboFallbackNow();
         setAutomationResult(
           t(lang, 'notification_auto_result')
             .replace('{success}', String(result.success))
@@ -96,7 +92,7 @@ export default function Notification() {
     setBusy('export');
     try {
       const result = await api.exportSettings();
-      if (result.success) alert(`${t(lang, 'notification_exported')}\n${result.filePath || ''}`);
+      if (result.success) alert(t(lang, 'notification_exported'));
     } finally { setBusy(null); }
   };
 
@@ -104,8 +100,9 @@ export default function Notification() {
     setBusy('import');
     try {
       const parsed = JSON.parse(await file.text());
-      const result = await api.saveSettings(parsed);
-      if (result.success) { await load(); alert(t(lang, 'notification_imported')); }
+      await api.saveSettings(parsed);
+      await load();
+      alert(t(lang, 'notification_imported'));
     } finally { setBusy(null); }
   };
 

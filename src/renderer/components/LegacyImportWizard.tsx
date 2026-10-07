@@ -1,13 +1,12 @@
 /**
-
-import { api } from '../client';
-/**
  * LegacyImportWizard.tsx — 4-step legacy DB migration modal (dark theme)
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import type { MergeCandidate, CustomerInput, LegacyImportResult } from '../../shared/types';
 import { useLang } from '../App';
 import { t } from '../i18n';
+import { translateServerError } from '../utils/serverError';
+import { api } from '../client';
 
 interface LegacyRow {
   id: number;
@@ -519,7 +518,7 @@ function Step4({ rows, results, importing }: {
                         ? <span style={{ color: '#22c55e' }}>✓ {t(lang, 'success')}</span>
                         : <span style={{ color: '#fc8181' }}>✗ {t(lang, 'fail')}</span>}
                     </td>
-                    <td style={{ ...td, color: 'var(--text3)' }}>{result.error ?? `id=${result.serial_id}`}</td>
+                    <td style={{ ...td, color: 'var(--text3)' }}>{result.error ? translateServerError(result.error, lang) : `id=${result.serial_id}`}</td>
                   </tr>
                 );
               })}

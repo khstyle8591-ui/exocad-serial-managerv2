@@ -1,12 +1,12 @@
 import { getDb } from '../database';
 import { logger } from '../utils/logger';
-import { getTodayDateString, getNowTimestampString } from '../utils/date-utils';
+import { getTodayDateString, getNowTimestampString, getDaysAgoDateString } from '../utils/date-utils';
 import { createCustomerSeparate, findOrCreateCustomer, getCustomerById, updateCustomer } from './customer.service';
 import { logActivity as _logActivity, listLogs, getFailureLogs, getTodayLogs, pickLang } from './activity-log.service';
 import type {
-  Serial, SerialWithCustomer, SerialInput, AddOn, ActivityLog,
+  SerialWithCustomer, SerialInput, AddOn, ActivityLog,
   LogFilter, StatsCountsResult, StatsSeries, SerialExportQuery, SerialListQuery, SerialListResult,
-  SerialVersionSummary,
+  SerialVersionSummary, SerialMailSettings,
 } from '../../shared/types';
 import { parseSerialListQuery } from '../../shared/serial-contract';
 
@@ -19,7 +19,7 @@ const getErrorMessage = (error: unknown) => error instanceof Error ? error.messa
 const SERIAL_WITH_CUSTOMER_SQL = `
   SELECT s.*,
     json_object(
-      'id', c.id, 'name', c.name, 'email', c.email, 'phone', c.phone,
+      'id', c.id, 'name', c.name, 'email', c.email, 'email_2', c.email_2, 'phone', c.phone,
       'address', c.address, 'dealer', c.dealer, 'sales_manager', c.sales_manager,
       'notes', c.notes, 'created_at', c.created_at, 'updated_at', c.updated_at
     ) AS customer_json
@@ -244,10 +244,15 @@ export class SerialService {
   }
 
   /**
-   * 자동 재갱신 대상 — status는 신뢰하지 않고 만료일과 중단 플래그만으로 판단.
-   * (중단 플래그가 없고 만료일이 지났다면 자동 재갱신 대상)
+   * 자동 재갱신 대상 — active 시리얼만 대상으로 함.
+   * 예외: cancelled/expired 상태라도 중단 플래그가 없고 만료일로부터 3일 이내라면 대상에 포함
+   * (syncExpired가 auto-renew cron보다 먼저 돌아 status를 expired로 바꿔버리는 타이밍/다운타임 문제 구제).
+   * broken/not-activated 및 중단 플래그가 있는 시리얼은 상태 불문 항상 제외.
+   * 이중 방어: renewal_stop_requested가 어떤 경로로든 0이 되어 있어도, 아직 해소되지 않은
+   * 강제만료(status_forced_expired) 이력이 있는 시리얼은 부활시키지 않는다(wasLastForcedExpired).
    */
   getAutoRenewCandidates(today = getTodayDateString()): SerialWithCustomer[] {
+    const graceFrom = getDaysAgoDateString(3);
     const rows = getDb()
       .prepare(
         `${SERIAL_WITH_CUSTOMER_SQL}
@@ -255,10 +260,14 @@ export class SerialService {
            AND s.expiry_date != ''
            AND s.expiry_date <= ?
            AND s.renewal_stop_requested = 0
+           AND (
+             s.status = 'active'
+             OR (s.status IN ('cancelled', 'expired') AND s.expiry_date >= ?)
+           )
          ORDER BY s.expiry_date ASC, s.id ASC`
       )
-      .all(today) as SerialRow[];
-    return rows.map(parseSerialRow);
+      .all(today, graceFrom) as SerialRow[];
+    return rows.map(parseSerialRow).filter(serial => !this.wasLastForcedExpired(serial.id));
   }
 
   getLifecycleNoticeSample(kind: 'stop_request' | 'cancel_complete'): SerialWithCustomer | null {
@@ -467,13 +476,7 @@ export class SerialService {
 
     const updated = this.getById(id);
 
-    // 수동으로 만료일이 미래로 변경된 경우 = 외부에서 실제 갱신 완료 후 사람이 반영한 것 → 갱신 완료 안내 자동 발송
-    if (updated && input.expiry_date && existing.expiry_date && input.expiry_date > existing.expiry_date) {
-      const previousExpiryDate = existing.expiry_date;
-      import('./mail/lifecycle-notice.service')
-        .then(({ sendManualRenewalConfirmNotice }) => sendManualRenewalConfirmNotice(updated, previousExpiryDate))
-        .catch((err: unknown) => logger.error(`[serial] manual renewal confirm notice failed: ${getErrorMessage(err)}`));
-    }
+    // 만료일 변경 시 갱신 안내 메일 발송 여부는 매니저 UI 팝업에서 결정 (자동 발송 없음)
 
     return updated;
   }
@@ -515,6 +518,31 @@ export class SerialService {
     return this.getById(id);
   }
 
+  /**
+   * renewal_stop_requested = 0 → 1 전환을 단일 SQL UPDATE로 원자적으로 수행.
+   * "조회 후 분기 후 업데이트" 방식(setStopRequested)은 동시 요청(예: 더블클릭, 네트워크 재시도)이
+   * 둘 다 플래그=0을 읽은 뒤 둘 다 통과하는 race window가 있어 중복 신청을 막지 못함.
+   * WHERE renewal_stop_requested = 0 조건으로 DB 레벨에서 단 하나의 호출만 changes>0이 되도록 보장.
+   * 반환값 true = 이번 호출이 최초로 플래그를 세움(정상 처리), false = 이미 다른 요청이 선점함(중복).
+   */
+  claimStopRequest(id: number, trigger_id?: string, actor: ActivityLog['actor'] = 'system', details?: string): boolean {
+    const db = getDb();
+    const now = getNowTimestampString();
+    const result = db.prepare(
+      'UPDATE serials SET renewal_stop_requested = 1, stop_requested_at = ?, updated_at = ? WHERE id = ? AND renewal_stop_requested = 0'
+    ).run(now, now, id);
+    if (result.changes === 0) return false;
+    this.logActivity(id, 'stop_requested', actor,
+      { renewal_stop_requested: [0, 1] },
+      details || pickLang({
+        ko: '갱신 중단 요청됨',
+        en: 'Renewal stop requested',
+        ja: '更新停止リクエストあり',
+      }),
+      trigger_id);
+    return true;
+  }
+
   /** renewal_stop_requested 플래그 설정/해제. 이미 같은 값이면 no-op. */
   setStopRequested(
     id: number,
@@ -554,6 +582,35 @@ export class SerialService {
           ja: '更新停止リクエスト解除',
         }));
     }
+    return this.getById(id);
+  }
+
+  /** 시리얼별 메일 발송 on/off 설정. 미지정 필드는 변경하지 않음. */
+  setMailSettings(id: number, settings: SerialMailSettings): SerialWithCustomer | undefined {
+    const db = getDb();
+    const existing = this.getById(id);
+    if (!existing) return undefined;
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (settings.mail_expiry_notice_enabled !== undefined) {
+      fields.push('mail_expiry_notice_enabled = ?');
+      values.push(settings.mail_expiry_notice_enabled ? 1 : 0);
+    }
+    if (settings.mail_order_form_enabled !== undefined) {
+      fields.push('mail_order_form_enabled = ?');
+      values.push(settings.mail_order_form_enabled ? 1 : 0);
+    }
+    if (settings.mail_lifecycle_notice_enabled !== undefined) {
+      fields.push('mail_lifecycle_notice_enabled = ?');
+      values.push(settings.mail_lifecycle_notice_enabled ? 1 : 0);
+    }
+    if (fields.length === 0) return existing;
+
+    fields.push('updated_at = ?');
+    values.push(getNowTimestampString());
+    values.push(id);
+    db.prepare(`UPDATE serials SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return this.getById(id);
   }
 
@@ -628,7 +685,9 @@ export class SerialService {
         .get(id, today);
       if (alreadyRenewed) {
         logger.info(`[renew] skip — 오늘 이미 갱신됨: serial_id=${id}`);
-        db.exec('COMMIT');
+        // better-sqlite3의 transaction() 래퍼가 커밋/RELEASE를 자동 처리한다.
+        // 여기서 수동 COMMIT을 부르면 중첩(SAVEPOINT) 시 바깥 트랜잭션이 커밋돼
+        // "no such savepoint" 에러가 난다. 그냥 return하면 no-op으로 정상 커밋된다.
         return existing;
       }
 
@@ -694,6 +753,10 @@ export class SerialService {
 
   /** cancelSubscription — backward compat (used by cancel.service.ts callback). */
   cancelSubscription(id: number): SerialWithCustomer | undefined {
+    // 이미 cancelled면 no-op(undefined 반환) — 서로 다른 자동취소 경로(예정취소/failsafe/limbo/포털)가
+    // 같은 시리얼을 겹쳐 처리할 때 완료메일·로그가 중복 발동하는 것을 막는다(멱등).
+    const existing = this.getById(id);
+    if (!existing || existing.status === 'cancelled') return undefined;
     return this.cancelManual(id);
   }
 
@@ -769,6 +832,24 @@ export class SerialService {
   /** @deprecated Use hasStopRequested(). Name was misleading — returns true when customer wants to CANCEL. */
   hasPendingRenewal(serialId: number): boolean {
     return this.hasStopRequested(serialId);
+  }
+
+  /**
+   * 이 시리얼의 가장 최근 "라이프사이클 결정" 로그가 status_forced_expired인지 여부.
+   * true면 = 그 이후 renewed/cancelled/activated 등으로 해소되지 않은, 아직 살아있는 강제만료.
+   * limbo 재시도 대상 제외 + 자동갱신 이중 방어(둘 다)에 사용 — renewal_stop_requested 플래그와
+   * 무관하게 동작해, 플래그가 어떤 경로로든 꺼져도 강제만료 처리된 시리얼이 부활하지 않게 한다.
+   */
+  wasLastForcedExpired(serialId: number): boolean {
+    const row = getDb()
+      .prepare(
+        `SELECT action FROM activity_logs
+         WHERE serial_id = ?
+           AND action IN ('status_forced_expired', 'renewed', 'cancelled', 'activated', 'registered')
+         ORDER BY id DESC LIMIT 1`
+      )
+      .get(serialId) as { action: string } | undefined;
+    return row?.action === 'status_forced_expired';
   }
 
   // ── Bulk import ────────────────────────────────────────────────────────────

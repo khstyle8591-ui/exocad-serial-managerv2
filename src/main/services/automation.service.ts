@@ -1,15 +1,36 @@
 import { cancelService } from './cancel.service';
 import { serialService } from './serial.service';
-import { notificationService } from './notification.service';
-import { sendCancelCompleteNotice } from './mail/lifecycle-notice.service';
+import { notificationService, localizeCancelError } from './notification.service';
+import { sendCancelCompleteNotice, sendManualRenewalConfirmNotice } from './mail/lifecycle-notice.service';
 import { logAutoRenewalOrderNotice } from './auto-renewal-order-notice-log.service';
 import { pickLang } from './activity-log.service';
-import { markPortalRequestPlaywrightFailed } from '../../server/portal/db';
+import {
+  markPortalRequestPlaywrightFailed,
+  findCreditRequestsReadyForAutoDistribution,
+  findStaleDistributingCredits,
+  claimCreditForDistribution,
+  markCreditDistributionStarted,
+  markCreditDistributed,
+  markCreditDistributionFailed,
+  getPortalRequestById,
+  updatePortalRequestStatus,
+  findAccountById,
+} from '../../server/portal/db';
+import { sendCreditInvoiceMail } from './credit-request.service';
 import { logger } from '../utils/logger';
-import { getTodayDateString } from '../utils/date-utils';
+import { getTodayDateString, getNowTimestampString, getTimestampMinutesAgoString } from '../utils/date-utils';
 import { getSettings } from '../settings';
 import { getDb } from '../database';
-import type { CancelResult, SerialWithCustomer } from '../../shared/types';
+import type { CancelResult, CreditDistributeResult, SerialWithCustomer } from '../../shared/types';
+import { SERVER_ERRORS } from '../../shared/server-errors';
+
+// 크레딧 신청 접수 후 자동배분 시작까지의 유예기간(분) — 신청자가 그 사이 취소할 수 있도록 함.
+const CREDIT_AUTO_DISTRIBUTE_GRACE_MINUTES = 5;
+
+// claim 후 이 시간(분)을 넘겨 'distributing'에 멈춰 있으면 좌초로 간주하고 복구 처리한다.
+// 단일 배분은 수십 초~수 분이면 끝나므로(Playwright 폼 입력+제출) 여유롭게 잡아, 실제 진행 중인
+// 건을 오탐하지 않도록 한다.
+const CREDIT_DISTRIBUTING_STALE_MINUTES = 15;
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -169,16 +190,44 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
           }),
           triggerId, 'error',
         );
+        // 포털 failsafe 경로와 동일하게 크리티컬 알림 발송(정책 통일) — 활동 로그만으론 놓치기 쉬움.
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: { ko: '인바운드 중단요청 만료근접 자동취소', en: 'Inbound stop-request near-expiry auto-cancel', ja: 'インバウンド停止依頼 失効間際自動キャンセル' },
+          details: {
+            ko: `미처리 중단요청(인바운드메일ID=${serial.inbound_mail_id})의 만료근접 자동취소가 미검증 상태입니다(상태=${result.verified_status || 'unknown'}). partner에서 실제 취소 여부를 확인해주세요.`,
+            en: `Unprocessed stop-request (inbound_mail_id=${serial.inbound_mail_id}) near-expiry auto-cancel is UNVERIFIED (status=${result.verified_status || 'unknown'}). Verify the actual cancellation on partner.`,
+            ja: `未処理の停止依頼(インバウンドメールID=${serial.inbound_mail_id})の失効間際自動キャンセルが未確認です(状態=${result.verified_status || 'unknown'})。partnerで実際のキャンセルを確認してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch(() => {});
       } else {
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.error
+          ? localizeCancelError(result.error, lang)
+          : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang];
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
           pickLang({
-            ko: `Failsafe 취소 실패: ${serial.serial_number} - ${result.error || '알 수 없는 오류'}`,
-            en: `Failsafe cancellation failed: ${serial.serial_number} - ${result.error || 'unknown error'}`,
-            ja: `Failsafeキャンセル失敗: ${serial.serial_number} - ${result.error || 'unknown error'}`,
+            ko: `Failsafe 취소 실패: ${serial.serial_number} - ${reasonByLang('ko')}`,
+            en: `Failsafe cancellation failed: ${serial.serial_number} - ${reasonByLang('en')}`,
+            ja: `Failsafeキャンセル失敗: ${serial.serial_number} - ${reasonByLang('ja')}`,
           }),
           triggerId, 'error',
         );
+        // 포털 failsafe 경로와 동일하게 크리티컬 알림 발송(정책 통일).
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: serial.serial_number,
+          customer_name: serial.customer?.name,
+          action: { ko: '인바운드 중단요청 만료근접 자동취소', en: 'Inbound stop-request near-expiry auto-cancel', ja: 'インバウンド停止依頼 失効間際自動キャンセル' },
+          error: result.error,
+          details: {
+            ko: `미처리 중단요청(인바운드메일ID=${serial.inbound_mail_id})의 만료근접 자동취소가 실패했습니다. 시리얼 번호를 확인하고 필요 시 수동으로 재처리해주세요.`,
+            en: `Unprocessed stop-request (inbound_mail_id=${serial.inbound_mail_id}) near-expiry auto-cancel failed. Verify the serial number and reprocess manually if needed.`,
+            ja: `未処理の停止依頼(インバウンドメールID=${serial.inbound_mail_id})の失効間際自動キャンセルが失敗しました。シリアル番号を確認し、必要に応じて手動で再処理してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch(() => {});
       }
 
       await sleep(2000);
@@ -231,15 +280,19 @@ export async function runCandidateFailsafeCancelNow(): Promise<{ processed: numb
       } else {
         // 실패 또는 미검증 → 신청을 실패로 표시(매니저 '취소 실패' + 재승인 가능) + Slack 알림
         markPortalRequestPlaywrightFailed(reqId);
-        const reason = result.success
-          ? pickLang({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })
-          : (result.error || pickLang({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' }));
+        // reason은 언어별로 따로 계산한다 — result.error는 Playwright가 던진 한국어 원문이라,
+        // 단순히 pickLang()으로 감싸기만 하면 en/ja 문장 안에 한국어가 그대로 섞여 나온다.
+        const reasonByLang = (lang: 'ko' | 'en' | 'ja') => result.success
+          ? ({ ko: '취소 결과 미검증', en: 'cancel result unverified', ja: 'キャンセル結果未確認' })[lang]
+          : (result.error
+            ? localizeCancelError(result.error, lang)
+            : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]);
         serialService.logActivity(
           serial.id, 'system', 'auto', {},
           pickLang({
-            ko: `포털 갱신중단 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${reqId}), 사유: ${reason}`,
-            en: `Portal renewal-stop auto-cancel FAILED — serial: ${serial.serial_number} (request #${reqId}), reason: ${reason}`,
-            ja: `ポータル更新停止自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${reqId}), 理由: ${reason}`,
+            ko: `포털 갱신중단 자동취소 실패 — 시리얼: ${serial.serial_number} (신청 #${reqId}), 사유: ${reasonByLang('ko')}`,
+            en: `Portal renewal-stop auto-cancel FAILED — serial: ${serial.serial_number} (request #${reqId}), reason: ${reasonByLang('en')}`,
+            ja: `ポータル更新停止自動キャンセル失敗 — シリアル: ${serial.serial_number} (申請 #${reqId}), 理由: ${reasonByLang('ja')}`,
           }),
           triggerId, 'error',
         );
@@ -281,35 +334,48 @@ export async function runAutoRenewNow(): Promise<{ processed: number; renewed: n
     if (!updated) continue;
 
     renewed.push(updated.serial_number);
-    const notice = await notificationService.sendAutoRenewalOrderNotice({
-      serial: updated,
-      previous_expiry_date: serial.expiry_date,
-    }).catch((err: unknown) => {
-      const message = getErrorMessage(err);
-      logger.error(`[automation] auto renewal order notice error: ${serial.serial_number} - ${message}`);
-      return {
-        success: false,
-        subject: `[Exocad Manager] 자동 갱신 주문서 - ${updated.serial_number}`,
-        html_body: '',
-        recipient_email: '',
-        message,
-      };
-    });
 
-    logAutoRenewalOrderNotice({
-      serial: updated,
-      previous_expiry_date: serial.expiry_date,
-      recipient_email: notice.recipient_email,
-      subject: notice.subject,
-      html_body: notice.html_body,
-      status: notice.success ? 'sent' : 'failed',
-      message: notice.message,
-    });
+    // 내부 주문서 메일 — 시리얼별 토글(mail_order_form_enabled)이 꺼져 있으면 자동 발송 생략
+    if (updated.mail_order_form_enabled) {
+      const notice = await notificationService.sendAutoRenewalOrderNotice({
+        serial: updated,
+        previous_expiry_date: serial.expiry_date,
+      }).catch((err: unknown) => {
+        const message = getErrorMessage(err);
+        logger.error(`[automation] auto renewal order notice error: ${serial.serial_number} - ${message}`);
+        return {
+          success: false,
+          subject: `[Exocad Manager] 자동 갱신 주문서 - ${updated.serial_number}`,
+          html_body: '',
+          recipient_email: '',
+          message,
+        };
+      });
 
-    if (notice.success) {
-      logger.info(`[automation] auto renewal order notice sent: ${updated.serial_number}`);
-    } else {
-      logger.warn(`[automation] auto renewal order notice failed: ${updated.serial_number}`);
+      logAutoRenewalOrderNotice({
+        serial: updated,
+        previous_expiry_date: serial.expiry_date,
+        recipient_email: notice.recipient_email,
+        subject: notice.subject,
+        html_body: notice.html_body,
+        status: notice.success ? 'sent' : 'failed',
+        message: notice.message,
+      });
+
+      if (notice.success) {
+        logger.info(`[automation] auto renewal order notice sent: ${updated.serial_number}`);
+      } else {
+        logger.warn(`[automation] auto renewal order notice failed: ${updated.serial_number}`);
+      }
+    }
+
+    // 내부 발주메일과 별개로 고객에게 보내는 갱신 완료 안내(수동갱신확인 템플릿 재사용).
+    // 여기서는 크론이 자동 발송하므로 라이프사이클 토글로 가드한다. (수동 라우트에서
+    // 관리자가 직접 보내는 동일 메일은 rule A에 따라 토글과 무관하게 발송된다.)
+    if (updated.mail_lifecycle_notice_enabled) {
+      await sendManualRenewalConfirmNotice(updated, serial.expiry_date).catch((err: unknown) => {
+        logger.error(`[automation] auto renewal customer notice error: ${serial.serial_number} - ${getErrorMessage(err)}`);
+      });
     }
   }
 
@@ -328,7 +394,7 @@ export async function sendManualRenewalPo(
   previousExpiryDate: string | null,
 ): Promise<{ success: boolean; message: string }> {
   const serial = serialService.getById(serialId);
-  if (!serial) return { success: false, message: '시리얼을 찾을 수 없습니다.' };
+  if (!serial) return { success: false, message: SERVER_ERRORS.SERIAL_NOT_FOUND };
 
   const notice = await notificationService.sendAutoRenewalOrderNotice({
     serial,
@@ -394,7 +460,11 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
     serial.expiry_date > limitStr &&   // 7일 이내 만료만
     serial.expiry_date <= today &&
     (serial.status === 'active' || serial.status === 'expired') &&
-    !!serial.renewal_stop_requested
+    !!serial.renewal_stop_requested &&
+    // 이미 강제만료 처리해 포기한 건은 재시도하지 않는다(Playwright 폭주 방지).
+    // renewal_stop_requested를 더 이상 해제하지 않으므로(아래 참고), 이 조건이 없으면
+    // 포기한 시리얼이 매일 다시 후보에 잡혀 무한 재시도된다.
+    !serialService.wasLastForcedExpired(serial.id)
   );
 
   const results: CancelResult[] = [];
@@ -423,23 +493,27 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
 
       // 실패했거나(success=false), 완료됐지만 검증되지 않은(success && !verified) 경우 모두
       // 아래 fallback(로컬 강제 만료 + critical 알림)으로 처리하여 사람이 확인하도록 한다.
-      const limboReason = result.success
-        ? pickLang({
+      // result.error는 Playwright가 던진 한국어 원문이므로 언어별로 따로 변환해야
+      // en/ja 문장 안에 한국어가 그대로 섞여 나오는 것을 막을 수 있다.
+      const limboReasonByLang = (lang: 'ko' | 'en' | 'ja') => result.success
+        ? ({
             ko: `취소 미검증 (상태=${result.verified_status || 'unknown'})`,
             en: `cancel UNVERIFIED (status=${result.verified_status || 'unknown'})`,
             ja: `キャンセル未確認 (状態=${result.verified_status || 'unknown'})`,
-          })
-        : pickLang({
-            ko: `취소 실패: ${result.error || '알 수 없는 오류'}`,
-            en: `cancel failed: ${result.error || 'unknown error'}`,
-            ja: `キャンセル失敗: ${result.error || 'unknown error'}`,
-          });
+          })[lang]
+        : `${({ ko: '취소 실패', en: 'cancel failed', ja: 'キャンセル失敗' })[lang]}: ${
+            result.error ? localizeCancelError(result.error, lang) : ({ ko: '알 수 없는 오류', en: 'unknown error', ja: '不明なエラー' })[lang]
+          }`;
       serialService.logActivity(
         serial.id,
         'system',
         'auto',
         {},
-        pickLang({ ko: `Limbo 보정 — ${limboReason}`, en: `Limbo ${limboReason}`, ja: `Limbo補正 — ${limboReason}` }),
+        pickLang({
+          ko: `Limbo 보정 — ${limboReasonByLang('ko')}`,
+          en: `Limbo ${limboReasonByLang('en')}`,
+          ja: `Limbo補正 — ${limboReasonByLang('ja')}`,
+        }),
         triggerId,
         'warn'
       );
@@ -454,6 +528,12 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
         }),
         triggerId
       );
+
+      // 주의: renewal_stop_requested는 여기서 해제하지 않는다 — 이 플래그는 "자동갱신 금지"의
+      // 유일한 표시이기도 해서, 예전엔 여기서 껐다가 이틀 뒤 auto-renew 크론이 "딱지 없는 만료
+      // 시리얼"로 오인해 그대로 부활시키는 버그가 있었다(2026-07 발견). 재시도 중단은 위
+      // forceExpired 로그(status_forced_expired) 자체가 표식 역할을 하며, 다음 실행 시
+      // wasLastForcedExpired()로 후보에서 제외된다 — 플래그를 안 건드려도 재시도는 멈춘다.
 
       const suppressKey = `alert_suppress:${serial.serial_number}:status_forced_expired`;
       const db = getDb();
@@ -487,6 +567,181 @@ export async function runLimboFallbackNow(): Promise<{ processed: number; succes
     processed: candidates.length,
     success: results.filter(result => result.success).length,
     failed: results.filter(result => !result.success).length,
+    results,
+  };
+}
+
+// ── 포털 크레딧 자동배분 ─────────────────────────────────────────────────────────
+// 크레딧 신청 접수 5분 후부터, 자동배분 토글이 켜져 있으면 partner.exocad.com에서
+// 크레딧을 자동 배분한다. 신청 status는 배분 성공/실패와 무관하게 'pending'으로 유지되어
+// 매니저의 승인/거절은 그대로 노출된다(배분은 승인과 별개의 선행 단계).
+export async function runCreditAutoDistributionNow(): Promise<{ processed: number; success: number; failed: number; results: CreditDistributeResult[] }> {
+  const settings = getSettings();
+  if (!settings.credit_auto_alloc_enabled) {
+    return { processed: 0, success: 0, failed: 0, results: [] };
+  }
+
+  // ── 좌초 복구 ──────────────────────────────────────────────────────────────
+  // 이전 실행이 claim만 하고 프로세스가 죽어(OOM 등) 'distributing'에 멈춘 건을 정리한다.
+  // findCreditRequestsReadyForAutoDistribution은 alloc_status IS NULL만 조회하므로 이런 건은
+  // 방치하면 영영 후보에서 빠진다. 돈성 작업이라 자동 재배분은 하지 않고 'failed'로 전이 +
+  // 크리티컬 알림(크레딧이 이미 지급됐을 수 있으니 사람이 exocad에서 확인).
+  const staleCutoff = getTimestampMinutesAgoString(CREDIT_DISTRIBUTING_STALE_MINUTES);
+  for (const stale of findStaleDistributingCredits(staleCutoff)) {
+    markCreditDistributionFailed(
+      stale.id,
+      `stranded in 'distributing' > ${CREDIT_DISTRIBUTING_STALE_MINUTES}min (process likely terminated mid-distribution)`,
+    );
+    logger.error(`[credit-auto-distribute] reconciled stranded request #${stale.id} ('distributing' → 'failed')`);
+    await notificationService.sendCriticalAutomationAlert({
+      serial_number: stale.exocad_id,
+      target_label: 'my.exocad ID',
+      action: { ko: '포털 크레딧 자동배분 좌초 복구', en: 'Portal credit auto-distribution stranded-recovery', ja: 'ポータルクレジット自動配分 中断復旧' },
+      details: {
+        ko: `크레딧 신청(#${stale.id})이 배분 처리 도중 중단되어 상태가 멈춰 있었습니다. 크레딧이 이미 지급됐을 수 있으니 partner.exocad.com에서 반드시 확인 후 재처리해주세요.`,
+        en: `Credit request (#${stale.id}) was interrupted mid-distribution and left stuck. Credits MAY already have been distributed — verify on partner.exocad.com before reprocessing.`,
+        ja: `クレジット申請(#${stale.id})が配分処理中に中断され状態が停止していました。クレジットが既に発行された可能性があるため、partner.exocad.comで必ず確認してから再処理してください。`,
+      },
+      trigger_id: `credit-auto-distribute:stranded:${stale.id}`,
+    }).catch((err: unknown) => logger.error(`[credit-auto-distribute] stranded alert failed: ${getErrorMessage(err)}`));
+  }
+
+  const cutoff = getTimestampMinutesAgoString(CREDIT_AUTO_DISTRIBUTE_GRACE_MINUTES);
+  const candidates = findCreditRequestsReadyForAutoDistribution(cutoff);
+  const results: CreditDistributeResult[] = [];
+
+  for (const req of candidates) {
+    const pkg = settings.credit_packages.find(p => p.id === req.package_code);
+    if (!pkg) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} has unknown package_code "${req.package_code}" — skipping`);
+      continue;
+    }
+    if (!req.exocad_id?.trim()) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} has no exocad_id — skipping`);
+      continue;
+    }
+
+    // 원자적 선점 — 이미 다른 실행(중복 크론 틱 등)이 처리 중이면 skip
+    if (!claimCreditForDistribution(req.id)) {
+      logger.warn(`[credit-auto-distribute] request #${req.id} already claimed by another run — skipping`);
+      continue;
+    }
+
+    const triggerId = `credit-auto-distribute:${req.id}`;
+    const account = findAccountById(req.account_id);
+    const nameLabel = account?.name?.trim() || `#${req.id}`;
+    const note = `name:${nameLabel} ${getNowTimestampString()} autodistribution qty:${pkg.quantity}`;
+    logger.info(`[credit-auto-distribute] distributing: request #${req.id}, exocadId=${req.exocad_id}, qty=${pkg.quantity}`);
+
+    // distributed=true로 표시되기 전에 예외가 나면(finally의 page.close() throw 등) 아래 catch가
+    // 'failed'로 전이시킨다. 이미 distributed로 마킹한 뒤의 예외(발주서 메일 등)는 크레딧이 실제
+    // 지급된 것이므로 상태를 되돌리지 않는다. 프로세스 킬 시엔 이 catch도 못 돌아 좌초 복구가 처리한다.
+    let distributed = false;
+    try {
+      const result = await cancelService.distributeCredits(
+        req.exocad_id, pkg.quantity, note, true, false,
+        () => markCreditDistributionStarted(req.id),
+      );
+      if (result.skipped) {
+        // 브라우저 슬롯을 기다리는 사이 이 신청은 좌초 복구('failed' + 알림)나 수동 처리로 넘어갔다.
+        // 크레딧을 지급하지 않았으므로 상태/알림을 덮어쓰지 않는다 — 사람이 이미 확인 중이다.
+        logger.warn(`[credit-auto-distribute] request #${req.id} skipped — state changed while queued; not distributing`);
+        continue;
+      }
+      results.push(result);
+
+      if (result.success && result.verified === false) {
+        // 추정 성공(성공 토스트 미확인, modal만 닫힘). 재분배를 막기 위해 distributed로 마킹하되,
+        // 확신할 수 없으므로 자동 승인/발주서는 보류하고 사람이 exocad에서 확인하도록 알린다
+        // (false-success로 굳어 청구까지 나가는 것을 방지).
+        markCreditDistributed(req.id);
+        distributed = true;
+        logger.warn(`[credit-auto-distribute] request #${req.id} distributed but UNVERIFIED — withholding auto-approval; needs manual confirmation`);
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: req.exocad_id,
+          target_label: 'my.exocad ID',
+          action: { ko: '포털 크레딧 자동배분 미확인', en: 'Portal credit auto-distribution unverified', ja: 'ポータルクレジット自動配分 未確認' },
+          details: {
+            ko: `크레딧 신청(#${req.id}) 배분을 제출했으나 성공 확인 신호를 받지 못했습니다. partner.exocad.com에서 실제 지급 여부를 확인 후 수동 승인해주세요. (미확인 상태라 자동 승인/발주서는 보류됨)`,
+            en: `Credit request (#${req.id}) was submitted but no success confirmation was captured. Verify actual distribution on partner.exocad.com and approve manually. (Auto-approval/invoice withheld — unverified)`,
+            ja: `クレジット申請(#${req.id})の配分を送信しましたが成功確認シグナルを取得できませんでした。partner.exocad.comで実際の発行を確認の上、手動で承認してください。(未確認のため自動承認/発注書は保留)`,
+          },
+          trigger_id: triggerId,
+        }).catch((err: unknown) => logger.error(`[credit-auto-distribute] unverified alert failed: ${getErrorMessage(err)}`));
+      } else if (result.success) {
+        markCreditDistributed(req.id);
+        distributed = true;
+        logger.info(`[credit-auto-distribute] success: request #${req.id}`);
+
+        // 배분 성공 → 자동 승인(발주서 메일 발송)으로 넘긴다.
+        // 단, distributeCredits가 진행되는 동안(수 초) 고객이 취소요청을 넣고 매니저가 이미
+        // 승인해버렸을 수 있는 극히 드문 race를 대비해 상태를 다시 확인한다 —
+        // status가 더 이상 'pending'이 아니면(취소 처리됨) 자동승인/메일발송을 건너뛰고
+        // 크레딧이 이미 지급되었음을 관리자에게 알려 수동 확인을 받는다.
+        const fresh = getPortalRequestById(req.id);
+        if (fresh && fresh.status === 'pending') {
+          await sendCreditInvoiceMail(req.id, 'auto');
+          updatePortalRequestStatus(req.id, 'approved');
+        } else {
+          logger.warn(
+            `[credit-auto-distribute] request #${req.id} distributed successfully but status is now "${fresh?.status}" ` +
+            `(likely cancelled while distribution was in flight) — NOT auto-approving; needs manual reconciliation`
+          );
+          await notificationService.sendCriticalAutomationAlert({
+            serial_number: req.exocad_id,
+            target_label: 'my.exocad ID',
+            action: { ko: '포털 크레딧 자동배분/승인 불일치', en: 'Portal credit auto-distribution/approval mismatch', ja: 'ポータルクレジット自動配分/承認の不一致' },
+            details: {
+              ko: `크레딧이 이미 배분되었으나 처리 도중 신청(#${req.id}) 상태가 "${fresh?.status}"로 변경되어 자동승인하지 않았습니다. 수동으로 확인해주세요.`,
+              en: `Credits were already distributed but request (#${req.id}) status changed to "${fresh?.status}" during processing — skipped auto-approval. Please verify manually.`,
+              ja: `クレジットは既に配分されましたが、処理中に申請(#${req.id})の状態が"${fresh?.status}"に変わったため自動承認しませんでした。手動で確認してください。`,
+            },
+            trigger_id: triggerId,
+          }).catch((err: unknown) => logger.error(`[credit-auto-distribute] critical alert failed: ${getErrorMessage(err)}`));
+        }
+      } else {
+        markCreditDistributionFailed(req.id, result.error || 'unknown error');
+        logger.error(`[credit-auto-distribute] FAILED: request #${req.id} - ${result.error}`);
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: req.exocad_id,
+          target_label: 'my.exocad ID',
+          action: { ko: '포털 크레딧 자동배분', en: 'Portal credit auto-distribution', ja: 'ポータルクレジット自動配分' },
+          error: result.error,
+          details: {
+            ko: `포털 크레딧 신청(#${req.id})의 자동배분이 실패했습니다. partner.exocad.com에서 수동으로 확인 후 재처리해주세요.`,
+            en: `Portal credit request (#${req.id}) auto-distribution failed. Check partner.exocad.com and reprocess manually if needed.`,
+            ja: `ポータルクレジット申請(#${req.id})の自動配分が失敗しました。partner.exocad.comで確認の上、必要に応じて手動で再処理してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch((err: unknown) => logger.error(`[credit-auto-distribute] critical alert failed: ${getErrorMessage(err)}`));
+      }
+    } catch (err: unknown) {
+      // 배분 결과를 확신할 수 없는 예외. 아직 성공 마킹 전이면 'failed'로 전이 + 알림.
+      logger.error(`[credit-auto-distribute] request #${req.id} threw during processing: ${getErrorMessage(err)}`);
+      if (!distributed) {
+        markCreditDistributionFailed(req.id, `exception during distribution: ${getErrorMessage(err)}`);
+        await notificationService.sendCriticalAutomationAlert({
+          serial_number: req.exocad_id,
+          target_label: 'my.exocad ID',
+          action: { ko: '포털 크레딧 자동배분', en: 'Portal credit auto-distribution', ja: 'ポータルクレジット自動配分' },
+          error: getErrorMessage(err),
+          details: {
+            ko: `포털 크레딧 신청(#${req.id})의 자동배분 처리 중 예외가 발생했습니다. partner.exocad.com에서 확인 후 재처리해주세요.`,
+            en: `Portal credit request (#${req.id}) threw an exception during auto-distribution. Check partner.exocad.com and reprocess manually if needed.`,
+            ja: `ポータルクレジット申請(#${req.id})の自動配分処理中に例外が発生しました。partner.exocad.comで確認の上、再処理してください。`,
+          },
+          trigger_id: triggerId,
+        }).catch((e: unknown) => logger.error(`[credit-auto-distribute] critical alert failed: ${getErrorMessage(e)}`));
+      }
+    }
+
+    await sleep(2000);
+  }
+
+  return {
+    processed: candidates.length,
+    success: results.filter(r => r.success).length,
+    failed: results.filter(r => !r.success).length,
     results,
   };
 }
