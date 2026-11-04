@@ -247,13 +247,14 @@ export default function RequestedOrder() {
                     <option value="active">{t(lang, 'requested_order_status_active')}</option>
                     <option value="not-activated">{t(lang, 'requested_order_status_not_activated')}</option>
                   </select>
-                  <button onClick={() => setEditingGroup(group)} style={ghostButtonStyle}>
+                  {/* Edit and approve/reject must never overlap: an edit saved after approval is silently lost */}
+                  <button onClick={() => setEditingGroup(group)} disabled={busyKey !== null} style={ghostButtonStyle}>
                     {t(lang, 'requested_order_edit_group')}
                   </button>
-                  <button onClick={() => approveGroup(group)} disabled={busyKey === `approve:${key}`} style={primaryButtonStyle}>
+                  <button onClick={() => approveGroup(group)} disabled={busyKey !== null || editingGroup !== null} style={primaryButtonStyle}>
                     {busyKey === `approve:${key}` ? t(lang, 'requested_order_approving_group') : t(lang, 'requested_order_approve_group')}
                   </button>
-                  <button onClick={() => rejectGroup(group)} disabled={busyKey === `reject:${key}`} style={dangerButtonStyle}>
+                  <button onClick={() => rejectGroup(group)} disabled={busyKey !== null || editingGroup !== null} style={dangerButtonStyle}>
                     {busyKey === `reject:${key}` ? t(lang, 'requested_order_rejecting_group') : t(lang, 'requested_order_reject_group')}
                   </button>
                 </div>
@@ -496,17 +497,24 @@ function EditGroupedOrdersModal({ group, lang, saving, onSave, onClose }: {
                 {([
                   ['label_purchase_date', 'purchase_date', 'date'],
                   ['label_expiry_date', 'expiry_date', 'date'],
-                ] as [TranslationKey, EditableTextField, string][]).map(([lk, fk, type]) => (
-                  <label key={fk} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)' }}>
-                    <span style={{ fontWeight: 700 }}>{t(lang, lk)}</span>
-                    <input
-                      type={type}
-                      value={String(order[fk] ?? '')}
-                      onChange={ev => setField(order.id, fk, ev.target.value)}
-                      style={{ padding: '6px 8px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', boxSizing: 'border-box', width: '100%' }}
-                    />
-                  </label>
-                ))}
+                ] as [TranslationKey, EditableTextField, string][]).map(([lk, fk, type]) => {
+                  // Expiry is greyed out on orders whose approval cannot change the serial's expiry
+                  const locked = fk === 'expiry_date' && order.expiry_editable === false;
+                  return (
+                    <label key={fk} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)' }}>
+                      <span style={{ fontWeight: 700 }}>{t(lang, lk)}</span>
+                      <input
+                        type={type}
+                        value={String(order[fk] ?? '')}
+                        disabled={locked}
+                        title={locked ? t(lang, 'requested_order_expiry_not_applied') : undefined}
+                        onChange={ev => setField(order.id, fk, ev.target.value)}
+                        style={{ padding: '6px 8px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', boxSizing: 'border-box', width: '100%', ...(locked ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}
+                      />
+                      {locked && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{t(lang, 'requested_order_expiry_not_applied')}</span>}
+                    </label>
+                  );
+                })}
               </div>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text3)', marginTop: 10 }}>
                 <span style={{ fontWeight: 700 }}>{t(lang, 'label_notes')}</span>

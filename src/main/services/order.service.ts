@@ -163,6 +163,8 @@ export function listGroupedOrders(): GroupedOrder[] {
       const ordersInGroup = bucket.sort((a, b) => a.id - b.id);
       const main = ordersInGroup.find(o => o.order_type === 'new' || o.order_type === 'renewal') ?? ordersInGroup[0] ?? null;
       const modules = ordersInGroup.filter(o => o !== main);
+      const carrierId = resolveExpiryCarrierId([main, ...modules].filter((o): o is PendingOrder => !!o));
+      for (const o of ordersInGroup) o.expiry_editable = o.id === carrierId;
       return {
         trade_number: tradeNumber.startsWith('single:') ? '' : tradeNumber,
         main,
@@ -542,6 +544,32 @@ function getPendingOrderPollGroup(order: PendingOrder): ProductCodeGroup | null 
     if (typeof rawObj._poll_group === 'string') return rawObj._poll_group as ProductCodeGroup;
   } catch { /* ignore */ }
   return resolveGroup(order.product_code || '', getSettings().custom_product_code_rules || []);
+}
+
+/**
+ * Picks the single order in a group whose expiry_date can affect the serial on approval.
+ * Mirrors the client's approval order (new → renewal → others, stable).
+ * - main / renewal groups (or unclassified new/renewal orders) carry the expiry.
+ * - memo / renewal_addon only matter when they create a serial that does not exist yet.
+ * - addon / upgrade / credits never touch the expiry.
+ */
+export function resolveExpiryCarrierId(groupOrders: PendingOrder[]): number | null {
+  const score = (o: PendingOrder) => (o.order_type === 'new' ? 0 : o.order_type === 'renewal' ? 1 : 2);
+  const ordered = [...groupOrders].sort((a, b) => score(a) - score(b));
+
+  const primary = ordered.find(o => {
+    if (o.order_type === 'addon') return false;
+    const g = getPendingOrderPollGroup(o);
+    return g === 'main' || g === 'renewal' || g === null;
+  });
+  if (primary) return primary.id;
+
+  const creator = ordered.find(o => {
+    if (o.order_type === 'addon') return false;
+    const g = getPendingOrderPollGroup(o);
+    return (g === 'memo' || g === 'renewal_addon') && !o.existing_status;
+  });
+  return creator?.id ?? null;
 }
 
 function parseOrderModules(order: Pick<PendingOrder, 'modules' | 'raw_data'>): string[] {
