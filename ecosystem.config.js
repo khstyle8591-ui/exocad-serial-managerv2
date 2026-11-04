@@ -7,17 +7,17 @@ module.exports = {
     apps: [
         {
             name: 'exocad-serial',
-            script: 'dist/main/server.js',
+            script: 'dist/main/main/server.js',
             cwd: __dirname,
             env: {
                 NODE_ENV: 'production',
                 HTTP_PORT: 3000,
                 BIND_HOST: '127.0.0.1',        // Cloudflare Tunnel: 로컬호스트만 리슨
-                ALLOWED_ORIGIN: 'https://your-cloudflare-domain.com',
-                DB_PATH: '/home/geomedicho/exocad-serial/data/exocad.db',
-                DATA_DIR: '/home/geomedicho/exocad-serial/data',
-                LOG_DIR: '/home/geomedicho/exocad-serial/logs',
-                PORTAL_BASE_URL: 'https://your-cloudflare-domain.com',
+                ALLOWED_ORIGIN: 'https://exocadai.geomedi.co.jp',
+                PORTAL_BASE_URL: 'https://exocadai.geomedi.co.jp',
+                DB_PATH: '/home/geomedipm/exocad-serial/data/exocad.db',
+                DATA_DIR: '/home/geomedipm/exocad-serial/data',
+                LOG_DIR: '/home/geomedipm/exocad-serial/logs',
             },
             watch: false,
             autorestart: true,
