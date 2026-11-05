@@ -622,8 +622,12 @@ export class SerialService {
   }
 
   /** renewSerial — backward compat alias (used by order.service.ts). */
-  renewSerial(id: number, source: ActivityLog['actor'] = 'manual'): SerialWithCustomer | undefined {
-    return this._renew(id, source);
+  renewSerial(
+    id: number,
+    source: ActivityLog['actor'] = 'manual',
+    opts?: { floorToToday?: boolean },
+  ): SerialWithCustomer | undefined {
+    return this._renew(id, source, opts);
   }
 
   /**
@@ -670,7 +674,11 @@ export class SerialService {
     return this.getById(id);
   }
 
-  private _renew(id: number, actor: ActivityLog['actor']): SerialWithCustomer | undefined {
+  private _renew(
+    id: number,
+    actor: ActivityLog['actor'],
+    opts?: { floorToToday?: boolean },
+  ): SerialWithCustomer | undefined {
     const db = getDb();
     const transaction = db.transaction(() => {
       const existing = this.getById(id);
@@ -693,7 +701,11 @@ export class SerialService {
         return existing;
       }
 
-      const base = existing.expiry_date ? new Date(existing.expiry_date) : new Date();
+      // floorToToday: an already-expired serial is extended from today, not from its past expiry
+      const baseDate = opts?.floorToToday && existing.expiry_date && existing.expiry_date < today
+        ? today
+        : existing.expiry_date;
+      const base = baseDate ? new Date(baseDate) : new Date();
       if (isNaN(base.getTime())) {
         throw new Error(`갱신 실패: 잘못된 만료일 형식 "${existing.expiry_date}" (serial id=${id})`);
       }
