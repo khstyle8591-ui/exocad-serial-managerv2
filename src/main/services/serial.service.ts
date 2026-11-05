@@ -478,6 +478,17 @@ export class SerialService {
 
     const updated = this.getById(id);
 
+    // Expiry edits outside renew paths (approval field updates, manager edits) had no audit trail
+    if (input.expiry_date !== undefined && (existing.expiry_date || '') !== (updated?.expiry_date || '')) {
+      const before = existing.expiry_date || '-';
+      const after = updated?.expiry_date || '-';
+      this.logActivity(id, 'system', 'manual', { expiry_date: [existing.expiry_date || '', updated?.expiry_date || ''] }, pickLang({
+        ko: `만료일 변경: ${before} -> ${after}`,
+        en: `Expiry changed: ${before} -> ${after}`,
+        ja: `失効日変更: ${before} -> ${after}`,
+      }));
+    }
+
     // 만료일 변경 시 갱신 안내 메일 발송 여부는 매니저 UI 팝업에서 결정 (자동 발송 없음)
 
     return updated;

@@ -128,7 +128,7 @@ export default function RequestedOrder() {
       setEditingGroup(null);
       await load();
     } catch (error: unknown) {
-      alert(getErrorMessage(error) || t(lang, 'requested_order_save_error'));
+      alert(translateServerError(getErrorMessage(error), lang) || t(lang, 'requested_order_save_error'));
     } finally {
       setBusyKey(null);
     }

@@ -185,8 +185,14 @@ export function listGroupedOrders(): GroupedOrder[] {
 
 export function updatePendingOrder(id: number, data: Partial<PendingOrder>): PendingOrder | undefined {
   const db = getDb();
+  const current = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
+  if (!current) return undefined;
+  // An edit saved after approval/rejection would be silently lost (e.g. a second tab) — refuse it.
+  if (current.status !== 'pending') throw new Error(SERVER_ERRORS.ORDER_ALREADY_PROCESSED);
+
   const fields: string[] = [];
   const values: unknown[] = [];
+  const diff: Record<string, [unknown, unknown]> = {};
 
   const allowed = [
     'serial_number', 'customer_name', 'customer_email', 'customer_address',
@@ -199,27 +205,47 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
     if (data[key] !== undefined) {
       fields.push(`${key} = ?`);
       values.push(data[key] ?? '');
+      if ((current[key] ?? '') !== (data[key] ?? '')) diff[key] = [current[key] ?? '', data[key] ?? ''];
     }
   }
-  if (fields.length === 0) return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
+  if (fields.length === 0) return current;
 
   // Mark operator-entered expiry so approval can tell it apart from the polled value.
   // Only a real change counts: the edit panel re-sends every field on save.
-  if (data.expiry_date !== undefined) {
-    const current = db.prepare('SELECT expiry_date, raw_data FROM pending_orders WHERE id = ?').get(id) as
-      Pick<PendingOrder, 'expiry_date' | 'raw_data'> | undefined;
-    if (current && normalizeDate(current.expiry_date) !== normalizeDate(data.expiry_date ?? '')) {
-      let rawObj: Record<string, unknown>;
-      try { rawObj = JSON.parse(current.raw_data || '{}'); } catch { rawObj = { _raw: current.raw_data }; }
-      if (normalizeDate(data.expiry_date ?? '')) rawObj._manual_expiry = true;
-      else delete rawObj._manual_expiry;
-      fields.push('raw_data = ?');
-      values.push(JSON.stringify(rawObj));
-    }
+  if (data.expiry_date !== undefined && normalizeDate(current.expiry_date) !== normalizeDate(data.expiry_date ?? '')) {
+    let rawObj: Record<string, unknown>;
+    try { rawObj = JSON.parse(current.raw_data || '{}'); } catch { rawObj = { _raw: current.raw_data }; }
+    if (normalizeDate(data.expiry_date ?? '')) rawObj._manual_expiry = true;
+    else delete rawObj._manual_expiry;
+    fields.push('raw_data = ?');
+    values.push(JSON.stringify(rawObj));
   }
 
   values.push(id);
   db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+  const changed = Object.keys(diff);
+  if (changed.length > 0) {
+    try {
+      const serialNumber = (data.serial_number ?? current.serial_number) || '';
+      const serial = serialNumber ? serialService.getBySerialNumber(serialNumber) : undefined;
+      const label = `#${id}${current.trade_number ? ` (${current.trade_number})` : ''} ${serialNumber}`.trim();
+      logActivity({
+        serial_id: serial?.id ?? null,
+        action: 'system',
+        actor: 'manual',
+        diff,
+        details: pickLang({
+          ko: `대기 주문 수정 ${label}: ${changed.join(', ')}`,
+          en: `Pending order edited ${label}: ${changed.join(', ')}`,
+          ja: `保留注文編集 ${label}: ${changed.join(', ')}`,
+        }),
+      });
+    } catch (err: unknown) {
+      // Audit log failure must not fail the edit itself
+      logger.warn(`[updatePendingOrder] activity log failed for order #${id}: ${getErrorMessage(err)}`);
+    }
+  }
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
