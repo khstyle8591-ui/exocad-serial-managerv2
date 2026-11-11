@@ -18,6 +18,7 @@ import {
   countActionablePortalRequests,
   getAccountLinks,
   isSerialLinked,
+  isPlaceholderCustomerName,
   createAccountLink,
   type PortalRequestType,
   type PortalRequestStatus,
@@ -168,6 +169,14 @@ router.post('/accounts/:id/link-serial', (req: Request, res: Response) => {
 
   const serialRecord = serialService.getBySerialNumber(serial.trim());
   if (!serialRecord) { res.status(404).json({ error: 'serial_not_found' }); return; }
+
+  if (isPlaceholderCustomerName(serialRecord.customer?.name)) {
+    res.status(409).json({
+      code: 'serial_unassigned',
+      error: '이 시리얼은 고객 미지정("(Unknown)") 상태입니다. 먼저 시리얼에 실제 고객을 지정한 뒤 연결하세요.',
+    });
+    return;
+  }
 
   if (isSerialLinked(id, serialRecord.customer_id)) {
     res.json({ ok: true, already_linked: true, customer_id: serialRecord.customer_id, main_product: serialRecord.main_product });

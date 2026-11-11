@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { requirePortalAuth, requireCsrf, type PortalRequest } from '../middleware';
-import { createAccountLink, getAccountLinks, isSerialLinked, findAccountById, setCustomerMismatch } from '../db';
+import { createAccountLink, getAccountLinks, isSerialLinked, isPlaceholderCustomerName, findAccountById, setCustomerMismatch } from '../db';
 import { syncPortalAccountIfNeeded } from '../sync';
 import { logActivity } from '../../../main/services/activity-log.service';
 import { serialService } from '../../../main/services/serial.service';
@@ -36,6 +36,19 @@ router.post('/link-serial', requirePortalAuth, requireCsrf, (req: Request, res: 
   const serialRecord = serialService.getBySerialNumber(serial.trim());
   if (!serialRecord) {
     res.status(404).json({ code: 'identity_mismatch', error: 'serial_not_found' });
+    return;
+  }
+
+  // Unassigned serial — respond exactly like "not found" so the portal shows the
+  // contact-PM popup and does not reveal that the serial exists.
+  if (isPlaceholderCustomerName(serialRecord.customer?.name)) {
+    logActivity({
+      action: 'system',
+      actor: 'system',
+      severity: 'warn',
+      details: `Portal account #${accountId} tried to link unassigned serial ${serialRecord.serial_number} (customer #${serialRecord.customer_id} "${serialRecord.customer?.name ?? ''}") — blocked`,
+    });
+    res.status(404).json({ code: 'identity_mismatch', error: 'serial_unassigned' });
     return;
   }
 

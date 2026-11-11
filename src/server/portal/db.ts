@@ -113,6 +113,16 @@ export function consumeResetToken(token: string): ResetTokenRow | null {
 
 // ── Account links ─────────────────────────────────────────────────────────────
 
+/**
+ * Serials with no known owner are filed under a placeholder customer named '(Unknown)'
+ * (see resolveCustomerId in serial.service.ts). Links are per customer, so linking a
+ * portal account to that placeholder would expose every unassigned serial to it.
+ */
+export function isPlaceholderCustomerName(name: string | null | undefined): boolean {
+  const n = (name ?? '').trim();
+  return n === '' || n === '(Unknown)';
+}
+
 export function isSerialLinked(accountId: number, customerId: number): boolean {
   const row = getDb()
     .prepare<[number, number], { n: number }>(
