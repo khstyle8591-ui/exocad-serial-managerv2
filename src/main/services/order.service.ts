@@ -163,6 +163,14 @@ export function listGroupedOrders(): GroupedOrder[] {
       const ordersInGroup = bucket.sort((a, b) => a.id - b.id);
       const main = ordersInGroup.find(o => o.order_type === 'new' || o.order_type === 'renewal') ?? ordersInGroup[0] ?? null;
       const modules = ordersInGroup.filter(o => o !== main);
+      // One expiry carrier per serial: a trade can cover several serials
+      const ordered = [main, ...modules].filter((o): o is PendingOrder => !!o);
+      const carrierIds = new Set<number>();
+      for (const sn of new Set(ordered.map(o => o.serial_number || ''))) {
+        const id = resolveExpiryCarrierId(ordered.filter(o => (o.serial_number || '') === sn));
+        if (id !== null) carrierIds.add(id);
+      }
+      for (const o of ordersInGroup) o.expiry_editable = carrierIds.has(o.id);
       return {
         trade_number: tradeNumber.startsWith('single:') ? '' : tradeNumber,
         main,
@@ -177,8 +185,14 @@ export function listGroupedOrders(): GroupedOrder[] {
 
 export function updatePendingOrder(id: number, data: Partial<PendingOrder>): PendingOrder | undefined {
   const db = getDb();
+  const current = db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder | undefined;
+  if (!current) return undefined;
+  // An edit saved after approval/rejection would be silently lost (e.g. a second tab) — refuse it.
+  if (current.status !== 'pending') throw new Error(SERVER_ERRORS.ORDER_ALREADY_PROCESSED);
+
   const fields: string[] = [];
   const values: unknown[] = [];
+  const diff: Record<string, [unknown, unknown]> = {};
 
   const allowed = [
     'serial_number', 'customer_name', 'customer_email', 'customer_address',
@@ -191,12 +205,47 @@ export function updatePendingOrder(id: number, data: Partial<PendingOrder>): Pen
     if (data[key] !== undefined) {
       fields.push(`${key} = ?`);
       values.push(data[key] ?? '');
+      if ((current[key] ?? '') !== (data[key] ?? '')) diff[key] = [current[key] ?? '', data[key] ?? ''];
     }
   }
-  if (fields.length === 0) return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
+  if (fields.length === 0) return current;
+
+  // Mark operator-entered expiry so approval can tell it apart from the polled value.
+  // Only a real change counts: the edit panel re-sends every field on save.
+  if (data.expiry_date !== undefined && normalizeDate(current.expiry_date) !== normalizeDate(data.expiry_date ?? '')) {
+    let rawObj: Record<string, unknown>;
+    try { rawObj = JSON.parse(current.raw_data || '{}'); } catch { rawObj = { _raw: current.raw_data }; }
+    if (normalizeDate(data.expiry_date ?? '')) rawObj._manual_expiry = true;
+    else delete rawObj._manual_expiry;
+    fields.push('raw_data = ?');
+    values.push(JSON.stringify(rawObj));
+  }
 
   values.push(id);
   db.prepare(`UPDATE pending_orders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+  const changed = Object.keys(diff);
+  if (changed.length > 0) {
+    try {
+      const serialNumber = (data.serial_number ?? current.serial_number) || '';
+      const serial = serialNumber ? serialService.getBySerialNumber(serialNumber) : undefined;
+      const label = `#${id}${current.trade_number ? ` (${current.trade_number})` : ''} ${serialNumber}`.trim();
+      logActivity({
+        serial_id: serial?.id ?? null,
+        action: 'system',
+        actor: 'manual',
+        diff,
+        details: pickLang({
+          ko: `대기 주문 수정 ${label}: ${changed.join(', ')}`,
+          en: `Pending order edited ${label}: ${changed.join(', ')}`,
+          ja: `保留注文編集 ${label}: ${changed.join(', ')}`,
+        }),
+      });
+    } catch (err: unknown) {
+      // Audit log failure must not fail the edit itself
+      logger.warn(`[updatePendingOrder] activity log failed for order #${id}: ${getErrorMessage(err)}`);
+    }
+  }
   return db.prepare('SELECT * FROM pending_orders WHERE id = ?').get(id) as PendingOrder;
 }
 
@@ -322,10 +371,12 @@ export async function approvePendingOrder(
         // 이미 존재 → active면 갱신(연장), non-active면 상태 반영 + 만료일 clear
         const customerUpdates: Partial<SerialInput> = {};
         if (targetStatus === 'active') {
-          // 갱신 처리 (flag_duplicate가 설정된 경우). 호출자에게 was_renewed로 알림
-          was_renewed = true;
-          serialService.renewSerial(existing.id, 'manual');
-          if (order.expiry_date) customerUpdates.expiry_date = order.expiry_date;
+          // Existing serial: only the group's expiry carrier extends it (once per group).
+          // The polled expiry_date is ignored here; only an operator-entered date overrides +1 year.
+          if (isExpiryCarrierOnApproval(order)) {
+            was_renewed = true;
+            applyApprovalExpiry(existing.id, order);
+          }
         } else {
           // not-active 승인: 만료일 연장 없이 상태만 반영하고 expiry clear
           customerUpdates.status = targetStatus;
@@ -374,8 +425,10 @@ export async function approvePendingOrder(
       if (targetStatus !== 'active') {
         // not-active 승인: 연장 없이 상태만 반영하고 expiry clear
         serialService.update(serial.id, { status: targetStatus, expiry_date: '' });
+      } else if (!isExpiryCarrierOnApproval(order)) {
+        logger.info(`[approve] renewal expiry skip — another order in trade ${order.trade_number} carries it: serial=${order.serial_number}`);
       } else {
-        const pollExpiry = normalizeDate(order.expiry_date);
+        const pollExpiry = getManualExpiry(order) ? '' : normalizeDate(order.expiry_date);
         if (pollGroup === 'renewal' && pollExpiry) {
           const newExpiry = new Date(pollExpiry);
           newExpiry.setFullYear(newExpiry.getFullYear() + 1);
@@ -387,10 +440,10 @@ export async function approvePendingOrder(
               serialService.update(serial.id, { status: 'active', renewal_stop_requested: false });
             }
           } else {
-            serialService.renewSerialWithExpiry(serial.id, newExpiryStr, 'manual');
+            applyApprovalExpiry(serial.id, order);
           }
         } else {
-          serialService.renewSerial(serial.id, 'manual');
+          applyApprovalExpiry(serial.id, order);
         }
       }
       const renewalMemo = getOrderProductMemo(order, today);
@@ -542,6 +595,68 @@ function getPendingOrderPollGroup(order: PendingOrder): ProductCodeGroup | null 
     if (typeof rawObj._poll_group === 'string') return rawObj._poll_group as ProductCodeGroup;
   } catch { /* ignore */ }
   return resolveGroup(order.product_code || '', getSettings().custom_product_code_rules || []);
+}
+
+/**
+ * Picks the single order in a group whose expiry_date can affect the serial on approval.
+ * Mirrors the client's approval order (new → renewal → others, stable).
+ * - main / renewal groups (or unclassified new/renewal orders) carry the expiry.
+ * - memo / renewal_addon only matter when they create a serial that does not exist yet.
+ * - addon / upgrade / credits never touch the expiry.
+ */
+export function resolveExpiryCarrierId(groupOrders: PendingOrder[]): number | null {
+  const score = (o: PendingOrder) => (o.order_type === 'new' ? 0 : o.order_type === 'renewal' ? 1 : 2);
+  const ordered = [...groupOrders].sort((a, b) => score(a) - score(b));
+
+  const primary = ordered.find(o => {
+    if (o.order_type === 'addon') return false;
+    const g = getPendingOrderPollGroup(o);
+    return g === 'main' || g === 'renewal' || g === null;
+  });
+  if (primary) return primary.id;
+
+  const creator = ordered.find(o => {
+    if (o.order_type === 'addon') return false;
+    const g = getPendingOrderPollGroup(o);
+    return (g === 'memo' || g === 'renewal_addon') && !o.existing_status;
+  });
+  return creator?.id ?? null;
+}
+
+/**
+ * Same carrier rule as the list view, evaluated against the same trade + serial
+ * (already-approved siblings included, so approving one by one picks the same carrier).
+ */
+function isExpiryCarrierOnApproval(order: PendingOrder): boolean {
+  const trade = order.trade_number?.trim();
+  if (!trade) return true;
+  const siblings = getDb().prepare(
+    "SELECT * FROM pending_orders WHERE TRIM(trade_number) = ? AND serial_number = ? AND status != 'rejected' ORDER BY id",
+  ).all(trade, order.serial_number || '') as PendingOrder[];
+  if (!siblings.some(o => o.id === order.id)) siblings.push(order);
+  return resolveExpiryCarrierId(siblings) === order.id;
+}
+
+/** Operator-entered expiry from the edit panel (see updatePendingOrder), or '' when the value is polled/empty. */
+function getManualExpiry(order: PendingOrder): string {
+  try {
+    const rawObj = JSON.parse(order.raw_data || '{}');
+    if (rawObj._manual_expiry !== true) return '';
+  } catch { return ''; }
+  return normalizeDate(order.expiry_date);
+}
+
+/**
+ * Expiry rule for approving an order on an existing active serial:
+ * a manually entered date wins; otherwise +1 year from max(current expiry, today).
+ */
+function applyApprovalExpiry(serialId: number, order: PendingOrder): void {
+  const manual = getManualExpiry(order);
+  if (manual) {
+    serialService.renewSerialWithExpiry(serialId, manual, 'manual');
+    return;
+  }
+  serialService.renewSerial(serialId, 'manual', { floorToToday: true });
 }
 
 function parseOrderModules(order: Pick<PendingOrder, 'modules' | 'raw_data'>): string[] {
