@@ -175,7 +175,7 @@ export function startScheduler(): void {
   // 매일 00:05 JST — 만료 상태 일괄 동기화 (getAll에서 제거된 syncExpiredStatus 대체)
   cron.schedule('5 0 * * *', () => {
     try { serialService.syncExpired(); } catch { /* ignore */ }
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   // 매일 00:10 JST — 30일 이상 된 Playwright 스크린샷 정리 (디스크 고갈 방지)
   cron.schedule('10 0 * * *', () => {
@@ -184,7 +184,7 @@ export function startScheduler(): void {
     if (deleted > 0) logger.info(`[activity_logs] deleted old rows: ${deleted}`);
     const deletedNoticeLogs = deleteExpiredSerialMailNoticeLogs();
     if (deletedNoticeLogs > 0) logger.info(`[serial_mail_notice_logs] deleted expired rows: ${deletedNoticeLogs}`);
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
   startMailCheck();
@@ -223,14 +223,14 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`Monthly report error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
-  limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo' });
 
   // 6-a. 일일 크론 워치독 — 15분마다 사전취소/Limbo가 오늘 실행됐는지 재확인.
   // node-cron이 특정 틱에서 콜백을 놓치는 경우(이벤트루프 지연 등) 대비한 세이프티넷.
-  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo' });
 
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
@@ -245,7 +245,7 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`[credit-auto-distribute] error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   // 8. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
@@ -314,7 +314,7 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`Daily summary Slack notification error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   // 7. 전체 스케줄링 요약 로그
   const settings = getSettings();
@@ -438,7 +438,7 @@ function startPreExpiryTask(): void {
   const cronExpr = timeToCron(settings.auto_cancel_time || '09:00');
   logger.info(`Pre-expiry auto-cancel schedule: ${cronExpr} (auto_cancel_time: ${settings.auto_cancel_time})`);
 
-  preExpiryCancelTask = cron.schedule(cronExpr, () => runPreExpiryCancelOnce(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  preExpiryCancelTask = cron.schedule(cronExpr, () => runPreExpiryCancelOnce(), { timezone: 'Asia/Tokyo' });
 
   // 실패 건 재시도 스케줄링 (설정된 시각 2시간 후 실행)
   if (retryCancelTask) {
@@ -458,7 +458,7 @@ function startPreExpiryTask(): void {
 
   retryCancelTask = cron.schedule(retryCron, async () => {
     await retryFailedCancellations();
-  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  }, { timezone: 'Asia/Tokyo' });
 
   logger.info(`Failure retry schedule: ${retryCron} (2 hours after auto-cancel)`);
 }
@@ -612,15 +612,13 @@ function startAutoRenewTask(): void {
     autoRenewTask = null;
   }
 
-  // recoverMissedExecutions: node-cron only checks the current second on each ~1s tick, so a
-  // tick that lands after 00:10:00 (event-loop delay, e.g. the 00:10 cleanup job running
-  // synchronously first) silently skips the day. Production missed most days in Oct–Nov 2026.
-  // With recovery on, the skipped second is still caught on the next tick; the daily guard in
-  // runAutoRenewOnce keeps it to one run per day, and the watchdog covers anything left.
-  autoRenewTask = cron.schedule('10 0 * * *', () => runAutoRenewOnce(), {
-    timezone: 'Asia/Tokyo',
-    recoverMissedExecutions: true,
-  });
+  // node-cron only checks the current second on each ~1s tick, so a tick that lands after
+  // 00:10:00 silently skips the day (production missed most days in Oct–Nov 2026). The watchdog
+  // re-runs it within 15 minutes; runAutoRenewOnce's daily guard keeps it to one run per day.
+  // Do NOT enable recoverMissedExecutions: in node-cron 3.0.3 it re-emits the same second on the
+  // next tick (lastExecution is stored with ms zeroed), so jobs fire twice — seen in production
+  // on 2026-11-17 for the watchdog, order polling and the inbound mail check.
+  autoRenewTask = cron.schedule('10 0 * * *', () => runAutoRenewOnce(), { timezone: 'Asia/Tokyo' });
 
   logger.info('[AutoRenew] schedule registered: 00:10 KST');
 }
@@ -652,7 +650,7 @@ export function startMailCheck(): void {
 
   for (const time of times) {
     const cronExpr = timeToCron(time);
-    const task = cron.schedule(cronExpr, runMailCheck, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+    const task = cron.schedule(cronExpr, runMailCheck, { timezone: 'Asia/Tokyo' });
     mailCheckTasks.push(task);
   }
 
@@ -800,7 +798,7 @@ export function startExpiryNoticeTask(): void {
   const cronExpr = timeToCron(settings.expiry_notice_time || '05:00');
   logger.info(`[ExpiryNotice] 스케줄: ${cronExpr} (time: ${settings.expiry_notice_time || '05:00'})`);
 
-  expiryNoticeTask = cron.schedule(cronExpr, () => runExpiryNoticeOnce(settings), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+  expiryNoticeTask = cron.schedule(cronExpr, () => runExpiryNoticeOnce(settings), { timezone: 'Asia/Tokyo' });
 }
 
 async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Promise<void> {
@@ -1046,7 +1044,7 @@ export function startDailyReportTasks(): void {
       } catch (err: unknown) {
         logger.error(`Daily report error: ${getErrorMessage(err)}`);
       }
-    }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+    }, { timezone: 'Asia/Tokyo' });
 
     dailyReportTasks.push(task);
   }
