@@ -39,6 +39,7 @@ let dailyCancelResults: PersistedCancelResult[] = [];
 // 기준으로 이 플래그가 동시 진입을 막는다(크래시 시 재시도는 워치독이 그대로 담당).
 let preExpiryCancelRunning = false;
 let limboFallbackRunning = false;
+let autoRenewRunning = false;
 // lastReportSentDate를 메모리에만 두면 앱 재시작 시 초기화되어 중복 리포트 발송.
 // DB settings에 영속화하여 재시작 후에도 중복 방지.
 function getLastReportSentDate(): string {
@@ -388,6 +389,16 @@ async function runDailyCronWatchdog(): Promise<void> {
   } catch (err: unknown) {
     logger.error(`[Watchdog] limbo fallback error: ${getErrorMessage(err)}`);
   }
+
+  try {
+    const today = getTodayDateString();
+    if (hasScheduledTimePassedToday('00:10') && getJobLastRunDate('auto_renew') !== today) {
+      logger.warn("[Watchdog] auto-renew missed today's 00:10 run — executing now");
+      await runAutoRenewOnce();
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] auto-renew error: ${getErrorMessage(err)}`);
+  }
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -537,6 +548,37 @@ export function restartPreExpiryTask(): void {
   startPreExpiryTask();
 }
 
+// Runs auto-renew at most once per JST day. Shared by the 00:10 cron and the watchdog.
+// getAutoRenewCandidates only picks up serials expired within the last 3 days, so a run that
+// is skipped for more than 3 days loses those serials for good — hence the watchdog.
+async function runAutoRenewOnce(): Promise<void> {
+  const today = getTodayDateString();
+  if (getJobLastRunDate('auto_renew') === today) {
+    logger.info('[AutoRenew] already ran today, skip');
+    return;
+  }
+  if (autoRenewRunning) {
+    logger.warn('[AutoRenew] already running — skipping concurrent invocation');
+    return;
+  }
+  autoRenewRunning = true;
+
+  logger.info('[AutoRenew] auto-renew started');
+  try {
+    const result = await runAutoRenewNow();
+    if (result.renewed > 0) {
+      logger.info(`[AutoRenew] completed: renewed=${result.renewed} (${result.serials.join(', ')})`);
+    } else {
+      logger.info('[AutoRenew] no renewal targets');
+    }
+  } catch (err: unknown) {
+    logger.error(`[AutoRenew] error: ${getErrorMessage(err)}`);
+  } finally {
+    setJobLastRunDate('auto_renew', today);
+    autoRenewRunning = false;
+  }
+}
+
 // 매일 00:10 KST — 만료 시리얼 자동 갱신 (renewal_stop_requested = 0)
 function startAutoRenewTask(): void {
   if (autoRenewTask) {
@@ -544,19 +586,15 @@ function startAutoRenewTask(): void {
     autoRenewTask = null;
   }
 
-  autoRenewTask = cron.schedule('10 0 * * *', async () => {
-    logger.info('[AutoRenew] auto-renew started');
-    try {
-      const result = await runAutoRenewNow();
-      if (result.renewed > 0) {
-        logger.info(`[AutoRenew] completed: renewed=${result.renewed} (${result.serials.join(', ')})`);
-      } else {
-        logger.info('[AutoRenew] no renewal targets');
-      }
-    } catch (err: unknown) {
-      logger.error(`[AutoRenew] error: ${getErrorMessage(err)}`);
-    }
-  }, { timezone: 'Asia/Tokyo' });
+  // recoverMissedExecutions: node-cron only checks the current second on each ~1s tick, so a
+  // tick that lands after 00:10:00 (event-loop delay, e.g. the 00:10 cleanup job running
+  // synchronously first) silently skips the day. Production missed most days in Oct–Nov 2026.
+  // With recovery on, the skipped second is still caught on the next tick; the daily guard in
+  // runAutoRenewOnce keeps it to one run per day, and the watchdog covers anything left.
+  autoRenewTask = cron.schedule('10 0 * * *', () => runAutoRenewOnce(), {
+    timezone: 'Asia/Tokyo',
+    recoverMissedExecutions: true,
+  });
 
   logger.info('[AutoRenew] schedule registered: 00:10 KST');
 }
