@@ -1481,6 +1481,67 @@ export async function pollDryRun(sourceId?: string, sourceOverrides?: Partial<Po
   return dryResult;
 }
 
+// Per-source, per-time "ran today" marker, stored like the scheduler's cron_last_run:* keys.
+function pollGuardKey(sourceId: string, time: string): string {
+  return `cron_last_run:poll:${sourceId}:${time}`;
+}
+
+function getPollGuard(key: string): string {
+  try {
+    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value ?? '';
+  } catch { return ''; }
+}
+
+function setPollGuard(key: string, date: string): void {
+  try {
+    getDb().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, date);
+  } catch { /* DB not initialised */ }
+}
+
+// Scheduled polling fetches only the current day's ERP rows (resolvePollingDateRange), so a run
+// that node-cron skips loses that day's orders. Shared by the cron and the 15-minute watchdog.
+async function runScheduledPollOnce(source: PollSource, time: string): Promise<void> {
+  const today = getTodayDateString();
+  const key = pollGuardKey(source.id, time);
+  if (getPollGuard(key) === today) {
+    logger.info(`[Scheduler] scheduled polling already ran today: ${source.name} (${time}), skip`);
+    return;
+  }
+
+  logger.info(`[Scheduler] scheduled polling started: ${source.name} (${time})`);
+  const startedBefore = pollStartedAtMs;
+  try {
+    await pollNow(source.id);
+  } catch (err: unknown) {
+    logger.error(`[Scheduler] scheduled polling failed (${source.name}): ${getErrorMessage(err)}`);
+  }
+  // pollNow returns without running while another poll holds the lock (pollStartedAtMs unchanged).
+  // Leave the marker unset so the watchdog retries later today.
+  if (pollStartedAtMs === startedBefore) {
+    logger.warn(`[Scheduler] scheduled polling did not run (another poll in progress): ${source.name} (${time}) — watchdog will retry`);
+    return;
+  }
+  setPollGuard(key, today);
+}
+
+export async function runPollingWatchdog(): Promise<void> {
+  const settings = getSettings();
+  const today = getTodayDateString();
+  const nowTokyo = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const nowMinutes = nowTokyo.getHours() * 60 + nowTokyo.getMinutes();
+
+  for (const source of (settings.poll_sources || []).filter(s => s.enabled)) {
+    for (const time of source.schedule_times || []) {
+      const [h, m] = time.split(':').map(v => parseInt(v, 10));
+      if (isNaN(h) || isNaN(m) || nowMinutes < h * 60 + m) continue;
+      if (getPollGuard(pollGuardKey(source.id, time)) === today) continue;
+      logger.warn(`[Watchdog] order polling missed today's ${time} run (${source.name}) — executing now`);
+      await runScheduledPollOnce(source, time);
+    }
+  }
+}
+
 export function startPollingScheduler(): void {
   stopPollingScheduler();
   const settings = getSettings();
@@ -1500,12 +1561,8 @@ export function startPollingScheduler(): void {
           const minute = parseInt(minuteStr, 10);
           const cronExpr = `${minute} ${hour} * * *`;
           
-          const task = cron.schedule(cronExpr, async () => {
-            logger.info(`[Scheduler] scheduled polling started: ${source.name} (${time})`);
-            await pollNow(source.id).catch((err: unknown) => {
-              logger.error(`[Scheduler] scheduled polling failed (${source.name}): ${getErrorMessage(err)}`);
-            });
-          }, { timezone: 'Asia/Tokyo' });
+          const task = cron.schedule(cronExpr, () => runScheduledPollOnce(source, time),
+            { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
           
           tasks.push(task);
           logger.info(`[Scheduler] schedule registered: ${source.name} -> ${cronExpr} (KST)`);

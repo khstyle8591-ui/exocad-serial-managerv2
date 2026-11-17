@@ -229,6 +229,8 @@ export default function Portal() {
         showToast(t(lang, 'portal_toast_rejected'));
       } else if (res?.status === 'playwright_failed') {
         showToast(t(lang, 'portal_toast_cancel_failed'), 'warn');
+      } else if (res?.status === 'playwright_unverified') {
+        showToast(t(lang, 'portal_toast_cancel_unverified'), 'warn');
       } else {
         showToast(t(lang, 'portal_toast_approved'));
       }

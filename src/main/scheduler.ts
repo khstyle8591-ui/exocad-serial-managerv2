@@ -10,6 +10,7 @@ import { deleteOldActivityLogs } from './services/activity-log.service';
 import { deleteExpiredSerialMailNoticeLogs, logSerialMailNotice } from './services/serial-mail-notice-log.service';
 import { getSettings } from './settings';
 import { getDb } from './database';
+import { runPollingWatchdog } from './services/order.service';
 import { logger } from './utils/logger';
 import { getDateString, getTodayDateString, getYesterdayDateString } from './utils/date-utils';
 import type { DailyReport, CancelResult, ExpiryNoticeRule, ExpiryNoticeStopRule, SerialWithCustomer } from '../shared/types';
@@ -40,6 +41,7 @@ let dailyCancelResults: PersistedCancelResult[] = [];
 let preExpiryCancelRunning = false;
 let limboFallbackRunning = false;
 let autoRenewRunning = false;
+let expiryNoticeRunning = false;
 // lastReportSentDate를 메모리에만 두면 앱 재시작 시 초기화되어 중복 리포트 발송.
 // DB settings에 영속화하여 재시작 후에도 중복 방지.
 function getLastReportSentDate(): string {
@@ -173,7 +175,7 @@ export function startScheduler(): void {
   // 매일 00:05 JST — 만료 상태 일괄 동기화 (getAll에서 제거된 syncExpiredStatus 대체)
   cron.schedule('5 0 * * *', () => {
     try { serialService.syncExpired(); } catch { /* ignore */ }
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 매일 00:10 JST — 30일 이상 된 Playwright 스크린샷 정리 (디스크 고갈 방지)
   cron.schedule('10 0 * * *', () => {
@@ -182,7 +184,7 @@ export function startScheduler(): void {
     if (deleted > 0) logger.info(`[activity_logs] deleted old rows: ${deleted}`);
     const deletedNoticeLogs = deleteExpiredSerialMailNoticeLogs();
     if (deletedNoticeLogs > 0) logger.info(`[serial_mail_notice_logs] deleted expired rows: ${deletedNoticeLogs}`);
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 1. 메일 체크 — 설정된 시각 또는 기본값 (12:00, 17:00)
   startMailCheck();
@@ -221,14 +223,14 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`Monthly report error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 6. Limbo 보정 — 매일 03:00 JST (stop=1인데 만료 후에도 cancelled가 안 된 경우)
-  limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo' });
+  limboCronTask = cron.schedule('0 3 * * *', () => runLimboFallbackOnce(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 6-a. 일일 크론 워치독 — 15분마다 사전취소/Limbo가 오늘 실행됐는지 재확인.
   // node-cron이 특정 틱에서 콜백을 놓치는 경우(이벤트루프 지연 등) 대비한 세이프티넷.
-  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo' });
+  dailyCronWatchdogTask = cron.schedule('*/15 * * * *', () => runDailyCronWatchdog(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 7. 만료 예고 메일 — UI 설정 기반
   startExpiryNoticeTask();
@@ -243,7 +245,7 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`[credit-auto-distribute] error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 8. 매일 아침 08:30 일일 요약 Slack 알림
   // cancel 예정 시리얼, 갱신의뢰 접수, 전일 작업 요약
@@ -312,7 +314,7 @@ export function startScheduler(): void {
     } catch (err: unknown) {
       logger.error(`Daily summary Slack notification error: ${getErrorMessage(err)}`);
     }
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 7. 전체 스케줄링 요약 로그
   const settings = getSettings();
@@ -399,6 +401,30 @@ async function runDailyCronWatchdog(): Promise<void> {
   } catch (err: unknown) {
     logger.error(`[Watchdog] auto-renew error: ${getErrorMessage(err)}`);
   }
+
+  // Expiry notices target serials expiring exactly N days ahead, so a skipped day is lost for good.
+  try {
+    const today = getTodayDateString();
+    const settings = getSettings();
+    const noticeTime = settings.expiry_notice_time || '05:00';
+    if (
+      settings.expiry_notice_enabled !== false &&
+      hasScheduledTimePassedToday(noticeTime) &&
+      getJobLastRunDate('expiry_notice') !== today
+    ) {
+      logger.warn(`[Watchdog] expiry notice missed today's ${noticeTime} run — executing now`);
+      await runExpiryNoticeOnce(settings);
+    }
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] expiry notice error: ${getErrorMessage(err)}`);
+  }
+
+  // Order polling only fetches the current day's ERP rows, so a skipped day is lost for good.
+  try {
+    await runPollingWatchdog();
+  } catch (err: unknown) {
+    logger.error(`[Watchdog] order polling error: ${getErrorMessage(err)}`);
+  }
 }
 
 // 만료 전 자동 cancel 스케줄 시작 (설정된 시각 기반)
@@ -412,7 +438,7 @@ function startPreExpiryTask(): void {
   const cronExpr = timeToCron(settings.auto_cancel_time || '09:00');
   logger.info(`Pre-expiry auto-cancel schedule: ${cronExpr} (auto_cancel_time: ${settings.auto_cancel_time})`);
 
-  preExpiryCancelTask = cron.schedule(cronExpr, () => runPreExpiryCancelOnce(), { timezone: 'Asia/Tokyo' });
+  preExpiryCancelTask = cron.schedule(cronExpr, () => runPreExpiryCancelOnce(), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   // 실패 건 재시도 스케줄링 (설정된 시각 2시간 후 실행)
   if (retryCancelTask) {
@@ -432,7 +458,7 @@ function startPreExpiryTask(): void {
 
   retryCancelTask = cron.schedule(retryCron, async () => {
     await retryFailedCancellations();
-  }, { timezone: 'Asia/Tokyo' });
+  }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
   logger.info(`Failure retry schedule: ${retryCron} (2 hours after auto-cancel)`);
 }
@@ -626,7 +652,7 @@ export function startMailCheck(): void {
 
   for (const time of times) {
     const cronExpr = timeToCron(time);
-    const task = cron.schedule(cronExpr, runMailCheck, { timezone: 'Asia/Tokyo' });
+    const task = cron.schedule(cronExpr, runMailCheck, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
     mailCheckTasks.push(task);
   }
 
@@ -774,7 +800,7 @@ export function startExpiryNoticeTask(): void {
   const cronExpr = timeToCron(settings.expiry_notice_time || '05:00');
   logger.info(`[ExpiryNotice] 스케줄: ${cronExpr} (time: ${settings.expiry_notice_time || '05:00'})`);
 
-  expiryNoticeTask = cron.schedule(cronExpr, () => runExpiryNoticeOnce(settings), { timezone: 'Asia/Tokyo' });
+  expiryNoticeTask = cron.schedule(cronExpr, () => runExpiryNoticeOnce(settings), { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 }
 
 async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Promise<void> {
@@ -784,8 +810,16 @@ async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Pr
     return;
   }
 
+  // The 05:00 cron and the watchdog's 05:00 tick can fire together; without this flag both
+  // pass the daily guard above and every notice goes out twice.
+  if (expiryNoticeRunning) {
+    logger.warn('[ExpiryNotice] already running — skipping concurrent invocation');
+    return;
+  }
+  expiryNoticeRunning = true;
+
   logger.info('[ExpiryNotice] expiry notice email started');
-  {
+  try {
     const now = new Date();
     const renewalRules = normalizeExpiryNoticeRules(settings);
     const stopRules = normalizeExpiryNoticeStopRules(settings);
@@ -813,8 +847,11 @@ async function runExpiryNoticeOnce(settings: ReturnType<typeof getSettings>): Pr
         await sendOneExpiryNotice(serial, rule.stop_template, rule.days_before, 'expiry_stop', todayStr);
       }
     }
+  } finally {
+    // Marked even on an unexpected error: a rerun would resend the notices already sent today.
+    setJobLastRunDate('expiry_notice', today);
+    expiryNoticeRunning = false;
   }
-  setJobLastRunDate('expiry_notice', today);
 }
 
 export async function runExpiryNoticeDryRun(input: {
@@ -1009,7 +1046,7 @@ export function startDailyReportTasks(): void {
       } catch (err: unknown) {
         logger.error(`Daily report error: ${getErrorMessage(err)}`);
       }
-    }, { timezone: 'Asia/Tokyo' });
+    }, { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
 
     dailyReportTasks.push(task);
   }
