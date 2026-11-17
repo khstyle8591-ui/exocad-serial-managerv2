@@ -268,6 +268,8 @@ export interface PendingOrder {
   existing_customer_name?: string;
   customer_name_mismatch?: boolean;
   serial_status?: Serial['status'];
+  // Grouped-order list only: false when approving this order cannot change the serial's expiry
+  expiry_editable?: boolean;
 }
 
 export interface GroupedOrder {
