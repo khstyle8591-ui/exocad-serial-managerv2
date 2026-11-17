@@ -62,6 +62,9 @@ let cronTasks: Map<string, cron.ScheduledTask[]> = new Map();
 
 // 폴링 시작 시각(ms). 워치독이 멈춘(stuck) 폴링을 감지해 잠금을 해제하는 데 사용.
 let pollStartedAtMs = 0;
+// Incremented each time pollNow actually starts a run (pollStartedAtMs is reset to 0 when a run ends,
+// so it cannot tell a finished run from a skipped one).
+let pollRunSeq = 0;
 const MAX_POLL_DURATION_MS = 15 * 60 * 1000; // 15분
 
 // ────────────────────────────────────────────────────────────
@@ -1336,6 +1339,7 @@ export async function pollNow(sourceId?: string, targetDate?: string): Promise<{
 
   pollStatus.running = true;
   pollStartedAtMs = Date.now();
+  pollRunSeq++;
   pollStatus.message = '폴링 중...';
 
   let totalFound = 0;
@@ -1510,15 +1514,15 @@ async function runScheduledPollOnce(source: PollSource, time: string): Promise<v
   }
 
   logger.info(`[Scheduler] scheduled polling started: ${source.name} (${time})`);
-  const startedBefore = pollStartedAtMs;
+  const runSeqBefore = pollRunSeq;
   try {
     await pollNow(source.id);
   } catch (err: unknown) {
     logger.error(`[Scheduler] scheduled polling failed (${source.name}): ${getErrorMessage(err)}`);
   }
-  // pollNow returns without running while another poll holds the lock (pollStartedAtMs unchanged).
+  // pollNow returns without running while another poll holds the lock (pollRunSeq unchanged).
   // Leave the marker unset so the watchdog retries later today.
-  if (pollStartedAtMs === startedBefore) {
+  if (pollRunSeq === runSeqBefore) {
     logger.warn(`[Scheduler] scheduled polling did not run (another poll in progress): ${source.name} (${time}) — watchdog will retry`);
     return;
   }
