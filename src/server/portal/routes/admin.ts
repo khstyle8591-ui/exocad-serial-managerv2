@@ -348,6 +348,7 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
   }
 
   // 승인 처리
+  let cancelUnverified = false;
   if (request.type === 'renewal_stop' && request.target_serial) {
     const serial = serialService.getBySerialNumber(request.target_serial);
     if (!serial) {
@@ -399,14 +400,43 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
       res.json({ ok: true, status: 'playwright_failed' });
       return;
     }
-    logActivity({
-      serial_id: serial.id, action: 'cancelled', actor: 'manual', severity: 'info', trigger_id: `portal-req-${id}`,
-      details: pickLang({
-        ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 성공: ${serial.serial_number}`,
-        en: `Portal renewal-stop approval (#${id}) — Playwright cancel succeeded: ${serial.serial_number}`,
-        ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
-      }),
-    });
+    if (!cancelResult.verified) {
+      // The site flow finished but the post-cancel status check did not confirm it. The scheduler
+      // paths treat this as "manual check required"; this path used to log it as a plain success.
+      // Keep the request approved (a retry could act on an already-cancelled subscription) but
+      // log it as unverified and alert the manager to confirm on the Exocad site.
+      cancelUnverified = true;
+      const status = cancelResult.verified_status || 'unknown';
+      logActivity({
+        serial_id: serial.id, action: 'cancelled', actor: 'manual', severity: 'warn', trigger_id: `portal-req-${id}`,
+        details: pickLang({
+          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 완료했으나 미검증(수동 확인 필요): ${serial.serial_number} (상태=${status})`,
+          en: `Portal renewal-stop approval (#${id}) — Playwright cancel completed but UNVERIFIED (manual check required): ${serial.serial_number} (status=${status})`,
+          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル完了・未確認(手動確認が必要): ${serial.serial_number} (状態=${status})`,
+        }),
+      });
+      await notificationService.sendCriticalAutomationAlert({
+        serial_number: serial.serial_number,
+        customer_name: serial.customer?.name,
+        action: { ko: '포털 갱신중단 관리자 승인 취소 미검증', en: 'Portal renewal-stop manager-approved cancel UNVERIFIED', ja: 'ポータル更新停止 管理者承認キャンセル 未確認' },
+        error: `verified=false, status=${status}`,
+        details: {
+          ko: `관리자가 승인한 포털 신청(#${id})의 취소 결과를 확인하지 못했습니다. Exocad 사이트에서 실제 취소 여부를 확인해주세요.`,
+          en: `Could not confirm the cancel result for manager-approved portal request (#${id}). Check on the Exocad site whether it was actually cancelled.`,
+          ja: `管理者が承認したポータル申請(#${id})のキャンセル結果を確認できませんでした。Exocadサイトで実際にキャンセルされたか確認してください。`,
+        },
+        trigger_id: `portal-req-${id}`,
+      }).catch(() => {});
+    } else {
+      logActivity({
+        serial_id: serial.id, action: 'cancelled', actor: 'manual', severity: 'info', trigger_id: `portal-req-${id}`,
+        details: pickLang({
+          ko: `포털 갱신중단 승인(#${id}) — Playwright 취소 성공: ${serial.serial_number}`,
+          en: `Portal renewal-stop approval (#${id}) — Playwright cancel succeeded: ${serial.serial_number}`,
+          ja: `ポータル更新停止承認(#${id}) — Playwrightキャンセル成功: ${serial.serial_number}`,
+        }),
+      });
+    }
   } else if (request.type === 'credit') {
     // 승인 시점에 지정된 메일 주소로 발주서(청구용) 메일 발송 — 자동배분 토글과 무관하게 항상 발송.
     // (자동배분 성공 시에도 동일 함수가 자동승인 경로에서 호출됨 — automation.service.ts 참조)
@@ -426,7 +456,7 @@ router.patch('/requests/:id/decide', async (req: Request, res: Response) => {
   // clearNote=true: 이전 시도가 실패해 note='playwright_failed_manual'로 남아 있던 경우
   // 재승인이 성공하면 note를 지워 UI의 "취소 실패/재시도" 상태에서 벗어나게 한다.
   updatePortalRequestStatus(id, 'approved', true);
-  res.json({ ok: true, status: 'approved' });
+  res.json({ ok: true, status: cancelUnverified ? 'playwright_unverified' : 'approved' });
 });
 
 // PATCH /portal/admin/requests/:id/dismiss — Playwright 취소 실패(cancel failed) 신청을 매니저가
