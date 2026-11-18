@@ -1566,7 +1566,7 @@ export function startPollingScheduler(): void {
           const cronExpr = `${minute} ${hour} * * *`;
           
           const task = cron.schedule(cronExpr, () => runScheduledPollOnce(source, time),
-            { timezone: 'Asia/Tokyo', recoverMissedExecutions: true });
+            { timezone: 'Asia/Tokyo' });
           
           tasks.push(task);
           logger.info(`[Scheduler] schedule registered: ${source.name} -> ${cronExpr} (KST)`);
