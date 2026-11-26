@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { ActivityLog, SerialMailNoticeLog, SerialMailSettings, SerialWithCustomer } from '../../shared/types';
+import type { ActivityLog, PortalSerialMemo, SerialMailNoticeLog, SerialMailSettings, SerialWithCustomer } from '../../shared/types';
 import { useLang } from '../App';
 import { t, actionLabel, actorLabel } from '../i18n';
 import SerialForm from '../components/SerialForm';
@@ -22,6 +22,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
   const [busy, setBusy] = useState('');
   const [mailLogs, setMailLogs] = useState<SerialMailNoticeLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [portalMemo, setPortalMemo] = useState<PortalSerialMemo | null>(null);
   const [showHistory, setShowHistory] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [confirm, setConfirm] = useState<{
@@ -37,6 +38,7 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
       setMailLogs(logs);
       const acts = await api.listSerialActivityLogs(serialId) as ActivityLog[];
       setActivityLogs(acts);
+      setPortalMemo(await api.getSerialPortalMemo(serialId).catch(() => null));
     } catch (e: any) {
       setError(e?.message ?? t(lang, 'load_failed'));
     }
@@ -214,6 +216,21 @@ export default function SerialDetail({ serialId, onBack, onUpdated, onDeleted }:
       {serial.notes && (
         <Card title={t(lang, 'label_notes')} style={{ marginTop: 16 }}>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{serial.notes}</p>
+        </Card>
+      )}
+
+      {portalMemo && (
+        <Card title={t(lang, 'section_portal_memo')} style={{ marginTop: 16 }}>
+          <div style={{
+            display: 'inline-block', maxWidth: '100%', fontSize: 13, color: 'var(--text)',
+            background: 'rgba(61,216,200,0.08)', border: '1px solid rgba(61,216,200,0.25)',
+            borderLeft: '3px solid var(--accent)', borderRadius: 6, padding: '5px 9px', overflowWrap: 'anywhere',
+          }}>
+            {portalMemo.memo}
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text3)' }}>
+            {t(lang, 'portal_memo_by').replace('{login}', portalMemo.login_id).replace('{at}', portalMemo.updated_at.slice(0, 16))}
+          </p>
         </Card>
       )}
 

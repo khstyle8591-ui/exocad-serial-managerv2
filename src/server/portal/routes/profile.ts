@@ -9,6 +9,7 @@ import { updateCustomer, getCustomerById } from '../../../main/services/customer
 import { logActivity, pickLang } from '../../../main/services/activity-log.service';
 import { getNowTimestampString } from '../../../main/utils/date-utils';
 import { checkSecondaryEmail } from '../../../shared/email-utils';
+import { getVisiblePortalMemosForCustomer, setPortalMemo } from '../../../main/services/portal-memo.service';
 
 const router = Router();
 
@@ -21,10 +22,12 @@ function validatePassword(pw: string): string | null {
 }
 
 interface SerialRow {
+  id: number;
   serial_number: string;
   main_product: string;
   status: string;
   expiry_date: string | null;
+  renewal_stop_requested: number;
 }
 
 // GET /portal/profile — 프로필 + 연결된 제품(시리얼 전체 + 만료일) 반환
@@ -43,10 +46,11 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
     )
     .all(accountId);
 
-  const linkedProducts = links.flatMap(({ customer_id }) =>
-    getDb()
+  const linkedProducts = links.flatMap(({ customer_id }) => {
+    const memos = getVisiblePortalMemosForCustomer(customer_id);
+    return getDb()
       .prepare<[number], SerialRow>(
-        'SELECT serial_number, main_product, status, expiry_date FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+        'SELECT id, serial_number, main_product, status, expiry_date, renewal_stop_requested FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
       )
       .all(customer_id)
       .map(s => ({
@@ -54,11 +58,30 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
         serial_number: s.serial_number,
         status: s.status,
         expiry_date: s.expiry_date,
-      })),
-  );
+        // The dashboard shows the "stop scheduled" badge from this flag; it was never sent before.
+        renewal_stop_requested: s.renewal_stop_requested,
+        memo: memos.get(s.id)?.memo ?? '',
+      }));
+  });
 
   const { password_hash: _, ...safe } = account;
   res.json({ ...safe, csrf_token: pr.portalSession!.csrf_token, linked_products: linkedProducts });
+});
+
+// PATCH /portal/profile/serial-memo — save (empty = clear) the account's note for one of its own serials.
+router.patch('/serial-memo', requirePortalAuth, requireCsrf, (req: Request, res: Response) => {
+  const pr = req as PortalRequest;
+  const { serial_number, memo } = (req.body ?? {}) as { serial_number?: unknown; memo?: unknown };
+  if (typeof serial_number !== 'string' || !serial_number.trim()) {
+    res.status(400).json({ error: 'serial_required' });
+    return;
+  }
+  const result = setPortalMemo(pr.portalSession!.account_id, serial_number, memo);
+  if (!result.ok) {
+    res.status(result.error === 'serial_not_found' ? 404 : 400).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, memo: result.memo });
 });
 
 // PATCH /portal/profile — 이메일/연락처/주소/exocad_id 수정 (이름·로그인ID는 변경 불가)

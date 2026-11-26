@@ -107,6 +107,15 @@ export interface ActivityLog {
   serial_number?: string | null; // 일부 조회(getTodayLogs)에서만 JOIN으로 채워짐
 }
 
+/** Customer-written portal memo on a serial (read-only in the manager UI). */
+export interface PortalSerialMemo {
+  serial_id: number;
+  memo: string;
+  account_id: number;
+  login_id: string;
+  updated_at: string;
+}
+
 export interface SerialMailNoticeLog {
   id: number;
   serial_id: number | null;

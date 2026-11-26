@@ -384,6 +384,17 @@ function createPortalTables(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_prt_token   ON portal_reset_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_prt_account ON portal_reset_tokens(account_id);
+
+    -- Customer-written note per serial (portal dashboard). One per serial; account_id is the last
+    -- writer. Shown only while that account is still linked to the serial's current customer.
+    CREATE TABLE IF NOT EXISTS portal_serial_memos (
+      serial_id   INTEGER PRIMARY KEY,
+      account_id  INTEGER NOT NULL,
+      memo        TEXT    NOT NULL,
+      updated_at  TEXT    NOT NULL,
+      FOREIGN KEY (serial_id)  REFERENCES serials(id)         ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES portal_accounts(id) ON DELETE CASCADE
+    );
   `);
 }
 

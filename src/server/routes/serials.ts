@@ -16,6 +16,7 @@ import {
 import { SERVER_ERRORS } from '../../shared/server-errors';
 import type { SerialExportQuery } from '../../shared/types';
 import { previewBulkUpdate, applyBulkUpdate } from '../../main/services/serial-bulk-update.service';
+import { getVisiblePortalMemo } from '../../main/services/portal-memo.service';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -88,6 +89,13 @@ router.get('/:id/mail-notice-logs', (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid serial id' });
     res.json(listSerialMailNoticeLogs(id));
+});
+
+// GET /api/serials/:id/portal-memo — customer-written portal memo (read-only for managers); null if none visible
+router.get('/:id/portal-memo', (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid serial id' });
+    res.json(getVisiblePortalMemo(id));
 });
 
 // GET /api/serials/:id/activity-logs — 시리얼별 전체 활동 이력(자동·수동·시스템), 최신순

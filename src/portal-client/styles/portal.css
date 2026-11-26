@@ -264,6 +264,37 @@ body {
   margin-top: 2px;
 }
 
+/* Customer memo — sits in the empty space between product info and the status badge.
+   Sized so 24 full-width characters fit next to the longest product name (11.5px font). */
+.product-card.has-memo-slot { cursor: pointer; gap: 12px; }
+.product-card.has-memo-slot:hover { border-color: var(--accent); }
+.product-card.has-memo-slot .product-card-info { flex: 0 1 auto; }
+.product-card-memo {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 310px;
+  margin-left: auto;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text);
+  background: rgba(61,216,200,0.08);
+  border: 1px solid rgba(61,216,200,0.25);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 5px 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.product-card-memo.empty {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text3);
+}
+.product-card-memo.empty::before { content: '＋ '; }
+.memo-counter { font-size: 11.5px; color: var(--text3); text-align: right; margin-top: 4px; }
+.memo-counter.over { color: var(--red); }
+
 /* ── Forms ── */
 
 .form-group { margin-bottom: 16px; }
@@ -504,6 +535,8 @@ body {
   .portal-page, .portal-page-wide { padding: 20px 16px; }
   .auth-card { padding: 24px 20px; }
   .product-card { flex-direction: column; align-items: flex-start; }
+  .product-card.has-memo-slot { gap: 8px; }
+  .product-card-memo { margin-left: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
 
   .request-row { flex-direction: column; align-items: flex-start; gap: 10px; }
   .request-row-main { flex: 1 1 auto; width: 100%; min-width: 0; }
