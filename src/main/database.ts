@@ -5,7 +5,7 @@ import { logger } from './utils/logger';
 
 let db: Database.Database;
 
-export const CURRENT_SCHEMA_VERSION = 16;
+export const CURRENT_SCHEMA_VERSION = 17;
 
 type Migration = {
   version: number;
@@ -385,8 +385,15 @@ function createPortalTables(): void {
     CREATE INDEX IF NOT EXISTS idx_prt_token   ON portal_reset_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_prt_account ON portal_reset_tokens(account_id);
 
-    -- Customer-written note per serial (portal dashboard). One per serial; account_id is the last
-    -- writer. Shown only while that account is still linked to the serial's current customer.
+  `);
+}
+
+// Customer-written note per serial (portal dashboard). One per serial; account_id is the last
+// writer. Shown only while that account is still linked to the serial's current customer.
+// Must be a versioned migration: createPortalTables only runs as migration 7, so a table added
+// there never reaches an existing database.
+function createPortalSerialMemosTable(): void {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS portal_serial_memos (
       serial_id   INTEGER PRIMARY KEY,
       account_id  INTEGER NOT NULL,
@@ -651,6 +658,11 @@ const migrations: Migration[] = [
     version: 16,
     name: 'customers/portal_accounts email_2 columns',
     run: addEmail2Columns,
+  },
+  {
+    version: 17,
+    name: 'portal_serial_memos table',
+    run: createPortalSerialMemosTable,
   },
 ];
 
