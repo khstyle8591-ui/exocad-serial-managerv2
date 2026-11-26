@@ -27,6 +27,7 @@ interface SerialRow {
   main_product: string;
   status: string;
   expiry_date: string | null;
+  renewal_stop_requested: number;
 }
 
 // GET /portal/profile — 프로필 + 연결된 제품(시리얼 전체 + 만료일) 반환
@@ -49,7 +50,7 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
     const memos = getVisiblePortalMemosForCustomer(customer_id);
     return getDb()
       .prepare<[number], SerialRow>(
-        'SELECT id, serial_number, main_product, status, expiry_date FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
+        'SELECT id, serial_number, main_product, status, expiry_date, renewal_stop_requested FROM serials WHERE customer_id = ? ORDER BY created_at DESC',
       )
       .all(customer_id)
       .map(s => ({
@@ -57,6 +58,8 @@ router.get('/', requirePortalAuth, (req: Request, res: Response) => {
         serial_number: s.serial_number,
         status: s.status,
         expiry_date: s.expiry_date,
+        // The dashboard shows the "stop scheduled" badge from this flag; it was never sent before.
+        renewal_stop_requested: s.renewal_stop_requested,
         memo: memos.get(s.id)?.memo ?? '',
       }));
   });
