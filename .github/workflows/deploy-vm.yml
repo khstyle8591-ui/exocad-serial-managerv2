@@ -1,0 +1,107 @@
+# Manual production deploy: build here, ship dist/ to the GCP VM over an IAP tunnel, restart PM2.
+# Run from the Actions tab → "Deploy to VM" → Run workflow.
+#
+# Required repository secrets:
+#   GCP_DEPLOY_SA_KEY   JSON key of a service account with roles/iap.tunnelResourceAccessor
+#                       and roles/compute.viewer on project exocadmanagerv2
+#   VM_DEPLOY_SSH_KEY   OpenSSH private key whose public half is in ~geomedipm/.ssh/authorized_keys
+name: Deploy to VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to deploy
+        required: true
+        default: main
+
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GCP_PROJECT: exocadmanagerv2
+  GCP_ZONE: us-west1-a
+  VM_NAME: instance-20260617-065106
+  VM_USER: geomedipm
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'   # same major as the VM (v20.x)
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Type-check
+        run: |
+          npx tsc --noEmit -p tsconfig.main.json
+          npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Package
+        id: pkg
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          tar -czf "release-${SHA}.tgz" dist
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "tgz=release-${SHA}.tgz" >> "$GITHUB_OUTPUT"
+          ls -la "release-${SHA}.tgz"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_DEPLOY_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Open IAP tunnel to VM:22
+        run: |
+          nohup gcloud compute start-iap-tunnel "$VM_NAME" 22 --local-host-port=localhost:2222 \
+            --zone "$GCP_ZONE" --project "$GCP_PROJECT" > tunnel.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "Listening on port" tunnel.log && exit 0; sleep 1; done
+          cat tunnel.log; exit 1
+
+      - name: Prepare SSH
+        env:
+          VM_DEPLOY_SSH_KEY: ${{ secrets.VM_DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VM_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat > ~/.ssh/config <<EOF
+          Host vm
+            HostName localhost
+            Port 2222
+            User ${VM_USER}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+            BatchMode yes
+            ConnectTimeout 30
+          EOF
+
+      - name: Upload release
+        run: scp "${{ steps.pkg.outputs.tgz }}" scripts/deploy/vm-deploy.sh vm:/tmp/
+
+      - name: Deploy on VM
+        run: ssh vm "bash /tmp/vm-deploy.sh '${{ steps.pkg.outputs.sha }}' '/tmp/${{ steps.pkg.outputs.tgz }}'"
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
